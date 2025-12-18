@@ -36,5 +36,5 @@ pnpm storybook
 ```
 
 ## Notas
-- A dependência `beddel` vem do npm; não há pasta `packages/beddel` neste repositório.
+- Por padrão o app usa o `beddel` publicado no npm. Para usar o código local em `packages/beddel` defina `BEDDEL_LOCAL=1` (ex.: `pnpm dev:local` ou `pnpm build:local`). A pasta `packages/` está no `.gitignore`.
 - `pnpm test` ainda não está configurado aqui (scripts são placeholders). Use os testes end-to-end/manual via UI ou adapte conforme suas ferramentas.

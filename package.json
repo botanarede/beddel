@@ -4,7 +4,9 @@
   "private": true,
   "scripts": {
     "build": "next build",
-    "dev": "next dev",
+    "dev": "next dev --webpack",
+    "dev:local": "BEDDEL_LOCAL=1 next dev --webpack",
+    "build:local": "BEDDEL_LOCAL=1 next build",
     "lint": "next lint",
     "start": "next start",
     "test": "echo \"No tests configured yet\"",

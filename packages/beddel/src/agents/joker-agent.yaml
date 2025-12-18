@@ -1,0 +1,47 @@
+# Joker Agent - Simple Response Agent for Beddel Runtime
+# Route: /agents/joker
+# Method: joker.execute
+
+agent:
+  id: joker
+  version: 1.0.0
+  protocol: beddel-declarative-protocol/v2.0
+
+metadata:
+  name: "Joker Agent"
+  description: "Conta piadas usando Gemini Flash"
+  category: "utility"
+  route: "/agents/joker"
+
+schema:
+  input:
+    type: "object"
+    properties: {}
+    required: []
+
+  output:
+    type: "object"
+    properties:
+      response:
+        type: "string"
+    required: ["response"]
+
+logic:
+  workflow:
+    - name: "generate-joke"
+      type: "genkit-joke"
+      action:
+        type: "joke"
+        prompt: "Conte uma piada curta e original que funcione para qualquer público."
+        result: "jokerResult"
+
+    - name: "deliver-response"
+      type: "output-generator"
+      action:
+        type: "generate"
+        output:
+          response: "$jokerResult.texto"
+
+output:
+  schema:
+    response: "$jokerResult.texto"

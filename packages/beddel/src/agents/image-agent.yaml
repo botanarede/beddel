@@ -1,0 +1,86 @@
+# Image Generator Agent - Declarative Genkit workflow
+# Route: /agents/image
+# Method: image.generate
+
+agent:
+  id: image
+  version: 1.0.0
+  protocol: beddel-declarative-protocol/v2.0
+
+metadata:
+  name: "Image Generator Agent"
+  description: "Gera imagens usando Gemini Flash com estilos curados"
+  category: "creative"
+  route: "/agents/image"
+
+schema:
+  input:
+    type: "object"
+    properties:
+      descricao:
+        type: "string"
+        minLength: 5
+        maxLength: 500
+        description: "Descrição textual detalhada da cena"
+      estilo:
+        type: "string"
+        enum: ["watercolor", "neon", "sketch"]
+        description: "Estilo visual desejado"
+      resolucao:
+        type: "string"
+        pattern: "^[0-9]{3,4}x[0-9]{3,4}$"
+        description: "Resolução no formato LARGURAxALTURA (ex: 1024x1024)"
+    required: ["descricao", "estilo", "resolucao"]
+
+  output:
+    type: "object"
+    properties:
+      image_url:
+        type: "string"
+      image_base64:
+        type: "string"
+      media_type:
+        type: "string"
+      prompt_utilizado:
+        type: "string"
+      metadados:
+        type: "object"
+        properties:
+          modelo_utilizado:
+            type: "string"
+          tempo_processamento:
+            type: "number"
+          estilo:
+            type: "string"
+          resolucao:
+            type: "string"
+        required: ["modelo_utilizado", "tempo_processamento", "estilo", "resolucao"]
+    required: ["image_url", "prompt_utilizado", "metadados"]
+
+logic:
+  workflow:
+    - name: "generate-image"
+      type: "genkit-image"
+      action:
+        type: "image"
+        result: "imageResult"
+        promptTemplate: "Crie uma imagem em estilo {{estilo}} com foco em: {{descricao}}"
+
+    - name: "deliver-image"
+      type: "output-generator"
+      action:
+        type: "generate"
+        output:
+          image_url: "$imageResult.image_url"
+          image_base64: "$imageResult.image_base64"
+          media_type: "$imageResult.media_type"
+          prompt_utilizado: "$imageResult.prompt_utilizado"
+          metadados: "$imageResult.metadados"
+
+output:
+  schema:
+    image_url: "$imageResult.image_url"
+    image_base64: "$imageResult.image_base64"
+    media_type: "$imageResult.media_type"
+    prompt_utilizado: "$imageResult.prompt_utilizado"
+    metadados: "$imageResult.metadados"

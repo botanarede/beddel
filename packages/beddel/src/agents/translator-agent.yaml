@@ -1,0 +1,80 @@
+# Translator Agent - Declarative Genkit-powered translation workflow
+# Route: /agents/translator
+# Method: translator.execute
+
+agent:
+  id: translator
+  version: 1.0.0
+  protocol: beddel-declarative-protocol/v2.0
+
+metadata:
+  name: "Translator Agent"
+  description: "Traduz textos entre idiomas usando Gemini Flash via Genkit"
+  category: "public"
+  route: "/agents/translator"
+
+schema:
+  input:
+    type: "object"
+    properties:
+      texto:
+        type: "string"
+        minLength: 1
+        maxLength: 10000
+        description: "Texto original a ser traduzido"
+      idioma_origem:
+        type: "string"
+        pattern: "^[a-z]{2}$"
+        description: "Idioma de origem (ISO-639-1, ex: pt, en)"
+      idioma_destino:
+        type: "string"
+        pattern: "^[a-z]{2}$"
+        description: "Idioma de destino (ISO-639-1, ex: en, es)"
+    required: ["texto", "idioma_origem", "idioma_destino"]
+
+  output:
+    type: "object"
+    properties:
+      texto_traduzido:
+        type: "string"
+      metadados:
+        type: "object"
+        properties:
+          modelo_utilizado:
+            type: "string"
+          tempo_processamento:
+            type: "number"
+          confianca:
+            type: "number"
+          idiomas_suportados:
+            type: "array"
+            items:
+              type: "string"
+          idiomas_solicitados:
+            type: "object"
+            properties:
+              origem:
+                type: "string"
+              destino:
+                type: "string"
+            required: ["origem", "destino"]
+          prompt_utilizado:
+            type: "string"
+        required:
+          [
+            "modelo_utilizado",
+            "tempo_processamento",
+            "confianca",
+            "idiomas_suportados",
+            "idiomas_solicitados",
+            "prompt_utilizado",
+          ]
+    required: ["texto_traduzido", "metadados"]
+
+logic:
+  workflow:
+    - name: "translate"
+      type: "genkit-translation"
+      action:
+        type: "translate"
+        result: "translationResult"
