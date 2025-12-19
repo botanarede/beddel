@@ -28,3 +28,7 @@ next-env.d.ts
 
 # local package (não versionar aqui)
 # /packages/
+packages/beddel/node_modules
+packages/beddel/dist
+packages/beddel/node_modules/*
+packages/beddel/dist/*
