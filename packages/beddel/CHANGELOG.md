@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.2.2] - 2025-12-19
+
+### Changed
+- Maintenance release (no functional changes)
+
 ## [0.2.0] - 2025-12-18
 
 ### Added

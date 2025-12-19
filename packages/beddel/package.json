@@ -1,6 +1,6 @@
 {
   "name": "beddel",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Beddel - A secure YAML parser and OpenAPI endpoint manager for Node.js applications",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
