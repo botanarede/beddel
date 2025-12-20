@@ -1,0 +1,71 @@
+# MCP Tool Agent - Native Builtin Agent for Beddel Runtime
+# Route: /agents/mcp-tool
+# Method: mcp-tool.execute
+
+agent:
+  id: mcp-tool
+  version: 1.0.0
+  protocol: beddel-declarative-protocol/v2.0
+
+metadata:
+  name: "MCP Tool Agent"
+  description: "Generic agent for calling MCP server tools via SSE transport"
+  category: "integration"
+  route: "/agents/mcp-tool"
+
+schema:
+  input:
+    type: "object"
+    properties:
+      server_url:
+        type: "string"
+        description: "MCP server SSE endpoint URL"
+      tool_name:
+        type: "string"
+        description: "Name of the MCP tool to invoke (use 'list_tools' to discover available tools)"
+      tool_arguments:
+        type: "object"
+        description: "Arguments to pass to the tool"
+    required: ["server_url", "tool_name"]
+
+  output:
+    type: "object"
+    properties:
+      success:
+        type: "boolean"
+      data:
+        type: "string"
+      toolNames:
+        type: "array"
+        items:
+          type: "string"
+      error:
+        type: "string"
+    required: ["success"]
+
+logic:
+  workflow:
+    - name: "call-mcp-tool"
+      type: "mcp-tool"
+      action:
+        server_url: "$input.server_url"
+        tool_name: "$input.tool_name"
+        tool_arguments: "$input.tool_arguments"
+        result: "mcpResult"
+
+    - name: "deliver-response"
+      type: "output-generator"
+      action:
+        type: "generate"
+        output:
+          success: "$mcpResult.success"
+          data: "$mcpResult.data"
+          toolNames: "$mcpResult.toolNames"
+          error: "$mcpResult.error"
+
+output:
+  schema:
+    success: "$mcpResult.success"
+    data: "$mcpResult.data"
+    toolNames: "$mcpResult.toolNames"
+    error: "$mcpResult.error"

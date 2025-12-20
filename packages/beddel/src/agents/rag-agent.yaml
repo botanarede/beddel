@@ -1,0 +1,89 @@
+# RAG Agent - Native Builtin Agent for Beddel Runtime
+# Route: /agents/rag
+# Method: rag.execute
+
+agent:
+  id: rag
+  version: 1.0.0
+  protocol: beddel-declarative-protocol/v2.0
+
+metadata:
+  name: "RAG Intelligence Agent"
+  description: "Generates natural language answers based on provided context using Gemini"
+  category: "intelligence"
+  route: "/agents/rag"
+  tags:
+    - "rag"
+    - "gemini"
+    - "qa"
+    - "generation"
+
+schema:
+  input:
+    type: "object"
+    properties:
+      query:
+        type: "string"
+        description: "User question to answer"
+      context:
+        type: "string"
+        description: "Retrieved documentation or context for answering"
+      documents:
+        type: "string"
+        description: "Alternative to context - retrieved documents"
+      history:
+        type: "array"
+        items:
+          type: "object"
+          properties:
+            role:
+              type: "string"
+              enum: ["user", "assistant", "system"]
+            content:
+              type: "string"
+        description: "Conversation history for context continuity"
+    required: ["query"]
+
+  output:
+    type: "object"
+    properties:
+      response:
+        type: "string"
+        description: "Generated answer"
+      answer:
+        type: "string"
+        description: "Alias for response"
+      timestamp:
+        type: "string"
+        description: "ISO timestamp of generation"
+      error:
+        type: "string"
+    required: ["response"]
+
+logic:
+  workflow:
+    - name: "generate-answer"
+      type: "rag"
+      action:
+        query: "$input.query"
+        context: "$input.context"
+        documents: "$input.documents"
+        history: "$input.history"
+        result: "ragResult"
+
+    - name: "deliver-response"
+      type: "output-generator"
+      action:
+        type: "generate"
+        output:
+          response: "$ragResult.response"
+          answer: "$ragResult.answer"
+          timestamp: "$ragResult.timestamp"
+          error: "$ragResult.error"
+
+output:
+  schema:
+    response: "$ragResult.response"
+    answer: "$ragResult.answer"
+    timestamp: "$ragResult.timestamp"
+    error: "$ragResult.error"

@@ -4,8 +4,8 @@
  */
 
 import * as yaml from "js-yaml";
-import { experimental_generateImage, generateText } from "ai";
-import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import { experimental_generateImage, generateText, embed, embedMany } from "ai";
+import { createGoogleGenerativeAI, google } from "@ai-sdk/google";
 import { type ZodTypeAny } from "zod";
 import { ExecutionContext } from "../types/executionContext";
 import { agentRegistry } from "../agents/agentRegistry";
@@ -14,6 +14,13 @@ import {
   DeclarativeSchemaValidationError,
   type DeclarativeSchemaPhase,
 } from "./schemaCompiler";
+
+// MCP imports (lazy loaded to avoid issues if not installed)
+let mcpClient: any = null;
+let mcpSSETransport: any = null;
+
+// ChromaDB imports (lazy loaded)
+let chromaClient: any = null;
 
 export interface YamlAgentDefinition {
   agent: {
@@ -69,7 +76,9 @@ export class DeclarativeAgentInterpreter {
   private readonly MAX_WORKFLOW_STEPS = 100; // Prevent infinite loops
   private readonly MAX_OUTPUT_SIZE = 5 * 1024 * 1024; // 5MB max output to accommodate image payloads
   private readonly GEMINI_MODEL = "models/gemini-2.5-flash";
+  private readonly GEMINI_RAG_MODEL = "models/gemini-2.0-flash-exp";
   private readonly GEMINI_IMAGE_MODEL = "imagen-4.0-fast-generate-001";
+  private readonly GEMINI_EMBEDDING_MODEL = "text-embedding-004";
   private readonly SUPPORTED_TRANSLATION_LANGUAGES = ["pt", "en", "es", "fr"];
   private readonly schemaCompiler = new DeclarativeSchemaCompiler();
 
@@ -266,6 +275,19 @@ export class DeclarativeAgentInterpreter {
         return this.executeGenkitImage(step, variables, options);
       case "custom-action":
         return this.executeCustomAction(step, variables, options);
+      // New native workflow step types for builtin agents
+      case "mcp-tool":
+        return this.executeMcpTool(step, variables, options);
+      case "gemini-vectorize":
+        return this.executeGeminiVectorize(step, variables, options);
+      case "chromadb":
+        return this.executeChromaDB(step, variables, options);
+      case "gitmcp":
+        return this.executeGitMcp(step, variables, options);
+      case "rag":
+        return this.executeRag(step, variables, options);
+      case "builtin-agent":
+        return this.executeBuiltinAgent(step, variables, options);
       default:
         throw new Error(`Unsupported workflow step type: ${step.type}`);
     }
@@ -511,6 +533,562 @@ export class DeclarativeAgentInterpreter {
       options.context.setError(errorMessage);
       throw new Error(`Custom action execution failed: ${errorMessage}`);
     }
+  }
+
+  /**
+   * Execute MCP Tool step - connects to MCP server and invokes tools
+   */
+  private async executeMcpTool(
+    step: any,
+    variables: Map<string, any>,
+    options: YamlAgentInterpreterOptions
+  ): Promise<any> {
+    const serverUrl = this.resolveInputValue(step.action?.server_url, options.input, variables);
+    const toolName = this.resolveInputValue(step.action?.tool_name, options.input, variables);
+    const toolArguments = this.resolveInputValue(step.action?.tool_arguments, options.input, variables) || {};
+    const resultVar = step.action?.result || "mcpResult";
+
+    if (!serverUrl) {
+      throw new Error("Missing required MCP input: server_url");
+    }
+    if (!toolName) {
+      throw new Error("Missing required MCP input: tool_name");
+    }
+
+    options.context.log(`[MCP Tool] Connecting to ${serverUrl}...`);
+    options.context.log(`[MCP Tool] Tool: ${toolName}`);
+
+    try {
+      // Lazy load MCP SDK
+      if (!mcpClient) {
+        const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+        const { SSEClientTransport } = await import("@modelcontextprotocol/sdk/client/sse.js");
+        mcpClient = Client;
+        mcpSSETransport = SSEClientTransport;
+        
+        // Setup EventSource for Node.js
+        const eventsourceModule = await import("eventsource");
+        const EventSourceClass = eventsourceModule.default || eventsourceModule;
+        if (!(global as any).EventSource) {
+          (global as any).EventSource = EventSourceClass;
+        }
+      }
+
+      const transport = new mcpSSETransport(new URL(serverUrl));
+      const client = new mcpClient(
+        { name: "beddel-mcp-client", version: "1.0.0" },
+        { capabilities: {} }
+      );
+
+      await client.connect(transport);
+      options.context.log("[MCP Tool] Connected!");
+
+      // List available tools
+      const tools = await client.listTools();
+      const availableToolNames = tools.tools.map((t: any) => t.name);
+      options.context.log(`[MCP Tool] Available tools: ${availableToolNames.join(", ")}`);
+
+      // Handle list_tools special case
+      if (toolName === "list_tools") {
+        await client.close();
+        const result = {
+          success: true,
+          data: JSON.stringify(tools.tools),
+          toolNames: availableToolNames
+        };
+        variables.set(resultVar, result);
+        return result;
+      }
+
+      // Validate tool exists
+      if (!availableToolNames.includes(toolName)) {
+        await client.close();
+        const result = {
+          success: false,
+          error: `Tool '${toolName}' not found. Available tools: ${availableToolNames.join(", ")}`,
+          data: null
+        };
+        variables.set(resultVar, result);
+        return result;
+      }
+
+      // Call the tool with timeout
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("MCP Tool Timeout (30s)")), 30000)
+      );
+
+      const callPromise = client.callTool({
+        name: toolName,
+        arguments: toolArguments,
+      });
+
+      const callResult: any = await Promise.race([callPromise, timeoutPromise]);
+      await client.close();
+
+      // Parse result content
+      const textContent = callResult.content
+        .filter((c: any) => c.type === "text")
+        .map((c: any) => c.text)
+        .join("\n") || "No text content returned";
+
+      const result = { success: true, data: textContent };
+      variables.set(resultVar, result);
+      return result;
+
+    } catch (error: any) {
+      options.context.log(`[MCP Tool] Error: ${error.message}`);
+      const result = { success: false, error: error.message, data: null };
+      variables.set(resultVar, result);
+      return result;
+    }
+  }
+
+  /**
+   * Execute Gemini Vectorize step - generates embeddings using Gemini
+   */
+  private async executeGeminiVectorize(
+    step: any,
+    variables: Map<string, any>,
+    options: YamlAgentInterpreterOptions
+  ): Promise<any> {
+    const action = step.action?.action || "embedSingle";
+    const resultVar = step.action?.result || "vectorizeResult";
+
+    this.ensureGeminiApiKey(options.props);
+
+    try {
+      if (action === "embedSingle") {
+        const text = this.resolveInputValue(step.action?.text, options.input, variables);
+        if (!text) {
+          throw new Error("Text input is required for embedSingle");
+        }
+
+        options.context.log(`[Gemini Vectorize] Embedding single text (${text.length} chars)...`);
+
+        const { embedding } = await embed({
+          model: google.textEmbeddingModel(this.GEMINI_EMBEDDING_MODEL),
+          value: text,
+        });
+
+        const result = { success: true, vector: embedding };
+        variables.set(resultVar, result);
+        return result;
+
+      } else if (action === "embedBatch") {
+        const texts = this.resolveInputValue(step.action?.texts, options.input, variables);
+        if (!texts || !Array.isArray(texts)) {
+          throw new Error("Texts array input is required for embedBatch");
+        }
+
+        options.context.log(`[Gemini Vectorize] Embedding batch of ${texts.length} texts...`);
+
+        const { embeddings } = await embedMany({
+          model: google.textEmbeddingModel(this.GEMINI_EMBEDDING_MODEL),
+          values: texts,
+        });
+
+        const result = { success: true, vectors: embeddings };
+        variables.set(resultVar, result);
+        return result;
+
+      } else {
+        throw new Error(`Unknown vectorize action: ${action}`);
+      }
+    } catch (error: any) {
+      options.context.log(`[Gemini Vectorize] Error: ${error.message}`);
+      const result = { success: false, error: error.message };
+      variables.set(resultVar, result);
+      return result;
+    }
+  }
+
+  /**
+   * Execute ChromaDB step - vector storage and retrieval
+   */
+  private async executeChromaDB(
+    step: any,
+    variables: Map<string, any>,
+    options: YamlAgentInterpreterOptions
+  ): Promise<any> {
+    const action = this.resolveInputValue(step.action?.action, options.input, variables);
+    const collectionName = this.resolveInputValue(step.action?.collection_name, options.input, variables);
+    const resultVar = step.action?.result || "chromaResult";
+
+    if (!collectionName) {
+      throw new Error("Missing required ChromaDB input: collection_name");
+    }
+
+    try {
+      // Lazy load ChromaDB
+      if (!chromaClient) {
+        const chromaModule = await import("chromadb");
+        
+        if (process.env.CHROMADB_API_KEY) {
+          options.context.log("[ChromaDB] Initializing CloudClient...");
+          chromaClient = new chromaModule.CloudClient({
+            apiKey: process.env.CHROMADB_API_KEY,
+            tenant: process.env.CHROMADB_TENANT || "default_tenant",
+            database: process.env.CHROMADB_DATABASE || "dev",
+          });
+        } else {
+          options.context.log("[ChromaDB] Initializing Local ChromaClient...");
+          chromaClient = new chromaModule.ChromaClient({
+            path: process.env.CHROMADB_URL || "http://localhost:8000"
+          });
+        }
+      }
+
+      if (action === "hasData") {
+        const minCount = this.resolveInputValue(step.action?.min_count, options.input, variables) || 1;
+        options.context.log(`[ChromaDB] Checking data for collection: ${collectionName}`);
+
+        try {
+          const collection = await chromaClient.getCollection({
+            name: collectionName,
+            embeddingFunction: undefined
+          });
+          const count = await collection.count();
+          const hasEnoughData = count >= minCount;
+
+          const result = { success: true, has_data: hasEnoughData, count };
+          variables.set(resultVar, result);
+          return result;
+        } catch (e) {
+          const result = { success: true, has_data: false, count: 0 };
+          variables.set(resultVar, result);
+          return result;
+        }
+
+      } else if (action === "store") {
+        const ids = this.resolveInputValue(step.action?.ids, options.input, variables);
+        const vectors = this.resolveInputValue(step.action?.vectors, options.input, variables);
+        const documents = this.resolveInputValue(step.action?.documents, options.input, variables);
+        const metadatas = this.resolveInputValue(step.action?.metadatas, options.input, variables);
+
+        options.context.log(`[ChromaDB] Storing ${ids?.length || 0} items in ${collectionName}...`);
+
+        const collection = await chromaClient.getOrCreateCollection({
+          name: collectionName,
+          embeddingFunction: undefined
+        });
+
+        await collection.add({
+          ids,
+          embeddings: vectors,
+          documents,
+          metadatas
+        });
+
+        const result = { success: true, stored_count: ids?.length || 0 };
+        variables.set(resultVar, result);
+        return result;
+
+      } else if (action === "search") {
+        const queryVector = this.resolveInputValue(step.action?.query_vector, options.input, variables);
+        const limit = this.resolveInputValue(step.action?.limit, options.input, variables) || 5;
+
+        options.context.log(`[ChromaDB] Searching ${collectionName}...`);
+
+        const collection = await chromaClient.getCollection({
+          name: collectionName,
+          embeddingFunction: undefined
+        });
+
+        const results = await collection.query({
+          queryEmbeddings: [queryVector],
+          nResults: limit
+        });
+
+        const flatResults = (results.documents[0] || []).map((doc: string | null, idx: number) => ({
+          text: doc,
+          metadata: results.metadatas[0]?.[idx],
+          distance: results.distances?.[0]?.[idx]
+        }));
+
+        const documentsString = flatResults.map((r: { text: string | null }) => r.text).join("\n\n---\n\n");
+
+        const result = { success: true, results: flatResults, documents: documentsString };
+        variables.set(resultVar, result);
+        return result;
+
+      } else {
+        throw new Error(`Unknown ChromaDB action: ${action}`);
+      }
+    } catch (error: any) {
+      options.context.log(`[ChromaDB] Error: ${error.message}`);
+      const result = { success: false, error: error.message };
+      variables.set(resultVar, result);
+      return result;
+    }
+  }
+
+  /**
+   * Execute GitMCP step - fetches documentation from GitHub repos via GitMCP
+   */
+  private async executeGitMcp(
+    step: any,
+    variables: Map<string, any>,
+    options: YamlAgentInterpreterOptions
+  ): Promise<any> {
+    const gitmcpUrl = this.resolveInputValue(step.action?.gitmcp_url, options.input, variables);
+    const resultVar = step.action?.result || "gitmcpResult";
+
+    if (!gitmcpUrl) {
+      throw new Error("Missing required GitMCP input: gitmcp_url");
+    }
+
+    options.context.log(`[GitMCP] Fetching content from ${gitmcpUrl}...`);
+
+    try {
+      const sseUrl = `${gitmcpUrl}/sse`;
+
+      // Use MCP tool to list available tools
+      const listStep = {
+        action: {
+          server_url: sseUrl,
+          tool_name: "list_tools",
+          tool_arguments: {},
+          result: "_gitmcp_tools"
+        }
+      };
+      await this.executeMcpTool(listStep, variables, options);
+      const toolListResult = variables.get("_gitmcp_tools");
+
+      let selectedToolName = "";
+      let selectedToolArgs: any = {};
+
+      if (toolListResult?.success && toolListResult?.toolNames) {
+        const availableTools = toolListResult.toolNames as string[];
+        options.context.log(`[GitMCP] Discovered tools: ${availableTools.join(", ")}`);
+
+        // Heuristic tool selection
+        if (availableTools.includes("fetch_beddel_alpha_documentation")) {
+          selectedToolName = "fetch_beddel_alpha_documentation";
+          selectedToolArgs = { path: "/" };
+        } else if (availableTools.includes("read_file")) {
+          selectedToolName = "read_file";
+          selectedToolArgs = { path: "README.md" };
+        } else if (availableTools.includes("fetch_generic_url_content")) {
+          selectedToolName = "fetch_generic_url_content";
+          selectedToolArgs = { url: gitmcpUrl };
+        } else {
+          selectedToolName = availableTools.find(t => t !== "list_tools" && !t.includes("search")) || availableTools[0];
+          selectedToolArgs = { path: "/" };
+        }
+      } else {
+        selectedToolName = "fetch_beddel_alpha_documentation";
+        selectedToolArgs = { path: "/" };
+      }
+
+      options.context.log(`[GitMCP] Selected tool: ${selectedToolName}`);
+
+      // Fetch content
+      const fetchStep = {
+        action: {
+          server_url: sseUrl,
+          tool_name: selectedToolName,
+          tool_arguments: selectedToolArgs,
+          result: "_gitmcp_content"
+        }
+      };
+      await this.executeMcpTool(fetchStep, variables, options);
+      const mcpResult = variables.get("_gitmcp_content");
+
+      if (!mcpResult?.success) {
+        throw new Error(`Failed to fetch docs via MCP: ${mcpResult?.error}`);
+      }
+
+      const textContent = mcpResult.data;
+      if (!textContent) {
+        throw new Error("No content returned from MCP tool");
+      }
+
+      // Chunking
+      const chunks = this.splitIntoChunks(textContent, 800);
+      options.context.log(`[GitMCP] Content split into ${chunks.length} chunks`);
+
+      const result = { success: true, chunks, source: gitmcpUrl };
+      variables.set(resultVar, result);
+      return result;
+
+    } catch (error: any) {
+      options.context.log(`[GitMCP] Error: ${error.message}`);
+      const result = { success: false, chunks: [], error: error.message };
+      variables.set(resultVar, result);
+      return result;
+    }
+  }
+
+  /**
+   * Execute RAG step - generates answers based on context using Gemini
+   */
+  private async executeRag(
+    step: any,
+    variables: Map<string, any>,
+    options: YamlAgentInterpreterOptions
+  ): Promise<any> {
+    const query = this.resolveInputValue(step.action?.query, options.input, variables);
+    const context = this.resolveInputValue(step.action?.context, options.input, variables) 
+                 || this.resolveInputValue(step.action?.documents, options.input, variables);
+    const history = this.resolveInputValue(step.action?.history, options.input, variables);
+    const resultVar = step.action?.result || "ragResult";
+
+    if (!query) {
+      throw new Error("Missing required RAG input: query");
+    }
+    if (!context) {
+      throw new Error("Missing required RAG input: context or documents");
+    }
+
+    const apiKey = this.ensureGeminiApiKey(options.props);
+    const googleAI = createGoogleGenerativeAI({ apiKey });
+    const model = googleAI(this.GEMINI_RAG_MODEL);
+
+    // Build conversation history context
+    const conversationContext = history?.length
+      ? `CONVERSATION HISTORY:\n${history.map((m: any) => `${m.role.toUpperCase()}: ${m.content}`).join("\n")}\n\n`
+      : "";
+
+    const prompt = `You are a helpful and expert assistant for the Beddel Protocol.
+
+${conversationContext}CONTEXT INFORMATION:
+${context}
+
+USER QUESTION:
+${query}
+
+INSTRUCTIONS:
+1. Answer the user's question based on the CONTEXT INFORMATION provided above.
+2. Consider the CONVERSATION HISTORY for context continuity if available.
+3. If the context does not contain the answer, politely state that you don't have enough information in the documentation to answer.
+4. Your answer must be in Portuguese.
+5. Be concise but comprehensive.
+
+ANSWER:`;
+
+    try {
+      options.context.log(`[RAG] Generating answer for query: "${query.substring(0, 50)}..."`);
+
+      const { text } = await generateText({
+        model,
+        prompt,
+        temperature: 0.3
+      });
+
+      const result = {
+        response: text,
+        answer: text,
+        timestamp: new Date().toISOString()
+      };
+      variables.set(resultVar, result);
+      return result;
+
+    } catch (error: any) {
+      options.context.log(`[RAG] Error: ${error.message}`);
+      const result = { success: false, error: error.message };
+      variables.set(resultVar, result);
+      return result;
+    }
+  }
+
+  /**
+   * Execute builtin-agent step - invokes another builtin agent
+   */
+  private async executeBuiltinAgent(
+    step: any,
+    variables: Map<string, any>,
+    options: YamlAgentInterpreterOptions
+  ): Promise<any> {
+    const agentName = step.action?.agent;
+    const agentInput = this.resolveInputValue(step.action?.input, options.input, variables) || options.input;
+    const agentProps = step.action?.props || options.props;
+    const resultVar = step.action?.result || "builtinResult";
+
+    if (!agentName) {
+      throw new Error("Missing required builtin-agent input: agent");
+    }
+
+    options.context.log(`[Builtin Agent] Invoking agent: ${agentName}`);
+
+    try {
+      const result = await agentRegistry.executeAgent(
+        agentName,
+        agentInput,
+        agentProps,
+        options.context
+      );
+
+      variables.set(resultVar, result);
+      return result;
+
+    } catch (error: any) {
+      options.context.log(`[Builtin Agent] Error: ${error.message}`);
+      throw new Error(`Builtin agent '${agentName}' execution failed: ${error.message}`);
+    }
+  }
+
+  /**
+   * Helper: Split text into chunks preserving paragraphs
+   */
+  private splitIntoChunks(text: string, chunkSize: number): string[] {
+    const paragraphs = text.split(/\n\s*\n/);
+    const chunks: string[] = [];
+    let currentChunk = "";
+
+    for (const para of paragraphs) {
+      if (currentChunk.length + para.length > chunkSize && currentChunk) {
+        chunks.push(currentChunk.trim());
+        currentChunk = para;
+      } else {
+        currentChunk += (currentChunk ? "\n\n" : "") + para;
+      }
+    }
+
+    if (currentChunk) chunks.push(currentChunk.trim());
+    return chunks;
+  }
+
+  /**
+   * Helper: Resolve input value from step action, input or variables
+   */
+  private resolveInputValue(
+    value: any,
+    input: Record<string, any>,
+    variables: Map<string, any>
+  ): any {
+    if (value === undefined || value === null) return undefined;
+
+    // Handle variable references
+    if (typeof value === "string" && value.startsWith("$")) {
+      const ref = value.substring(1);
+      // Check if it's a reference to input
+      if (ref.startsWith("input.")) {
+        const inputKey = ref.substring(6);
+        return this.getNestedValue(input, inputKey);
+      }
+      // Otherwise resolve from variables
+      return this.resolveReference(ref, variables);
+    }
+
+    // Handle direct input field references
+    if (typeof value === "string" && input[value] !== undefined) {
+      return input[value];
+    }
+
+    return value;
+  }
+
+  /**
+   * Helper: Get nested value from object using dot notation
+   */
+  private getNestedValue(obj: any, path: string): any {
+    const parts = path.split(".");
+    let current = obj;
+    for (const part of parts) {
+      if (current == null) return undefined;
+      current = current[part];
+    }
+    return current;
   }
 
 

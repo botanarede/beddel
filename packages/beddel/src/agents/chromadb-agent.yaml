@@ -1,0 +1,128 @@
+# ChromaDB Agent - Native Builtin Agent for Beddel Runtime
+# Route: /agents/chromadb
+# Method: chromadb.execute
+
+agent:
+  id: chromadb
+  version: 1.0.0
+  protocol: beddel-declarative-protocol/v2.0
+
+metadata:
+  name: "ChromaDB Agent"
+  description: "Vector storage and retrieval using ChromaDB. Supports local and cloud deployments."
+  category: "database"
+  route: "/agents/chromadb"
+  tags:
+    - "chromadb"
+    - "storage"
+    - "vector-db"
+    - "rag"
+
+schema:
+  input:
+    type: "object"
+    properties:
+      action:
+        type: "string"
+        enum: ["hasData", "store", "search"]
+        description: "Action to perform"
+      collection_name:
+        type: "string"
+        description: "Name of the ChromaDB collection"
+      min_count:
+        type: "number"
+        description: "Minimum document count for hasData action (default: 1)"
+      ids:
+        type: "array"
+        items:
+          type: "string"
+        description: "Document IDs for store action"
+      vectors:
+        type: "array"
+        items:
+          type: "array"
+          items:
+            type: "number"
+        description: "Embedding vectors for store action"
+      documents:
+        type: "array"
+        items:
+          type: "string"
+        description: "Document texts for store action"
+      metadatas:
+        type: "array"
+        items:
+          type: "object"
+        description: "Metadata objects for store action"
+      query_vector:
+        type: "array"
+        items:
+          type: "number"
+        description: "Query embedding vector for search action"
+      limit:
+        type: "number"
+        description: "Maximum results for search action (default: 5)"
+    required: ["action", "collection_name"]
+
+  output:
+    type: "object"
+    properties:
+      success:
+        type: "boolean"
+      has_data:
+        type: "boolean"
+        description: "Whether collection has sufficient data (hasData action)"
+      count:
+        type: "number"
+        description: "Document count in collection (hasData action)"
+      stored_count:
+        type: "number"
+        description: "Number of documents stored (store action)"
+      results:
+        type: "array"
+        description: "Search results with text, metadata and distance (search action)"
+      documents:
+        type: "string"
+        description: "Concatenated document texts (search action)"
+      error:
+        type: "string"
+    required: ["success"]
+
+logic:
+  workflow:
+    - name: "chromadb-operation"
+      type: "chromadb"
+      action:
+        action: "$input.action"
+        collection_name: "$input.collection_name"
+        min_count: "$input.min_count"
+        ids: "$input.ids"
+        vectors: "$input.vectors"
+        documents: "$input.documents"
+        metadatas: "$input.metadatas"
+        query_vector: "$input.query_vector"
+        limit: "$input.limit"
+        result: "chromaResult"
+
+    - name: "deliver-response"
+      type: "output-generator"
+      action:
+        type: "generate"
+        output:
+          success: "$chromaResult.success"
+          has_data: "$chromaResult.has_data"
+          count: "$chromaResult.count"
+          stored_count: "$chromaResult.stored_count"
+          results: "$chromaResult.results"
+          documents: "$chromaResult.documents"
+          error: "$chromaResult.error"
+
+output:
+  schema:
+    success: "$chromaResult.success"
+    has_data: "$chromaResult.has_data"
+    count: "$chromaResult.count"
+    stored_count: "$chromaResult.stored_count"
+    results: "$chromaResult.results"
+    documents: "$chromaResult.documents"
+    error: "$chromaResult.error"

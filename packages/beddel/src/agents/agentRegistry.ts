@@ -210,6 +210,18 @@ export class AgentRegistry {
       this.registerTranslatorAgent();
       // Register Image Generator Agent
       this.registerImageAgent();
+      // Register MCP Tool Agent
+      this.registerMcpToolAgent();
+      // Register Gemini Vectorize Agent
+      this.registerGeminiVectorizeAgent();
+      // Register ChromaDB Agent
+      this.registerChromaDBAgent();
+      // Register GitMCP Agent
+      this.registerGitMcpAgent();
+      // Register RAG Agent
+      this.registerRagAgent();
+      // Register Chat Agent (Orchestrator)
+      this.registerChatAgent();
     } catch (error) {
       console.error("Failed to register built-in agents:", error);
     }
@@ -286,6 +298,150 @@ export class AgentRegistry {
       });
     } catch (error) {
       console.error("Failed to register Image Agent:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Register MCP Tool Agent
+   */
+  private registerMcpToolAgent(): void {
+    try {
+      const yamlPath = this.resolveAgentPath("mcp-tool-agent.yaml");
+      const yamlContent = readFileSync(yamlPath, "utf-8");
+      const agent = this.parseAgentYaml(yamlContent);
+
+      this.registerAgent({
+        id: agent.agent.id,
+        name: "mcp-tool.execute",
+        description: agent.metadata.description,
+        protocol: agent.agent.protocol,
+        route: agent.metadata.route || "/agents/mcp-tool",
+        requiredProps: [],
+        yamlContent,
+      });
+    } catch (error) {
+      console.error("Failed to register MCP Tool Agent:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Register Gemini Vectorize Agent
+   */
+  private registerGeminiVectorizeAgent(): void {
+    try {
+      const yamlPath = this.resolveAgentPath("gemini-vectorize-agent.yaml");
+      const yamlContent = readFileSync(yamlPath, "utf-8");
+      const agent = this.parseAgentYaml(yamlContent);
+
+      this.registerAgent({
+        id: agent.agent.id,
+        name: "gemini-vectorize.execute",
+        description: agent.metadata.description,
+        protocol: agent.agent.protocol,
+        route: agent.metadata.route || "/agents/gemini-vectorize",
+        requiredProps: ["gemini_api_key"],
+        yamlContent,
+      });
+    } catch (error) {
+      console.error("Failed to register Gemini Vectorize Agent:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Register ChromaDB Agent
+   */
+  private registerChromaDBAgent(): void {
+    try {
+      const yamlPath = this.resolveAgentPath("chromadb-agent.yaml");
+      const yamlContent = readFileSync(yamlPath, "utf-8");
+      const agent = this.parseAgentYaml(yamlContent);
+
+      this.registerAgent({
+        id: agent.agent.id,
+        name: "chromadb.execute",
+        description: agent.metadata.description,
+        protocol: agent.agent.protocol,
+        route: agent.metadata.route || "/agents/chromadb",
+        requiredProps: [],
+        yamlContent,
+      });
+    } catch (error) {
+      console.error("Failed to register ChromaDB Agent:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Register GitMCP Agent
+   */
+  private registerGitMcpAgent(): void {
+    try {
+      const yamlPath = this.resolveAgentPath("gitmcp-agent.yaml");
+      const yamlContent = readFileSync(yamlPath, "utf-8");
+      const agent = this.parseAgentYaml(yamlContent);
+
+      this.registerAgent({
+        id: agent.agent.id,
+        name: "gitmcp.execute",
+        description: agent.metadata.description,
+        protocol: agent.agent.protocol,
+        route: agent.metadata.route || "/agents/gitmcp",
+        requiredProps: [],
+        yamlContent,
+      });
+    } catch (error) {
+      console.error("Failed to register GitMCP Agent:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Register RAG Agent
+   */
+  private registerRagAgent(): void {
+    try {
+      const yamlPath = this.resolveAgentPath("rag-agent.yaml");
+      const yamlContent = readFileSync(yamlPath, "utf-8");
+      const agent = this.parseAgentYaml(yamlContent);
+
+      this.registerAgent({
+        id: agent.agent.id,
+        name: "rag.execute",
+        description: agent.metadata.description,
+        protocol: agent.agent.protocol,
+        route: agent.metadata.route || "/agents/rag",
+        requiredProps: ["gemini_api_key"],
+        yamlContent,
+      });
+    } catch (error) {
+      console.error("Failed to register RAG Agent:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Register Chat Agent (Orchestrator)
+   */
+  private registerChatAgent(): void {
+    try {
+      const yamlPath = this.resolveAgentPath("chat-agent.yaml");
+      const yamlContent = readFileSync(yamlPath, "utf-8");
+      const agent = this.parseAgentYaml(yamlContent);
+
+      this.registerAgent({
+        id: agent.agent.id,
+        name: "chat.execute",
+        description: agent.metadata.description,
+        protocol: agent.agent.protocol,
+        route: agent.metadata.route || "/agents/chat",
+        requiredProps: ["gemini_api_key"],
+        yamlContent,
+      });
+    } catch (error) {
+      console.error("Failed to register Chat Agent:", error);
       throw error;
     }
   }

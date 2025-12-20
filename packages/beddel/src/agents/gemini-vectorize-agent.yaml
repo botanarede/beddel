@@ -1,0 +1,84 @@
+# Gemini Vectorize Agent - Native Builtin Agent for Beddel Runtime
+# Route: /agents/gemini-vectorize
+# Method: gemini-vectorize.execute
+
+agent:
+  id: gemini-vectorize
+  version: 1.0.0
+  protocol: beddel-declarative-protocol/v2.0
+
+metadata:
+  name: "Gemini Vectorize Agent"
+  description: "Generates text embeddings using Google's Gemini text-embedding-004 model"
+  category: "ai-service"
+  route: "/agents/gemini-vectorize"
+  tags:
+    - "embeddings"
+    - "gemini"
+    - "ai"
+    - "vectorization"
+
+schema:
+  input:
+    type: "object"
+    properties:
+      action:
+        type: "string"
+        enum: ["embedSingle", "embedBatch"]
+        description: "Action to perform: embedSingle for one text, embedBatch for multiple"
+      text:
+        type: "string"
+        description: "Single text to embed (for embedSingle action)"
+      texts:
+        type: "array"
+        items:
+          type: "string"
+        description: "Array of texts to embed (for embedBatch action)"
+
+  output:
+    type: "object"
+    properties:
+      success:
+        type: "boolean"
+      vector:
+        type: "array"
+        items:
+          type: "number"
+        description: "Single embedding vector (for embedSingle)"
+      vectors:
+        type: "array"
+        items:
+          type: "array"
+          items:
+            type: "number"
+        description: "Array of embedding vectors (for embedBatch)"
+      error:
+        type: "string"
+    required: ["success"]
+
+logic:
+  workflow:
+    - name: "vectorize"
+      type: "gemini-vectorize"
+      action:
+        action: "$input.action"
+        text: "$input.text"
+        texts: "$input.texts"
+        result: "vectorizeResult"
+
+    - name: "deliver-response"
+      type: "output-generator"
+      action:
+        type: "generate"
+        output:
+          success: "$vectorizeResult.success"
+          vector: "$vectorizeResult.vector"
+          vectors: "$vectorizeResult.vectors"
+          error: "$vectorizeResult.error"
+
+output:
+  schema:
+    success: "$vectorizeResult.success"
+    vector: "$vectorizeResult.vector"
+    vectors: "$vectorizeResult.vectors"
+    error: "$vectorizeResult.error"

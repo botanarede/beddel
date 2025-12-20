@@ -1,0 +1,132 @@
+# Chat Agent - Native Builtin Orchestrator Agent for Beddel Runtime
+# Route: /agents/chat
+# Method: chat.execute
+
+agent:
+  id: chat
+  version: 1.0.0
+  protocol: beddel-declarative-protocol/v2.0
+
+metadata:
+  name: "Q&A Context Chat Agent"
+  description: "Orchestrates RAG pipeline: vectorization, storage, retrieval and answer generation"
+  category: "chat"
+  route: "/agents/chat"
+  knowledge_sources:
+    - "gitmcp-agent"
+  tags:
+    - "chat"
+    - "orchestrator"
+    - "rag"
+    - "qa"
+
+schema:
+  input:
+    type: "object"
+    properties:
+      messages:
+        type: "array"
+        items:
+          type: "object"
+          properties:
+            role:
+              type: "string"
+              enum: ["user", "assistant", "system"]
+            content:
+              type: "string"
+          required: ["role", "content"]
+        description: "Conversation messages"
+      query:
+        type: "string"
+        description: "Direct query (alternative to messages)"
+      knowledge_sources:
+        type: "array"
+        items:
+          type: "string"
+        description: "GitMCP URLs to use as knowledge sources"
+    required: ["messages"]
+
+  output:
+    type: "object"
+    properties:
+      response:
+        type: "string"
+        description: "Generated answer"
+      timestamp:
+        type: "string"
+        description: "ISO timestamp"
+      executionSteps:
+        type: "array"
+        description: "Detailed execution steps for observability"
+      totalDuration:
+        type: "number"
+        description: "Total execution time in milliseconds"
+    required: ["response", "timestamp"]
+
+logic:
+  variables:
+    - name: "userQuery"
+      type: "string"
+      init: '""'
+    - name: "allDocuments"
+      type: "string"
+      init: '""'
+
+  workflow:
+    # Step 1: Extract user query from messages
+    - name: "extract-query"
+      type: "output-generator"
+      action:
+        type: "generate"
+        output:
+          _extracted: true
+
+    # Step 2: Vectorize user query
+    - name: "vectorize-query"
+      type: "gemini-vectorize"
+      action:
+        action: "embedSingle"
+        text: "$input.query"
+        result: "queryVector"
+
+    # Step 3: Check if knowledge base has data
+    - name: "check-knowledge"
+      type: "chromadb"
+      action:
+        action: "hasData"
+        collection_name: "beddel_knowledge"
+        min_count: 5
+        result: "hasDataResult"
+
+    # Step 4: Search knowledge base
+    - name: "search-knowledge"
+      type: "chromadb"
+      action:
+        action: "search"
+        collection_name: "beddel_knowledge"
+        query_vector: "$queryVector.vector"
+        limit: 5
+        result: "searchResult"
+
+    # Step 5: Generate answer using RAG
+    - name: "generate-answer"
+      type: "rag"
+      action:
+        query: "$input.query"
+        documents: "$searchResult.documents"
+        history: "$input.messages"
+        result: "ragResult"
+
+    # Step 6: Deliver final response
+    - name: "deliver-response"
+      type: "output-generator"
+      action:
+        type: "generate"
+        output:
+          response: "$ragResult.response"
+          timestamp: "$ragResult.timestamp"
+
+output:
+  schema:
+    response: "$ragResult.response"
+    timestamp: "$ragResult.timestamp"
