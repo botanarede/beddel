@@ -1,4 +1,5 @@
 {
     "codium.codeCompletion.enable": false,
-    "kiroAgent.configureMCP": "Enabled"
+    "kiroAgent.configureMCP": "Enabled",
+    "typescript.autoClosingTags": false
 }

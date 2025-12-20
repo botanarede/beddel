@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.2.3] - 2025-12-20
+
+### Added
+- **Client-Safe Type Exports**: Exposed shared types for frontend consumption
+  - `AgentMetadata`, `AgentResponse`, `ExecutionStep` from shared agent types
+  - `WorkflowStepType`, `AgentCategory` for workflow typing
+  - `ChatHandlerParams`, `ChatHandlerResult`, `ChatMetadata` for chat agent
+  - `ConversationMessage` from RAG types
+  - `chatMetadata` constant for chat agent metadata
+
+### Purpose
+- Enable frontend applications to import types directly from `beddel` package
+- Support type-safe chat UI development without duplicating type definitions
+- All exported types are client-safe (no server-only dependencies)
+
 ## [0.2.2] - 2025-12-19
 
 ### Changed

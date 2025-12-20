@@ -1,12 +1,8 @@
 {
   "compilerOptions": {
-    "lib": [
-      "dom",
-      "dom.iterable",
-      "esnext"
-    ],
+    "target": "ES2020",
+    "lib": ["dom", "dom.iterable", "esnext"],
     "allowJs": true,
-    "target": "ES6",
     "skipLibCheck": true,
     "strict": true,
     "noEmit": true,
@@ -17,24 +13,11 @@
     "isolatedModules": true,
     "jsx": "react-jsx",
     "incremental": true,
-    "plugins": [
-      {
-        "name": "next"
-      }
-    ],
+    "plugins": [{ "name": "next" }],
     "paths": {
-      "@/*": [
-        "./*"
-      ],
-      "@/lib/*": [
-        "app/lib/*"
-      ],
-      "beddel": [
-        "packages/beddel/src/index.ts"
-      ],
-      "beddel/*": [
-        "packages/beddel/src/*"
-      ]
+      "@/*": ["./*"],
+      "beddel": ["./packages/beddel/src/index.ts"],
+      "beddel/*": ["./packages/beddel/src/*"]
     }
   },
   "include": [
@@ -44,7 +27,5 @@
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts"
   ],
-  "exclude": [
-    "node_modules"
-  ]
+  "exclude": ["node_modules"]
 }

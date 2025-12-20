@@ -121,5 +121,25 @@ export { SecureYamlRuntime } from "./integration/secure-yaml-runtime";
 // Shared types
 export type { ExecutionContext } from "./types/executionContext";
 
+// Shared agent types (client-safe)
+export type {
+  AgentMetadata,
+  AgentResponse,
+  ExecutionStep,
+  WorkflowStepType,
+  AgentCategory,
+} from "./shared/types/agent.types";
+
+// Chat agent exports (client-safe)
+export type {
+  ChatHandlerParams,
+  ChatHandlerResult,
+  ChatMetadata,
+} from "./agents/chat/chat.types";
+export { chatMetadata } from "./agents/chat";
+
+// RAG types (client-safe)
+export type { ConversationMessage } from "./agents/rag/rag.types";
+
 // Server/runtime exports
 export * as Server from "./server";
