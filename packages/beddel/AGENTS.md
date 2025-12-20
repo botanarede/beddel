@@ -1,88 +1,252 @@
-# AGENTS.md for the Beddel Package
+# AGENTS.md — Beddel Protocol
 
-Use this document as the operational guide for AI assistants and humans working on `packages/beddel`. It complements `README.md` with more implementation context, code navigation tips, and documentation duties.
+> **Language Policy**: The native language of the Beddel protocol is **English**. All code, comments, commit messages, documentation, and agent manifests **must be written in English**. This ensures consistency, broader accessibility, and seamless integration with AI agents.
 
-## 1. Mission snapshot
+This document provides essential context for AI agents and developers working on the `packages/beddel` codebase. It complements `README.md` with implementation details, navigation guides, and operational instructions.
 
-- **Primary goal:** ship a security-hardened YAML execution toolkit (parser + runtimes + compliance) that matches what `docs/beddel` envisions, while keeping the npm package trustworthy and auditable.
-- **Current scope:** the repository contains the hardened primitives (`src/parser`, `src/runtime`, `src/security`, etc.). Advanced declarative constructs mentioned in `docs/beddel/brief.md` are roadmap items—treat them as specs, not as implemented features.
-- **Users:** backend teams embedding declarative YAML agents in Node.js services, plus internal tooling that relies on strict isolation/compliance guarantees.
+---
 
-## 2. Source tree essentials
+## 1. Project Overview
 
-| Directory | Purpose | Notes |
-| --- | --- | --- |
-| `src/parser` | `SecureYamlParser` & helpers | FAILSAFE schema, depth/size controls, async option. |
-| `src/runtime` | `IsolatedRuntimeManager`, `SimpleIsolatedRuntimeManager`, declarative interpreter, audit service, monitoring hooks | Runtimes share `runtimeConfig` and `securityProfiles`. |
-| `src/agents` | `AgentRegistry` + sample `joker-agent.yaml` | Registry auto-loads the sample agent at startup. |
-| `src/security` | Scanner, scoring, hardening, threat detection | `SecurityScanner.scan` is used by `SecureYamlRuntime`. |
-| `src/compliance` | GDPR/LGPD engines | Depend on `AuditTrail` for hash logging. |
-| `src/audit` | `AuditTrail` (hash-based logging) | Consumed by Firebase manager and compliance engines. |
-| `src/firebase` | `MultiTenantFirebaseManager` | Wraps `firebase-admin` for tenant isolation. |
-| `src/performance` | Monitoring, autoscaling, benchmarking | Emits recommendations, threshold-based violations. |
-| `src/integration` | `SecureYamlRuntime` glue | Parses + scans + executes YAML in a single flow. |
+**Beddel** is a security-hardened YAML execution toolkit for building declarative AI agents. It provides:
 
-Everything is exported via `src/index.ts`. Before adding a new folder, decide whether it fits one of the existing concerns; if not, create a new directory and expose it through the index.
+- **Secure YAML parsing** with strict schema validation
+- **Isolated runtime environments** with sandboxed execution
+- **Declarative agent definitions** via YAML manifests
+- **Built-in compliance** (GDPR/LGPD) and audit trails
+- **Multi-tenant Firebase support** with tenant isolation
 
-## 3. Implementation notes & guardrails
+**Target Users**: Backend teams embedding declarative YAML agents in Node.js services.
 
-### Secure YAML parser
+---
 
-- Only use `js-yaml` with `FAILSAFE_SCHEMA`. Never enable custom tags.
-- Respect `YAMLParserConfig` limits (depth, keys, string length, UTF-8 validation). Any relaxation must be justified and must include new tests inside `packages/beddel/tests`.
-- `parseSecureAsync` simply defers to `parseSecure` on the next tick. If you need streaming parsing, create a new API instead of mutating the current one.
+## 2. Source Tree Structure
 
-### Runtimes
+| Directory | Purpose | Key Files |
+|-----------|---------|-----------|
+| `src/parser` | Secure YAML parsing with FAILSAFE schema | `SecureYamlParser` |
+| `src/runtime` | Isolated execution, declarative interpreter, workflow executor | `DeclarativeAgentInterpreter`, `workflowExecutor` |
+| `src/agents` | Agent registry and sharded agent modules | `AgentRegistry`, `*/index.ts`, `*/*.handler.ts` |
+| `src/shared` | Client-safe types and utilities | `types/`, `utils/` |
+| `src/client` | Client-safe exports | `index.ts`, `types.ts` |
+| `src/security` | Threat detection, scoring, hardening | `SecurityScanner` |
+| `src/compliance` | GDPR/LGPD compliance engines | `GDPRCompliance`, `LGPDCompliance` |
+| `src/audit` | Hash-based audit trail logging | `AuditTrail` |
+| `src/firebase` | Multi-tenant Firebase management | `MultiTenantFirebaseManager` |
+| `src/performance` | Monitoring, autoscaling, benchmarking | `PerformanceMonitor` |
+| `src/integration` | High-level runtime glue | `SecureYamlRuntime` |
 
-- `IsolatedRuntimeManager` maintains an isolate pool and strips dangerous globals (`require`, `eval`, timers). If you add a feature that needs a module inside the isolate, extend `securityProfiles` and add explicit allowlists.
-- `SimpleIsolatedRuntimeManager` is for lower-overhead environments. Keep it feature-light; deep changes belong to the main manager.
-- `DeclarativeAgentInterpreter` currently supports literal/variable initialization plus the step types `output-generator`, `genkit-joke`, `genkit-translation` e `genkit-image`, sempre com validação em Zod via `DeclarativeSchemaCompiler`. Cada manifest precisa declarar `schema.input`/`schema.output` completos (objetos/arrays/primitivos com `type`). O interpreter valida input/output, devolve `DeclarativeSchemaValidationError` em caso de mismatch e expõe helpers `callGeminiFlashText|Translation|Image` que invocam `google("models/gemini-flash-latest")` usando Genkit. Todos os steps Genkit exigem `props.gemini_api_key` — sem ela a execução falha com erro amigável. Qualquer novo step precisa de validação + testes + updates no README/AGENTS.
-- `DeclarativeSchemaCompiler` caches compiled schemas per manifest path. When you tweak schema translation rules, add regression tests under `tests/runtime` (covering caching/perf, invalid payloads, and output rejection) so automation agents can rely on deterministic validation.
-- `AgentRegistry` eagerly registers `joker-agent.yaml`, `translator-agent.yaml` e `image-agent.yaml`. Quando adicionar novos agentes embutidos, coloque o manifest em `src/agents` e carregue-o seguindo o mesmo padrão.
+All exports are centralized in `src/index.ts`.
 
-#### Declarative agent catalog
+---
 
-Built-in manifests live in `src/agents/` and are auto-registered by `AgentRegistry`. Keep the table below in sync whenever inputs/outputs change:
+## 3. Setup Commands
 
-| Agent | Method | Inputs | Outputs | Required props | Notes |
-| --- | --- | --- | --- | --- | --- |
-| `joker-agent.yaml` | `joker.execute` | — | `response` | `gemini_api_key` | Usa `genkit-joke` com prompt fixo para gerar uma piada curta. |
-| `translator-agent.yaml` | `translator.execute` | `texto`, `idioma_origem`, `idioma_destino` | `texto_traduzido`, `metadados` | `gemini_api_key` | Passa pelos helpers `callGeminiFlashTranslation` e devolve metadados (`modelo_utilizado`, `tempo_processamento`, `idiomas_suportados`). |
-| `image-agent.yaml` | `image.generate` | `descricao`, `estilo (watercolor|neon|sketch)`, `resolucao` | `image_url`, `image_base64`, `media_type`, `prompt_utilizado`, `metadados` | `gemini_api_key` | Usa `genkit-image` e retorna a imagem em data URL (base64) + metadata. |
+```bash
+# Install dependencies
+pnpm install
 
-> Todos os agentes acima compartilham a mesma credencial `gemini_api_key` transmitida via `props`. Sem ela os helpers Genkit abortam imediatamente.
+# Build the package
+pnpm --filter beddel build
 
-### Security, compliance, performance
+# Run tests
+pnpm --filter beddel test
 
-- `SecurityScanner` is synchronous and in-memory. Long-running or I/O heavy enhancements should expose async APIs to avoid blocking the main interpreter.
-- Compliance engines (`GDPRCompliance`, `LGPDCompliance`) assume `AuditTrail` is available. Do not instantiate heavy dependencies inside hot paths—pass singletons when possible.
-- `PerformanceMonitor` uses retention windows and console logging. Respect the thresholds defined in `performanceTargets`.
+# Run linting
+pnpm --filter beddel lint
+```
 
-### Firebase multi-tenancy
+---
 
-- `MultiTenantFirebaseManager.initializeTenant` is responsible for validating configs, setting security rules, and logging operations. Keep all Firebase Admin calls tenant-scoped (`admin.initializeApp(..., tenantId)`).
-- Never store raw secrets in audit logs; always pass objects through `sanitizeForAudit`.
+## 4. Code Style Guidelines
 
-## 4. Documentation & sync duties
+### General Rules
 
-1. **When code changes:** update both `README.md` and this `AGENTS.md`. The README is user-facing; this file is for maintainers/agents. Mention new exports, behavior differences, and testing steps in both where relevant.
-2. **When specs change:** reflect them in `docs/beddel`. If a spec is not implemented yet, add it to the “Docs/beddel roadmap coverage” section in the README so expectations stay aligned.
-3. **When adding declarative language features:** include a worked example under `docs/beddel` (brief or PRD) and document the interpreter changes here (supported syntax, limits, fallback behavior).
-4. **Audits:** cross-check the package map in the README with `src/index.ts` before publishing to npm so consumers never import stale symbols.
+- **Language**: All code, comments, and documentation must be in English
+- **TypeScript**: Use strict typing; avoid `any` unless absolutely necessary
+- **Naming**: Use camelCase for variables/functions, PascalCase for classes/interfaces
+- **Imports**: Prefer named exports; group imports by external/internal
 
-## 5. Testing & verification
+### YAML Parsing Rules
 
-- Use the package-level scripts (`pnpm --filter beddel test`, `pnpm --filter beddel lint`). Keep CI-friendly tests under `packages/beddel/tests`.
-- For runtime-level changes, add regression tests in `tests/` (e.g., `test-runtime.js`, `test-runtime-security.js`) or create new files mirroring the naming convention.
-- When touching sandbox logic, run the security-focused scripts (`test-runtime-security.js`, `test-session*`) locally; they cover threat detection, isolation, and audit flows.
-- For Firebase features, mock `firebase-admin` or guard the tests behind env checks—CI should not need real credentials.
+- Always use `js-yaml` with `FAILSAFE_SCHEMA` — never enable custom tags
+- Respect `YAMLParserConfig` limits (depth, keys, string length, UTF-8 validation)
+- Any relaxation of limits requires justification and new tests
 
-## 6. Contribution checklist
+### Runtime Rules
 
-1. Understand the modules you touch (skim the directory table above).
-2. Add or update tests.
-3. Update README + AGENTS (and `docs/beddel` if specs changed).
-4. Run `pnpm --filter beddel build && pnpm --filter beddel lint`.
-5. Document remaining gaps vs. the spec under the README “Docs/beddel roadmap coverage” section.
+- `IsolatedRuntimeManager` maintains an isolate pool; dangerous globals (`require`, `eval`, timers) are stripped
+- New module allowlists must be added to `securityProfiles` with explicit justification
+- `SimpleIsolatedRuntimeManager` is for low-overhead scenarios; keep it minimal
 
-Stay disciplined about the README/AGENTS sync requirement so downstream consumers and automation agents always get an accurate picture of the package.
+### Security Rules
+
+- `SecurityScanner` is synchronous — avoid I/O heavy operations in hot paths
+- Compliance engines assume `AuditTrail` is available; pass singletons when possible
+- Never store raw secrets in audit logs; use `sanitizeForAudit`
+
+---
+
+## 5. Agent Development
+
+### Declarative Agent Structure
+
+Agent manifests live in `src/agents/{agent-name}/` with a sharded structure:
+
+```
+src/agents/joker/
+├── joker.yaml           # Agent definition
+├── joker.handler.ts     # Server-only execution logic
+├── joker.schema.ts      # Zod validation schemas
+├── joker.types.ts       # TypeScript type definitions
+└── index.ts             # Public exports (client-safe)
+```
+
+### Supported Workflow Step Types
+
+| Step Type | Description | Required Props |
+|-----------|-------------|----------------|
+| `output-generator` | Returns literal or computed values | — |
+| `genkit-joke` | Generates jokes via Gemini | `gemini_api_key` |
+| `genkit-translation` | Translates text via Gemini | `gemini_api_key` |
+| `genkit-image` | Generates images via Gemini | `gemini_api_key` |
+| `mcp-tool` | Invokes MCP server tools | — |
+| `gemini-vectorize` | Generates text embeddings | `gemini_api_key` |
+| `chromadb` | Vector storage and retrieval | — |
+| `gitmcp` | Fetches GitHub documentation | — |
+| `rag` | RAG answer generation | `gemini_api_key` |
+| `custom-action` | Executes custom TypeScript functions | Varies |
+
+### Built-in Agents
+
+| Agent | Method | Required Props | Description |
+|-------|--------|----------------|-------------|
+| `joker/joker.yaml` | `joker.execute` | `gemini_api_key` | Generates short jokes |
+| `translator/translator.yaml` | `translator.execute` | `gemini_api_key` | Text translation with metadata |
+| `image/image.yaml` | `image.generate` | `gemini_api_key` | Image generation with base64 output |
+| `mcp-tool/mcp-tool.yaml` | `mcp-tool.execute` | — | MCP server tool invocation |
+| `gemini-vectorize/gemini-vectorize.yaml` | `gemini-vectorize.execute` | `gemini_api_key` | Text embeddings |
+| `chromadb/chromadb.yaml` | `chromadb.execute` | — | Vector storage/retrieval |
+| `gitmcp/gitmcp.yaml` | `gitmcp.execute` | — | GitHub documentation fetching |
+| `rag/rag.yaml` | `rag.execute` | `gemini_api_key` | RAG answer generation |
+| `chat/chat.yaml` | `chat.execute` | `gemini_api_key` | RAG pipeline orchestrator |
+
+### Custom Agents
+
+Custom agents can be created in the application's `/agents` directory:
+
+1. Create a YAML manifest defining the agent schema and workflow
+2. Create a corresponding TypeScript file for custom logic
+3. The `AgentRegistry` automatically loads agents from `/agents` with higher priority than built-in agents
+
+---
+
+## 6. Testing Instructions
+
+### Test Commands
+
+```bash
+# Run all tests
+pnpm --filter beddel test
+
+# Run specific test files
+node packages/beddel/tests/test-runtime.js
+node packages/beddel/tests/test-runtime-security.js
+```
+
+### Test Requirements
+
+- Add regression tests for any runtime changes in `tests/`
+- Mock `firebase-admin` or guard tests behind environment checks
+- Security-focused tests (`test-runtime-security.js`, `test-session*`) cover threat detection and isolation
+- Schema validation changes require tests for caching, invalid payloads, and output rejection
+
+---
+
+## 7. Boundaries and Guardrails
+
+### What Agents SHOULD Do
+
+- ✅ Use existing utilities from `src/` before creating new ones
+- ✅ Follow the YAML FAILSAFE schema strictly
+- ✅ Add tests for any new functionality
+- ✅ Update documentation when modifying APIs
+
+### What Agents SHOULD NOT Do
+
+- ❌ Modify security profiles without explicit approval
+- ❌ Enable custom YAML tags or relax parsing limits without justification
+- ❌ Store secrets or sensitive data in logs
+- ❌ Create new directories without checking if functionality fits existing concerns
+- ❌ Write code or documentation in languages other than English
+
+### Files Requiring Caution
+
+- `src/security/*` — Core security logic; changes require thorough review
+- `src/parser/SecureYamlParser.ts` — Parsing security; modifications need justification
+- `src/runtime/IsolatedRuntimeManager.ts` — Sandbox isolation; high-risk changes
+
+---
+
+## 8. Documentation Sync Duties
+
+When making changes, ensure documentation stays synchronized:
+
+| Change Type | Update Required |
+|-------------|-----------------|
+| Code changes | Update `README.md` and `AGENTS.md` |
+| API changes | Update `docs/` and export list in `src/index.ts` |
+| New agents | Add to agent catalog in this file |
+| Spec changes | Reflect in `docs/beddel` |
+| Schema changes | Document in interpreter section |
+
+---
+
+## 9. Contribution Checklist
+
+Before submitting changes:
+
+- [ ] Code and comments are in English
+- [ ] Understand the modules being modified (see source tree)
+- [ ] Tests added or updated for changes
+- [ ] `README.md` and `AGENTS.md` updated
+- [ ] `pnpm --filter beddel build` passes
+- [ ] `pnpm --filter beddel lint` passes
+- [ ] Roadmap gaps documented in README
+
+---
+
+## 10. Handling Uncertainty
+
+When encountering ambiguous requirements or edge cases:
+
+1. **Ask clarifying questions** before implementing
+2. **Propose a plan** and wait for approval on significant changes
+3. **Document assumptions** in code comments and commit messages
+4. **Create draft PRs** with implementation notes for review
+
+---
+
+## 11. Git Workflow
+
+### Commit Message Format
+
+```
+<type>: <short description>
+
+[optional body]
+
+[optional footer]
+```
+
+Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
+
+### Branch Naming
+
+- Features: `feat/<description>`
+- Fixes: `fix/<description>`
+- Documentation: `docs/<description>`
+
+---
+
+*This document is living documentation. Update it as the codebase evolves.*

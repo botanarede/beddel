@@ -31,7 +31,7 @@
 
 ### 2. Agent Registry Service
 
-**File**: `packages/beddel/src/agents/agentRegistry.ts`
+**File**: `packages/beddel/src/agents/registry/agentRegistry.ts`
 
 **Features**:
 - Automatic registration of built-in agents at startup
@@ -146,9 +146,10 @@ See `docs/guides/custom-agents.md` for complete documentation.
 ## Files Changed
 
 - `packages/beddel/src/runtime/declarativeAgentRuntime.ts` - Declarative interpreter
-- `packages/beddel/src/agents/agentRegistry.ts` - Agent registry with custom loading
+- `packages/beddel/src/runtime/workflowExecutor.ts` - Workflow step execution
+- `packages/beddel/src/agents/registry/agentRegistry.ts` - Agent registry with custom loading
+- `packages/beddel/src/agents/*/` - Sharded agent modules (handler, schema, types, yaml)
 - `packages/beddel/src/server/api/graphql.ts` - GraphQL integration
-- `packages/beddel/src/agents/*.yaml` - Built-in agent definitions
 
 ---
 

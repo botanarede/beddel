@@ -55,10 +55,10 @@ schema:
       timestamp:
         type: "string"
         description: "ISO timestamp"
-      executionSteps:
+      execution_steps:
         type: "array"
         description: "Detailed execution steps for observability"
-      totalDuration:
+      total_duration:
         type: "number"
         description: "Total execution time in milliseconds"
     required: ["response", "timestamp"]

@@ -24,11 +24,15 @@ Beddel Alpha is a complete demonstration of the **real Beddel runtime** executin
 │   │                     Agent Sources                             │  │
 │   │                                                               │  │
 │   │   /agents/                    packages/beddel/src/agents/    │  │
-│   │   (Custom)                    (Built-in)                      │  │
+│   │   (Custom)                    (Built-in - Sharded)            │  │
 │   │                                                               │  │
-│   │   • your-agent.yaml          • joker-agent.yaml              │  │
-│   │   • calculator.yaml          • translator-agent.yaml         │  │
-│   │   • ...                      • image-agent.yaml              │  │
+│   │   • your-agent.yaml          • joker/joker.yaml              │  │
+│   │   • calculator.yaml          • translator/translator.yaml    │  │
+│   │   • ...                      • image/image.yaml              │  │
+│   │                              • mcp-tool/mcp-tool.yaml        │  │
+│   │                              • chromadb/chromadb.yaml        │  │
+│   │                              • rag/rag.yaml                  │  │
+│   │                              • chat/chat.yaml                │  │
 │   │                                                               │  │
 │   │           Custom agents override built-in agents              │  │
 │   └──────────────────────────────────────────────────────────────┘  │
@@ -64,7 +68,7 @@ Beddel Alpha is a complete demonstration of the **real Beddel runtime** executin
 ```
 beddel-alpha/
 ├── agents/                          # Custom agents (auto-discovered)
-│   └── exemplo-agente.yaml          # Example custom agent
+│   └── example-agent.yaml           # Example custom agent
 │
 ├── app/
 │   ├── api/
@@ -75,13 +79,25 @@ beddel-alpha/
 │
 ├── packages/beddel/
 │   └── src/
-│       ├── agents/
-│       │   ├── agentRegistry.ts     # Agent management
-│       │   ├── joker-agent.yaml     # Built-in: joker.execute
-│       │   ├── translator-agent.yaml# Built-in: translator.execute
-│       │   └── image-agent.yaml     # Built-in: image.generate
-│       └── runtime/
-│           └── declarativeAgentRuntime.ts
+│       ├── agents/                  # Sharded agent structure
+│       │   ├── registry/
+│       │   │   └── agentRegistry.ts # Agent management
+│       │   ├── joker/
+│       │   │   ├── joker.yaml       # Agent definition
+│       │   │   ├── joker.handler.ts # Server-only handler
+│       │   │   └── index.ts         # Public exports
+│       │   ├── translator/
+│       │   ├── image/
+│       │   ├── mcp-tool/
+│       │   ├── chromadb/
+│       │   ├── gitmcp/
+│       │   ├── rag/
+│       │   └── chat/
+│       ├── runtime/
+│       │   ├── declarativeAgentRuntime.ts
+│       │   └── workflowExecutor.ts
+│       ├── shared/                  # Client-safe types
+│       └── client/                  # Client-safe exports
 │
 ├── docs/                            # Documentation
 │   ├── architecture/

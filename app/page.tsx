@@ -1151,14 +1151,14 @@ export default function HomePage() {
             <div>
               <h2 id="yaml-heading" className="text-2xl font-semibold text-white">
                 {selectedAgent === "joker.execute"
-                  ? "`joker-agent.yaml`"
+                  ? "`joker/joker.yaml`"
                   : selectedAgent === "translator.execute"
-                    ? "`translator-agent.yaml`"
-                    : "`image-agent.yaml`"}
+                    ? "`translator/translator.yaml`"
+                    : "`image/image.yaml`"}
               </h2>
               <p className="text-sm text-slate-400">
-                Highlighted diretamente do manifest carregado em produção para espelhar o
-                mesmo contrato interpretado pelo runtime.
+                Highlighted directly from the manifest loaded in production to mirror the
+                same contract interpreted by the runtime.
               </p>
             </div>
           </div>

@@ -4,7 +4,7 @@
 
 import { GraphQLError, GraphQLScalarType, Kind, type ValueNode } from "graphql";
 import { createSchema, createYoga } from "graphql-yoga";
-import { agentRegistry } from "../../agents/agentRegistry";
+import { agentRegistry } from "../../agents/registry";
 import {
   getClientByApiKey,
   getEndpointByName,

@@ -132,10 +132,29 @@ your-app/
 │   └── translator-custom/
 │       └── translator-custom.yaml   # Override built-in
 │
-└── packages/beddel/src/agents/      # Built-in agents (package)
-    ├── joker-agent.yaml
-    ├── translator-agent.yaml
-    └── image-agent.yaml
+└── packages/beddel/src/agents/      # Built-in agents (sharded structure)
+    ├── joker/
+    │   ├── joker.yaml               # Agent definition
+    │   ├── joker.handler.ts         # Server-only handler
+    │   ├── joker.schema.ts          # Zod validation
+    │   ├── joker.types.ts           # TypeScript types
+    │   └── index.ts                 # Public exports
+    ├── translator/
+    │   └── ...
+    ├── image/
+    │   └── ...
+    ├── mcp-tool/
+    │   └── ...
+    ├── gemini-vectorize/
+    │   └── ...
+    ├── chromadb/
+    │   └── ...
+    ├── gitmcp/
+    │   └── ...
+    ├── rag/
+    │   └── ...
+    └── chat/
+        └── ...
 ```
 
 ### Agent Loading Flow
@@ -520,16 +539,35 @@ const result = await runtime.execute({
 
 ```
 src/
-├── agents/                  # Agent registry and built-in agents
-│   ├── agentRegistry.ts     # Agent management
-│   ├── joker-agent.yaml     # Built-in: Joker
-│   ├── translator-agent.yaml
-│   └── image-agent.yaml
-├── parser/                  # Secure YAML parsing
+├── agents/                  # Agent registry and sharded agent modules
+│   ├── registry/            # Agent registry
+│   │   ├── agentRegistry.ts
+│   │   └── index.ts
+│   ├── joker/               # Joker agent
+│   │   ├── joker.yaml
+│   │   ├── joker.handler.ts
+│   │   ├── joker.schema.ts
+│   │   ├── joker.types.ts
+│   │   └── index.ts
+│   ├── translator/          # Translator agent
+│   ├── image/               # Image generator agent
+│   ├── mcp-tool/            # MCP tool agent
+│   ├── gemini-vectorize/    # Embeddings agent
+│   ├── chromadb/            # Vector storage agent
+│   ├── gitmcp/              # GitHub docs agent
+│   ├── rag/                 # RAG agent
+│   ├── chat/                # Chat orchestrator agent
+│   └── index.ts             # Public exports
 ├── runtime/                 # Execution environments
-│   ├── isolatedRuntime.ts
 │   ├── declarativeAgentRuntime.ts
-│   └── schemaCompiler.ts
+│   ├── workflowExecutor.ts  # Workflow step execution
+│   ├── schemaCompiler.ts
+│   └── index.ts
+├── shared/                  # Client-safe types and utilities
+│   ├── types/
+│   └── utils/
+├── client/                  # Client-safe exports
+├── parser/                  # Secure YAML parsing
 ├── security/                # Scanning and threat detection
 ├── compliance/              # GDPR/LGPD utilities
 ├── performance/             # Monitoring and autoscaling

@@ -9,7 +9,7 @@ agent:
 
 metadata:
   name: "Image Generator Agent"
-  description: "Gera imagens usando Gemini Flash com estilos curados"
+  description: "Generates images using Gemini Flash with curated styles"
   category: "creative"
   route: "/agents/image"
 
@@ -17,20 +17,20 @@ schema:
   input:
     type: "object"
     properties:
-      descricao:
+      description:
         type: "string"
         minLength: 5
         maxLength: 500
-        description: "Descrição textual detalhada da cena"
-      estilo:
+        description: "Detailed textual description of the scene"
+      style:
         type: "string"
         enum: ["watercolor", "neon", "sketch"]
-        description: "Estilo visual desejado"
-      resolucao:
+        description: "Desired visual style"
+      resolution:
         type: "string"
         pattern: "^[0-9]{3,4}x[0-9]{3,4}$"
-        description: "Resolução no formato LARGURAxALTURA (ex: 1024x1024)"
-    required: ["descricao", "estilo", "resolucao"]
+        description: "Resolution in WIDTHxHEIGHT format (e.g., 1024x1024)"
+    required: ["description", "style", "resolution"]
 
   output:
     type: "object"
@@ -41,21 +41,21 @@ schema:
         type: "string"
       media_type:
         type: "string"
-      prompt_utilizado:
+      prompt_used:
         type: "string"
-      metadados:
+      metadata:
         type: "object"
         properties:
-          modelo_utilizado:
+          model_used:
             type: "string"
-          tempo_processamento:
+          processing_time:
             type: "number"
-          estilo:
+          style:
             type: "string"
-          resolucao:
+          resolution:
             type: "string"
-        required: ["modelo_utilizado", "tempo_processamento", "estilo", "resolucao"]
-    required: ["image_url", "prompt_utilizado", "metadados"]
+        required: ["model_used", "processing_time", "style", "resolution"]
+    required: ["image_url", "prompt_used", "metadata"]
 
 logic:
   workflow:
@@ -64,7 +64,7 @@ logic:
       action:
         type: "image"
         result: "imageResult"
-        promptTemplate: "Crie uma imagem em estilo {{estilo}} com foco em: {{descricao}}"
+        promptTemplate: "Create an image in {{style}} style focusing on: {{description}}"
 
     - name: "deliver-image"
       type: "output-generator"
@@ -74,13 +74,13 @@ logic:
           image_url: "$imageResult.image_url"
           image_base64: "$imageResult.image_base64"
           media_type: "$imageResult.media_type"
-          prompt_utilizado: "$imageResult.prompt_utilizado"
-          metadados: "$imageResult.metadados"
+          prompt_used: "$imageResult.prompt_used"
+          metadata: "$imageResult.metadata"
 
 output:
   schema:
     image_url: "$imageResult.image_url"
     image_base64: "$imageResult.image_base64"
     media_type: "$imageResult.media_type"
-    prompt_utilizado: "$imageResult.prompt_utilizado"
-    metadados: "$imageResult.metadados"
+    prompt_used: "$imageResult.prompt_used"
+    metadata: "$imageResult.metadata"

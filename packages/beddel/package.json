@@ -27,6 +27,22 @@
     "./server/api/graphql": {
       "types": "./dist/server/api/graphql.d.ts",
       "default": "./dist/server/api/graphql.js"
+    },
+    "./client": {
+      "types": "./dist/client/index.d.ts",
+      "default": "./dist/client/index.js"
+    },
+    "./shared": {
+      "types": "./dist/shared/index.d.ts",
+      "default": "./dist/shared/index.js"
+    },
+    "./agents": {
+      "types": "./dist/agents/index.d.ts",
+      "default": "./dist/agents/index.js"
+    },
+    "./agents/*": {
+      "types": "./dist/agents/*/index.d.ts",
+      "default": "./dist/agents/*/index.js"
     }
   },
   "scripts": {
@@ -73,13 +89,14 @@
     "graphql-yoga": "^5.13.5",
     "isolated-vm": "5.0.1",
     "js-yaml": "^4.1.0",
+    "server-only": "^0.0.1",
     "zod": "^4.1.12"
   },
   "devDependencies": {
     "@types/eventsource": "^1.1.15",
+    "@types/jest": "^29.5.12",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.0.0",
-    "@types/jest": "^29.5.12",
     "@typescript-eslint/eslint-plugin": "^8.0.0",
     "@typescript-eslint/parser": "^8.0.0",
     "eslint": "^9.0.0",

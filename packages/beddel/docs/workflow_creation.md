@@ -337,13 +337,14 @@ logic:
 - [ ] Adicionar método de registro no `AgentRegistry`
 - [ ] Chamar método de registro em `registerBuiltinAgents`
 - [ ] Adicionar dependências ao `package.json` se necessário
-- [ ] Documentar variáveis de ambiente necessárias
-- [ ] Testar execução do agente
+- [ ] Document required environment variables
+- [ ] Test agent execution
 
-## Exemplos de Referência
+## Reference Examples
 
-Consulte os seguintes arquivos como referência:
+Consult the following files as reference:
 
-- `packages/beddel/src/runtime/declarativeAgentRuntime.ts` - Implementação dos step types
-- `packages/beddel/src/agents/agentRegistry.ts` - Registro de agentes
-- `packages/beddel/src/agents/*.yaml` - Definições YAML dos agentes builtin
+- `packages/beddel/src/runtime/declarativeAgentRuntime.ts` - Step type implementation
+- `packages/beddel/src/runtime/workflowExecutor.ts` - Workflow step execution
+- `packages/beddel/src/agents/registry/agentRegistry.ts` - Agent registry
+- `packages/beddel/src/agents/*/` - Sharded agent modules (handler, schema, types, yaml)

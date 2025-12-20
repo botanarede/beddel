@@ -9,7 +9,7 @@ agent:
 
 metadata:
   name: "Joker Agent"
-  description: "Conta piadas usando Gemini Flash"
+  description: "Tells jokes using Gemini Flash"
   category: "utility"
   route: "/agents/joker"
 
@@ -32,7 +32,7 @@ logic:
       type: "genkit-joke"
       action:
         type: "joke"
-        prompt: "Conte uma piada curta e original que funcione para qualquer público."
+        prompt: "Tell a short and original joke that works for any audience."
         result: "jokerResult"
 
     - name: "deliver-response"
@@ -40,8 +40,8 @@ logic:
       action:
         type: "generate"
         output:
-          response: "$jokerResult.texto"
+          response: "$jokerResult.text"
 
 output:
   schema:
-    response: "$jokerResult.texto"
+    response: "$jokerResult.text"

@@ -21,10 +21,18 @@ your-app/
 │   └── custom-translator/
 │       └── translator.yaml          # Override built-in
 │
-└── packages/beddel/src/agents/      # Built-in agents (package)
-    ├── joker-agent.yaml
-    ├── translator-agent.yaml
-    └── image-agent.yaml
+└── packages/beddel/src/agents/      # Built-in agents (sharded structure)
+    ├── joker/
+    │   ├── joker.yaml               # Agent definition
+    │   ├── joker.handler.ts         # Server-only handler
+    │   ├── joker.schema.ts          # Zod validation
+    │   ├── joker.types.ts           # TypeScript types
+    │   └── index.ts                 # Public exports
+    ├── translator/
+    │   └── ...
+    ├── image/
+    │   └── ...
+    └── ...
 ```
 
 ---

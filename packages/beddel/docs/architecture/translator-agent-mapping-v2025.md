@@ -19,7 +19,7 @@ The Translator Agent is one of three built-in agents in Beddel, using Genkit wit
 
 ## Agent Definition
 
-**Location**: `packages/beddel/src/agents/translator-agent.yaml`
+**Location**: `packages/beddel/src/agents/translator/translator.yaml`
 
 ```yaml
 agent:
@@ -30,24 +30,24 @@ agent:
 metadata:
   name: "Translator Agent"
   description: "Translates text between languages using Gemini Flash via Genkit"
-  category: "public"
+  category: "translation"
   route: "/agents/translator"
 
 schema:
   input:
     type: "object"
     properties:
-      texto:
+      text:
         type: "string"
         minLength: 1
         maxLength: 10000
-      idioma_origem:
+      source_language:
         type: "string"
         pattern: "^[a-z]{2}$"
-      idioma_destino:
+      target_language:
         type: "string"
         pattern: "^[a-z]{2}$"
-    required: ["texto", "idioma_origem", "idioma_destino"]
+    required: ["text", "source_language", "target_language"]
 
   output:
     type: "object"
@@ -233,7 +233,11 @@ The custom agent will be automatically discovered and registered with priority o
 
 ## Related Files
 
-- `packages/beddel/src/agents/translator-agent.yaml` - Agent definition
-- `packages/beddel/src/agents/agentRegistry.ts` - Registration
+- `packages/beddel/src/agents/translator/translator.yaml` - Agent definition
+- `packages/beddel/src/agents/translator/translator.handler.ts` - Server-only handler
+- `packages/beddel/src/agents/translator/translator.schema.ts` - Zod validation
+- `packages/beddel/src/agents/translator/translator.types.ts` - TypeScript types
+- `packages/beddel/src/agents/registry/agentRegistry.ts` - Registration
 - `packages/beddel/src/runtime/declarativeAgentRuntime.ts` - Execution
+- `packages/beddel/src/runtime/workflowExecutor.ts` - Workflow step execution
 - `docs/guides/custom-agents.md` - Custom agent documentation

@@ -95,9 +95,14 @@ The `AgentRegistry` is the central component for managing declarative agents. It
 │  │   constructor()                                                │  │
 │  │       │                                                        │  │
 │  │       ├──▶ registerBuiltinAgents()                            │  │
-│  │       │       ├── packages/beddel/src/agents/joker-agent.yaml │  │
-│  │       │       ├── packages/beddel/src/agents/translator-agent │  │
-│  │       │       └── packages/beddel/src/agents/image-agent.yaml │  │
+│  │       │       ├── packages/beddel/src/agents/joker/joker.yaml │  │
+│  │       │       ├── packages/beddel/src/agents/translator/...   │  │
+│  │       │       ├── packages/beddel/src/agents/image/...        │  │
+│  │       │       ├── packages/beddel/src/agents/mcp-tool/...     │  │
+│  │       │       ├── packages/beddel/src/agents/chromadb/...     │  │
+│  │       │       ├── packages/beddel/src/agents/gitmcp/...       │  │
+│  │       │       ├── packages/beddel/src/agents/rag/...          │  │
+│  │       │       └── packages/beddel/src/agents/chat/...         │  │
 │  │       │                                                        │  │
 │  │       └──▶ loadCustomAgents()                                 │  │
 │  │               │                                                │  │
@@ -133,15 +138,39 @@ Application Root/
 │
 └── packages/beddel/
     └── src/
-        ├── agents/                      # Built-in Agents (Package Level)
-        │   ├── agentRegistry.ts         # Registry implementation
-        │   ├── joker-agent.yaml         # Built-in: joker.execute
-        │   ├── translator-agent.yaml    # Built-in: translator.execute
-        │   └── image-agent.yaml         # Built-in: image.generate
+        ├── agents/                      # Built-in Agents (Sharded Structure)
+        │   ├── registry/
+        │   │   ├── agentRegistry.ts     # Registry implementation
+        │   │   └── index.ts
+        │   ├── joker/
+        │   │   ├── joker.yaml           # Agent definition
+        │   │   ├── joker.handler.ts     # Server-only handler
+        │   │   ├── joker.schema.ts      # Zod validation
+        │   │   ├── joker.types.ts       # TypeScript types
+        │   │   └── index.ts             # Public exports
+        │   ├── translator/
+        │   ├── image/
+        │   ├── mcp-tool/
+        │   ├── gemini-vectorize/
+        │   ├── chromadb/
+        │   ├── gitmcp/
+        │   ├── rag/
+        │   ├── chat/
+        │   └── index.ts
         │
-        └── runtime/
-            ├── declarativeAgentRuntime.ts
-            └── schemaCompiler.ts
+        ├── runtime/
+        │   ├── declarativeAgentRuntime.ts
+        │   ├── workflowExecutor.ts      # Workflow step execution
+        │   ├── schemaCompiler.ts
+        │   └── index.ts
+        │
+        ├── shared/                      # Client-safe types
+        │   ├── types/
+        │   └── utils/
+        │
+        └── client/                      # Client-safe exports
+            ├── index.ts
+            └── types.ts
 ```
 
 ### Agent Execution Flow

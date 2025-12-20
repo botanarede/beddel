@@ -35,7 +35,7 @@ schema:
         type: "boolean"
       data:
         type: "string"
-      toolNames:
+      tool_names:
         type: "array"
         items:
           type: "string"
@@ -60,12 +60,12 @@ logic:
         output:
           success: "$mcpResult.success"
           data: "$mcpResult.data"
-          toolNames: "$mcpResult.toolNames"
+          tool_names: "$mcpResult.toolNames"
           error: "$mcpResult.error"
 
 output:
   schema:
     success: "$mcpResult.success"
     data: "$mcpResult.data"
-    toolNames: "$mcpResult.toolNames"
+    tool_names: "$mcpResult.toolNames"
     error: "$mcpResult.error"

@@ -51,8 +51,8 @@ export {
 } from "./runtime/schemaCompiler";
 
 // Agent registry exports
-export { AgentRegistry, agentRegistry } from "./agents/agentRegistry";
-export type { AgentRegistration } from "./agents/agentRegistry";
+export { AgentRegistry, agentRegistry } from "./agents/registry";
+export type { AgentRegistration } from "./agents/registry";
 
 // Configuration exports
 export {

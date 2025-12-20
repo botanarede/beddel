@@ -67,15 +67,23 @@ mutation {
 
 ```
 your-app/
-├── agents/                    # Custom agents (auto-discovered)
+├── agents/                          # Custom agents (auto-discovered)
 │   ├── simple-agent.yaml
 │   └── complex/
 │       └── complex-agent.yaml
 │
-└── packages/beddel/src/agents/  # Built-in agents
-    ├── joker-agent.yaml
-    ├── translator-agent.yaml
-    └── image-agent.yaml
+└── packages/beddel/src/agents/      # Built-in agents (sharded structure)
+    ├── joker/
+    │   ├── joker.yaml               # Agent definition
+    │   ├── joker.handler.ts         # Server-only handler
+    │   ├── joker.schema.ts          # Zod validation
+    │   ├── joker.types.ts           # TypeScript types
+    │   └── index.ts                 # Public exports
+    ├── translator/
+    │   └── ...
+    ├── image/
+    │   └── ...
+    └── ...
 ```
 
 ## Override Built-in Agents
@@ -95,6 +103,11 @@ metadata:
 | `genkit-joke` | Text generation via Gemini |
 | `genkit-translation` | Translation via Gemini |
 | `genkit-image` | Image generation via Gemini |
+| `mcp-tool` | MCP server tool invocation |
+| `gemini-vectorize` | Text embeddings via Gemini |
+| `chromadb` | Vector storage and retrieval |
+| `gitmcp` | GitHub documentation fetching |
+| `rag` | RAG answer generation |
 | `output-generator` | Format output response |
 
 ## Logs

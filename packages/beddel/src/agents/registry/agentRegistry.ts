@@ -5,8 +5,8 @@
 
 import { existsSync, readFileSync, readdirSync, statSync } from "fs";
 import { join } from "path";
-import { declarativeInterpreter } from "../runtime/declarativeAgentRuntime";
-import { ExecutionContext } from "../types/executionContext";
+import { declarativeInterpreter } from "../../runtime/declarativeAgentRuntime";
+import { ExecutionContext } from "../../types/executionContext";
 
 export interface AgentRegistration {
   id: string;
@@ -233,7 +233,7 @@ export class AgentRegistry {
   private registerJokerAgent(): void {
     try {
       // Get the Joker Agent YAML content
-      const jokerYamlPath = this.resolveAgentPath("joker-agent.yaml");
+      const jokerYamlPath = this.resolveAgentPath("joker/joker.yaml");
       const yamlContent = readFileSync(jokerYamlPath, "utf-8");
 
       // Parse YAML to extract metadata
@@ -259,7 +259,7 @@ export class AgentRegistry {
    */
   private registerTranslatorAgent(): void {
     try {
-      const translatorYamlPath = this.resolveAgentPath("translator-agent.yaml");
+      const translatorYamlPath = this.resolveAgentPath("translator/translator.yaml");
       const yamlContent = readFileSync(translatorYamlPath, "utf-8");
       const agent = this.parseAgentYaml(yamlContent);
 
@@ -283,7 +283,7 @@ export class AgentRegistry {
    */
   private registerImageAgent(): void {
     try {
-      const imageYamlPath = this.resolveAgentPath("image-agent.yaml");
+      const imageYamlPath = this.resolveAgentPath("image/image.yaml");
       const yamlContent = readFileSync(imageYamlPath, "utf-8");
       const agent = this.parseAgentYaml(yamlContent);
 
@@ -307,7 +307,7 @@ export class AgentRegistry {
    */
   private registerMcpToolAgent(): void {
     try {
-      const yamlPath = this.resolveAgentPath("mcp-tool-agent.yaml");
+      const yamlPath = this.resolveAgentPath("mcp-tool/mcp-tool.yaml");
       const yamlContent = readFileSync(yamlPath, "utf-8");
       const agent = this.parseAgentYaml(yamlContent);
 
@@ -331,7 +331,7 @@ export class AgentRegistry {
    */
   private registerGeminiVectorizeAgent(): void {
     try {
-      const yamlPath = this.resolveAgentPath("gemini-vectorize-agent.yaml");
+      const yamlPath = this.resolveAgentPath("gemini-vectorize/gemini-vectorize.yaml");
       const yamlContent = readFileSync(yamlPath, "utf-8");
       const agent = this.parseAgentYaml(yamlContent);
 
@@ -355,7 +355,7 @@ export class AgentRegistry {
    */
   private registerChromaDBAgent(): void {
     try {
-      const yamlPath = this.resolveAgentPath("chromadb-agent.yaml");
+      const yamlPath = this.resolveAgentPath("chromadb/chromadb.yaml");
       const yamlContent = readFileSync(yamlPath, "utf-8");
       const agent = this.parseAgentYaml(yamlContent);
 
@@ -379,7 +379,7 @@ export class AgentRegistry {
    */
   private registerGitMcpAgent(): void {
     try {
-      const yamlPath = this.resolveAgentPath("gitmcp-agent.yaml");
+      const yamlPath = this.resolveAgentPath("gitmcp/gitmcp.yaml");
       const yamlContent = readFileSync(yamlPath, "utf-8");
       const agent = this.parseAgentYaml(yamlContent);
 
@@ -403,7 +403,7 @@ export class AgentRegistry {
    */
   private registerRagAgent(): void {
     try {
-      const yamlPath = this.resolveAgentPath("rag-agent.yaml");
+      const yamlPath = this.resolveAgentPath("rag/rag.yaml");
       const yamlContent = readFileSync(yamlPath, "utf-8");
       const agent = this.parseAgentYaml(yamlContent);
 
@@ -427,7 +427,7 @@ export class AgentRegistry {
    */
   private registerChatAgent(): void {
     try {
-      const yamlPath = this.resolveAgentPath("chat-agent.yaml");
+      const yamlPath = this.resolveAgentPath("chat/chat.yaml");
       const yamlContent = readFileSync(yamlPath, "utf-8");
       const agent = this.parseAgentYaml(yamlContent);
 

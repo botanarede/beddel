@@ -9,67 +9,67 @@ agent:
 
 metadata:
   name: "Translator Agent"
-  description: "Traduz textos entre idiomas usando Gemini Flash via Genkit"
-  category: "public"
+  description: "Translates text between languages using Gemini Flash via Genkit"
+  category: "translation"
   route: "/agents/translator"
 
 schema:
   input:
     type: "object"
     properties:
-      texto:
+      text:
         type: "string"
         minLength: 1
         maxLength: 10000
-        description: "Texto original a ser traduzido"
-      idioma_origem:
+        description: "Original text to be translated"
+      source_language:
         type: "string"
         pattern: "^[a-z]{2}$"
-        description: "Idioma de origem (ISO-639-1, ex: pt, en)"
-      idioma_destino:
+        description: "Source language (ISO-639-1, e.g., pt, en)"
+      target_language:
         type: "string"
         pattern: "^[a-z]{2}$"
-        description: "Idioma de destino (ISO-639-1, ex: en, es)"
-    required: ["texto", "idioma_origem", "idioma_destino"]
+        description: "Target language (ISO-639-1, e.g., en, es)"
+    required: ["text", "source_language", "target_language"]
 
   output:
     type: "object"
     properties:
-      texto_traduzido:
+      translated_text:
         type: "string"
-      metadados:
+      metadata:
         type: "object"
         properties:
-          modelo_utilizado:
+          model_used:
             type: "string"
-          tempo_processamento:
+          processing_time:
             type: "number"
-          confianca:
+          confidence:
             type: "number"
-          idiomas_suportados:
+          supported_languages:
             type: "array"
             items:
               type: "string"
-          idiomas_solicitados:
+          requested_languages:
             type: "object"
             properties:
-              origem:
+              source:
                 type: "string"
-              destino:
+              target:
                 type: "string"
-            required: ["origem", "destino"]
-          prompt_utilizado:
+            required: ["source", "target"]
+          prompt_used:
             type: "string"
         required:
           [
-            "modelo_utilizado",
-            "tempo_processamento",
-            "confianca",
-            "idiomas_suportados",
-            "idiomas_solicitados",
-            "prompt_utilizado",
+            "model_used",
+            "processing_time",
+            "confidence",
+            "supported_languages",
+            "requested_languages",
+            "prompt_used",
           ]
-    required: ["texto_traduzido", "metadados"]
+    required: ["translated_text", "metadata"]
 
 logic:
   workflow:

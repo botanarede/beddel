@@ -3,7 +3,7 @@
  * Tests the custom agent registry functionality
  */
 
-import { agentRegistry } from "./packages/beddel/src/agents/agentRegistry.js";
+import { agentRegistry } from "./packages/beddel/src/agents/registry/agentRegistry.js";
 import { join } from "path";
 
 async function testCustomAgentLoading() {
