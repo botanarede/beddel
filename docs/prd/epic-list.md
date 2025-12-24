@@ -51,10 +51,11 @@ As a package author, I want extensible registries for primitives and tools, so t
 As a workflow author, I want to call LLMs from YAML steps, so that I can define AI behavior declaratively.
 
 **Acceptance Criteria:**
-1. `stream: true` uses `streamText` and returns `result.toDataStreamResponse()`
+1. `stream: true` uses `streamText` and returns `result.toUIMessageStreamResponse()`
 2. `stream: false` uses `generateText` and returns JSON object
 3. `config.tools` maps to Vercel AI SDK `tools` via `mapTools()` function
-4. `maxSteps` is set to 5 when tools are present (enabling tool loops)
+4. `stopWhen: stepCountIs(5)` is set when tools are present (enabling tool loops)
+5. Uses `convertToModelMessages()` for `UIMessage[]` → `ModelMessage[]` conversion (AI SDK v6)
 
 ### Story 2.3: Output Primitive
 

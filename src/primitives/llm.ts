@@ -2,13 +2,18 @@
  * Beddel Protocol - LLM Primitive
  * 
  * Core primitive for AI text generation with dual-mode support:
- * - Stream Mode: Uses streamText → returns Response via toTextStreamResponse()
+ * - Stream Mode: Uses streamText → returns Response via toUIMessageStreamResponse()
  * - Block Mode: Uses generateText → returns JSON object { text, usage }
  * 
  * Supports tools via mapTools() which bridges YAML definitions to Vercel AI SDK tools.
  * Requires GEMINI_API_KEY environment variable.
  * 
  * Server-only: Uses Vercel AI SDK Core which requires Node.js.
+ * 
+ * AI SDK v6 Compatibility:
+ * - Frontend (useChat) sends UIMessage[] with { parts: [...] } format
+ * - Backend (streamText/generateText) expects ModelMessage[] with { content: ... }
+ * - convertToModelMessages() bridges this gap automatically
  */
 
 import {
@@ -16,7 +21,9 @@ import {
     generateText,
     dynamicTool,
     stepCountIs,
+    convertToModelMessages,
     type ModelMessage,
+    type UIMessage,
     type ToolSet,
 } from 'ai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
@@ -113,10 +120,12 @@ function mapTools(toolDefinitions: YamlToolDefinition[]): ToolSet {
  * LLM Primitive Handler
  * 
  * Dual-mode support via config.stream:
- * - stream: true → Uses streamText → returns result.toTextStreamResponse()
+ * - stream: true → Uses streamText → returns result.toUIMessageStreamResponse()
  * - stream: false → Uses generateText → returns { text, usage }
  * 
  * When tools are present, stopWhen is set to stepCountIs(5) to enable tool loops.
+ * 
+ * AI SDK v6: Converts UIMessage[] (from useChat) to ModelMessage[] automatically.
  * 
  * @param config - Step configuration from YAML (model, stream, system, messages, tools)
  * @param context - Execution context with input and variables
@@ -135,7 +144,9 @@ export const llmPrimitive: PrimitiveHandler = async (
     const model = google(llmConfig.model || 'gemini-1.5-flash');
 
     // Resolve messages from context (e.g., $input.messages)
-    const messages = resolveVariables(llmConfig.messages, context) as ModelMessage[];
+    // AI SDK v6: Frontend sends UIMessage[], we convert to ModelMessage[]
+    const rawMessages = resolveVariables(llmConfig.messages, context) as UIMessage[];
+    const messages = await convertToModelMessages(rawMessages);
 
     // Map YAML tools to Vercel AI SDK format
     const hasTools = llmConfig.tools && llmConfig.tools.length > 0;
@@ -178,7 +189,8 @@ export const llmPrimitive: PrimitiveHandler = async (
         });
 
         // Return streaming response - Executor will detect this and return to client immediately
-        return result.toTextStreamResponse();
+        // AI SDK v6: toUIMessageStreamResponse() for useChat compatibility
+        return result.toUIMessageStreamResponse();
     } else {
         // BLOCKING MODE: Returns data for next workflow step
         const result = await generateText({

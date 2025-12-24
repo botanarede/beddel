@@ -110,14 +110,14 @@ workflow:
 
 ```mermaid
 sequenceDiagram
-    participant Client
+    participant Client as Client (useChat)
     participant API as POST /api/beddel/chat
     participant Loader as YAML Loader
     participant Executor as WorkflowExecutor
     participant LLM as llmPrimitive
     participant SDK as Vercel AI SDK
 
-    Client->>API: { agentId, messages }
+    Client->>API: { agentId, messages: UIMessage[] }
     API->>Loader: loadYaml(src/agents/{agentId}.yaml)
     Loader-->>API: ParsedYaml
     API->>Executor: new WorkflowExecutor(yaml)
@@ -128,20 +128,35 @@ sequenceDiagram
         Executor->>LLM: handler(config, context)
         
         alt stream: true
-            LLM->>SDK: streamText(config)
+            LLM->>LLM: convertToModelMessages(UIMessage[])
+            LLM->>SDK: streamText({ messages: ModelMessage[] })
             SDK-->>LLM: StreamResult
+            LLM->>LLM: result.toUIMessageStreamResponse()
             LLM-->>Executor: Response (stream)
             Note over Executor: Break loop immediately
             Executor-->>API: Response
-            API-->>Client: Streaming Response
+            API-->>Client: UI Message Stream
         else stream: false
-            LLM->>SDK: generateText(config)
+            LLM->>LLM: convertToModelMessages(UIMessage[])
+            LLM->>SDK: generateText({ messages: ModelMessage[] })
             SDK-->>LLM: TextResult
             LLM-->>Executor: { text, usage }
             Executor->>Executor: Store in context.variables
         end
     end
 ```
+
+### AI SDK v6 Message Format
+
+The LLM primitive handles message format conversion automatically:
+
+| Source | Format | Example |
+|--------|--------|---------|
+| Frontend (`useChat`) | `UIMessage[]` | `{ role: "user", parts: [{ type: "text", text: "Hello" }] }` |
+| Backend (`streamText`) | `ModelMessage[]` | `{ role: "user", content: "Hello" }` |
+
+- `convertToModelMessages()` converts `UIMessage[]` → `ModelMessage[]`
+- `toUIMessageStreamResponse()` returns the correct stream format for `useChat`
 
 ## Tool Loop Flow
 

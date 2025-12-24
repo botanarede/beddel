@@ -7,10 +7,12 @@ export interface BeddelHandlerOptions {
     agentsPath?: string;
 }
 
-export function createBeddelHandler(options: BeddelHandlerOptions = {}) {
+export type BeddelHandler = (request: NextRequest) => Promise<Response>;
+
+export function createBeddelHandler(options: BeddelHandlerOptions = {}): BeddelHandler {
     const agentsPath = options.agentsPath || 'src/agents';
 
-    return async function POST(request: NextRequest) {
+    return async function POST(request: NextRequest): Promise<Response> {
         try {
             const body = await request.json() as any;
             const { agentId, ...input } = body;

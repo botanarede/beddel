@@ -69,11 +69,18 @@
 **Dependencies:** `ai`, `@ai-sdk/google`, `toolRegistry`, `callbackRegistry`
 
 **Technology Stack (AI SDK v6):**
-- `streamText()` for streaming mode → `result.toTextStreamResponse()`
+- `streamText()` for streaming mode → `result.toUIMessageStreamResponse()`
 - `generateText()` for blocking mode → `{ text, usage }`
+- `convertToModelMessages()` for UIMessage[] → ModelMessage[] conversion
 - `dynamicTool()` for registry-based tool creation
 - `stopWhen: stepCountIs(5)` for multi-step tool loops
 - `onFinish` / `onError` lifecycle callbacks
+
+**AI SDK v6 Message Format Compatibility:**
+- Frontend (`useChat`) sends `UIMessage[]` with `{ parts: [...] }` format
+- Backend (`streamText`/`generateText`) expects `ModelMessage[]` with `{ content: ... }`
+- `convertToModelMessages()` bridges this gap automatically
+- `toUIMessageStreamResponse()` returns the correct stream format for `useChat`
 
 ---
 

@@ -157,12 +157,21 @@ export const POST = createBeddelHandler({
 
 **Request Body:**
 
+The request body accepts messages in AI SDK v6 `UIMessage[]` format (from `useChat`):
+
 ```json
 {
   "agentId": "assistant",
-  "messages": [{ "role": "user", "content": "Hello!" }]
+  "messages": [
+    {
+      "role": "user",
+      "parts": [{ "type": "text", "text": "Hello!" }]
+    }
+  ]
 }
 ```
+
+> **AI SDK v6 Compatibility:** The handler automatically converts `UIMessage[]` (frontend format with `parts`) to `ModelMessage[]` (backend format with `content`) using `convertToModelMessages()`. The streaming response uses `toUIMessageStreamResponse()` for proper `useChat` integration.
 
 ---
 
@@ -260,8 +269,39 @@ type CallbackFn = (payload: Record<string, unknown>) => void | Promise<void>;
 
 ---
 
+## AI SDK v6 Compatibility
+
+Beddel is fully compatible with Vercel AI SDK v6 message formats:
+
+### Message Format Conversion
+
+| Source | Format | Structure |
+|--------|--------|-----------|
+| Frontend (`useChat`) | `UIMessage[]` | `{ role, parts: [{ type: "text", text }] }` |
+| Backend (`streamText`) | `ModelMessage[]` | `{ role, content }` |
+
+The LLM primitive automatically handles this conversion:
+
+```typescript
+// Internal conversion flow
+const rawMessages = resolveVariables(config.messages, context) as UIMessage[];
+const messages = await convertToModelMessages(rawMessages);
+```
+
+### Streaming Response
+
+For streaming mode, `toUIMessageStreamResponse()` returns the correct format for `useChat`:
+
+```typescript
+// Streaming mode returns UI-compatible stream
+return result.toUIMessageStreamResponse();
+```
+
+---
+
 ## Change Log
 
 | Date | Version | Description |
 |------|---------|-------------|
 | 2024-12-24 | 1.0.0 | Initial API reference |
+| 2024-12-24 | 1.0.1 | AI SDK v6 compatibility: UIMessage/ModelMessage conversion |
