@@ -244,6 +244,10 @@ Detailed documentation is available in [`docs/`](./docs/):
 - [Core Workflows](./docs/architecture/core-workflows.md)
 - [High-Level Architecture](./docs/architecture/high-level-architecture.md)
 
+## Newsletter
+
+[![Subscribe on Substack](https://img.shields.io/badge/Subscribe-Substack-orange?style=for-the-badge&logo=substack)](https://beddelprotocol.substack.com/subscribe)
+
 ## License
 
 [MIT](LICENSE)
