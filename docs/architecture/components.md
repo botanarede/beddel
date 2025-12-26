@@ -66,7 +66,7 @@
 - `registerCallback(name: string, fn: CallbackFn): void` - Register lifecycle callbacks
 - `callbackRegistry: Record<string, CallbackFn>` - Stores registered callbacks
 
-**Dependencies:** `ai`, `@ai-sdk/google`, `toolRegistry`, `callbackRegistry`
+**Dependencies:** `ai`, `providerRegistry`, `toolRegistry`, `callbackRegistry`
 
 **Technology Stack (AI SDK v6):**
 - `streamText()` for streaming mode → `result.toUIMessageStreamResponse()`
@@ -75,12 +75,42 @@
 - `dynamicTool()` for registry-based tool creation
 - `stopWhen: stepCountIs(5)` for multi-step tool loops
 - `onFinish` / `onError` lifecycle callbacks
+- `createModel()` from provider registry for dynamic provider selection
 
 **AI SDK v6 Message Format Compatibility:**
 - Frontend (`useChat`) sends `UIMessage[]` with `{ parts: [...] }` format
 - Backend (`streamText`/`generateText`) expects `ModelMessage[]` with `{ content: ... }`
 - `convertToModelMessages()` bridges this gap automatically
 - `toUIMessageStreamResponse()` returns the correct stream format for `useChat`
+
+---
+
+### Provider Registry (`src/providers/index.ts`)
+
+**Responsibility:** Register and provide LLM provider implementations for dynamic model creation.
+
+**Key Interfaces:**
+- `providerRegistry: Record<string, ProviderImplementation>`
+- `registerProvider(name: string, implementation: ProviderImplementation): void`
+- `createModel(provider: string, config: ProviderConfig): LanguageModel`
+- `ProviderImplementation: { createModel: (config) => LanguageModel }`
+- `ProviderConfig: { model: string, [key: string]: unknown }`
+
+**Built-in Providers:**
+- `google` - Google Gemini via `@ai-sdk/google` (requires `GEMINI_API_KEY`)
+- `bedrock` - Amazon Bedrock via `@ai-sdk/amazon-bedrock` (requires `AWS_REGION`, defaults to `us-east-1`)
+
+**Environment Variables:**
+
+| Provider | Variable | Description |
+|----------|----------|-------------|
+| `google` | `GEMINI_API_KEY` | Google Gemini API key |
+| `bedrock` | `AWS_REGION` | AWS region (defaults to `us-east-1`) |
+| `bedrock` | `AWS_BEARER_TOKEN_BEDROCK` | Bedrock API key (or use standard AWS credentials) |
+
+**Dependencies:** `ai`, `@ai-sdk/google`, `@ai-sdk/amazon-bedrock`
+
+**Technology Stack:** Registry pattern with Vercel AI SDK LanguageModel interface.
 
 ---
 
@@ -192,6 +222,22 @@ registerCallback('persistConversation', async ({ text, usage }) => {
 });
 ```
 
+### `registerProvider(name, implementation)`
+
+Add custom LLM providers for dynamic model selection.
+
+```typescript
+import { registerProvider } from 'beddel';
+import { createOpenAI } from '@ai-sdk/openai';
+
+registerProvider('openai', {
+  createModel: (config) => {
+    const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    return openai(config.model || 'gpt-4');
+  },
+});
+```
+
 ---
 
 ## Component Diagram
@@ -217,6 +263,12 @@ graph TB
         CallAgent["call-agent (placeholder)"]
     end
     
+    subgraph "Providers"
+        ProvReg["index.ts (providerRegistry)"]
+        Google["google"]
+        Bedrock["bedrock"]
+    end
+    
     subgraph "Tools"
         ToolReg["index.ts (toolRegistry)"]
         Calc["calculator"]
@@ -231,6 +283,7 @@ graph TB
     Index --> Executor
     Index --> Registry
     Index --> ToolReg
+    Index --> ProvReg
     Server --> Handler
     Handler --> Parser
     Handler --> Executor
@@ -240,6 +293,9 @@ graph TB
     Registry --> OutputPrim
     Registry --> CallAgent
     LLMPrim --> ToolReg
+    LLMPrim --> ProvReg
+    ProvReg --> Google
+    ProvReg --> Bedrock
     ToolReg --> Calc
     ToolReg --> Time
 ```

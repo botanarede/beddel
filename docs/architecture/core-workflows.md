@@ -35,9 +35,29 @@ workflow:
   - id: "chat-interaction"
     type: "llm"
     config:
+      provider: "google"          # Optional: 'google' (default) or 'bedrock'
       model: "gemini-2.0-flash-exp"
       stream: true
       system: "You are a helpful and concise assistant."
+      messages: "$input.messages"
+```
+
+**Using Amazon Bedrock:**
+
+```yaml
+# src/agents/bedrock-assistant.yaml
+metadata:
+  name: "Bedrock Assistant"
+  version: "1.0.0"
+
+workflow:
+  - id: "chat-interaction"
+    type: "llm"
+    config:
+      provider: "bedrock"
+      model: "anthropic.claude-3-haiku-20240307-v1:0"
+      stream: true
+      system: "You are a helpful assistant."
       messages: "$input.messages"
 ```
 
@@ -46,8 +66,17 @@ workflow:
 ```typescript
 // app/api/beddel/chat/route.ts
 import { createBeddelHandler } from 'beddel/server';
-import { registerTool, registerCallback } from 'beddel';
+import { registerTool, registerCallback, registerProvider } from 'beddel';
 import { z } from 'zod';
+import { createOpenAI } from '@ai-sdk/openai';
+
+// Register custom LLM provider
+registerProvider('openai', {
+  createModel: (config) => {
+    const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    return openai(config.model || 'gpt-4');
+  },
+});
 
 // Register custom tool
 registerTool('myTool', {
@@ -79,6 +108,7 @@ workflow:
   - id: "step-1"
     type: "llm"           # Primitive type
     config:
+      provider: "google"  # Optional: 'google' (default) or 'bedrock' or custom
       model: "gemini-2.0-flash-exp"
       stream: true        # true = streaming, false = blocking
       system: "System prompt"

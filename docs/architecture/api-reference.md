@@ -88,6 +88,14 @@ Map of tool names to their implementations for LLM function calling.
 - `calculator` — Evaluate mathematical expressions
 - `getCurrentTime` — Get current ISO timestamp
 
+#### `providerRegistry: Record<string, ProviderImplementation>`
+
+Map of provider names to their implementations for LLM model creation.
+
+**Built-in providers:**
+- `google` — Google Gemini via `@ai-sdk/google` (requires `GEMINI_API_KEY`)
+- `bedrock` — Amazon Bedrock via `@ai-sdk/amazon-bedrock` (auto-detects AWS credentials)
+
 ---
 
 ### Extensibility Functions
@@ -131,6 +139,36 @@ registerCallback('persistConversation', async ({ text, usage }) => {
   await db.saveMessage(text, usage);
 });
 ```
+
+#### `registerProvider(name: string, implementation: ProviderImplementation): void`
+
+Register a custom LLM provider for dynamic model selection.
+
+```typescript
+import { registerProvider } from 'beddel';
+import { createOpenAI } from '@ai-sdk/openai';
+
+registerProvider('openai', {
+  createModel: (config) => {
+    const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    return openai(config.model || 'gpt-4');
+  },
+});
+```
+
+#### `createModel(provider: string, config: ProviderConfig): LanguageModel`
+
+Create a LanguageModel instance from a registered provider.
+
+```typescript
+import { createModel } from 'beddel';
+
+const model = createModel('google', { model: 'gemini-1.5-flash' });
+// Or use bedrock
+const bedrockModel = createModel('bedrock', { model: 'anthropic.claude-3-haiku-20240307-v1:0' });
+```
+
+**Throws:** Error if provider is not found, listing available providers.
 
 ---
 
@@ -267,6 +305,23 @@ interface ToolImplementation {
 type CallbackFn = (payload: Record<string, unknown>) => void | Promise<void>;
 ```
 
+### `ProviderImplementation`
+
+```typescript
+interface ProviderImplementation {
+  createModel: (config: ProviderConfig) => LanguageModel;
+}
+```
+
+### `ProviderConfig`
+
+```typescript
+interface ProviderConfig {
+  model: string;
+  [key: string]: unknown;
+}
+```
+
 ---
 
 ## AI SDK v6 Compatibility
@@ -305,3 +360,4 @@ return result.toUIMessageStreamResponse();
 |------|---------|-------------|
 | 2024-12-24 | 1.0.0 | Initial API reference |
 | 2024-12-24 | 1.0.1 | AI SDK v6 compatibility: UIMessage/ModelMessage conversion |
+| 2024-12-25 | 1.0.2 | Provider registry: registerProvider, createModel, bedrock support |

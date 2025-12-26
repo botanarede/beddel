@@ -14,6 +14,8 @@ packages/beddel/
 │   │   ├── index.ts              # Handler registry (handlerRegistry)
 │   │   ├── llm.ts                # streamText/generateText wrapper
 │   │   └── output.ts             # JSON transform primitive
+│   ├── providers/
+│   │   └── index.ts              # Provider registry (google, bedrock)
 │   ├── server/
 │   │   └── handler.ts            # createBeddelHandler factory
 │   ├── tools/
@@ -50,7 +52,7 @@ Beddel exports three distinct bundles to support different runtime environments:
 
 | Import Path | Entry File | Contents | Use Case |
 |-------------|------------|----------|----------|
-| `beddel` | `index.ts` | Full API: `loadYaml`, `WorkflowExecutor`, `handlerRegistry`, `toolRegistry`, `registerPrimitive`, `registerTool` | Internal Beddel usage, custom handlers |
+| `beddel` | `index.ts` | Full API: `loadYaml`, `WorkflowExecutor`, `handlerRegistry`, `toolRegistry`, `providerRegistry`, `registerPrimitive`, `registerTool`, `registerProvider` | Internal Beddel usage, custom handlers |
 | `beddel/server` | `server.ts` | `createBeddelHandler`, `BeddelHandlerOptions` | Next.js API Routes (Consumer) |
 | `beddel/client` | `client.ts` | Types only: `ParsedYaml`, `ExecutionContext`, `PrimitiveHandler`, etc. | Client Components, type-checking |
 

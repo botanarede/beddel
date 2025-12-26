@@ -43,18 +43,22 @@ graph TD
     Executor --> Output["output-generator Primitive"]
     Executor --> CallAgent["call-agent (placeholder)"]
     LLM --> SDK["Vercel AI SDK (streamText/generateText)"]
-    SDK --> Provider["@ai-sdk/google (Gemini)"]
+    SDK --> Provider["Provider Registry"]
+    Provider --> Google["@ai-sdk/google (Gemini)"]
+    Provider --> Bedrock["@ai-sdk/amazon-bedrock"]
     LLM --> Tools["Tool Registry"]
     
     subgraph "Expansion Pack Pattern"
         PrimitiveRegistry["handlerRegistry"]
         ToolRegistry["toolRegistry"]
         CallbackRegistry["callbackRegistry"]
+        ProviderRegistry["providerRegistry"]
     end
     
     Executor --> PrimitiveRegistry
     LLM --> ToolRegistry
     LLM --> CallbackRegistry
+    LLM --> ProviderRegistry
 ```
 
 ---
@@ -63,10 +67,11 @@ graph TD
 
 - **Sequential Pipeline Pattern:** Workflow steps execute in order; first `Response` return breaks the loop — *Rationale:* Enables streaming without blocking subsequent steps
 
-- **Expansion Pack Pattern:** Primitives, tools, and callbacks are registered in extensible maps — *Rationale:* Inspired by BMAD-METHOD™, allows community extensions without core changes
+- **Expansion Pack Pattern:** Primitives, tools, callbacks, and providers are registered in extensible maps — *Rationale:* Inspired by BMAD-METHOD™, allows community extensions without core changes
   - `registerPrimitive(type, handler)` — Add custom step types
   - `registerTool(name, impl)` — Add custom LLM tools
   - `registerCallback(name, fn)` — Add lifecycle hooks
+  - `registerProvider(name, impl)` — Add custom LLM providers
 
 - **Early Return Pattern:** When `llmPrimitive` returns `Response`, executor immediately returns to client — *Rationale:* Prevents buffering of streaming responses
 
