@@ -10,11 +10,12 @@
 ## Features
 
 - 🔄 **Sequential Pipeline Execution** — Define workflows as YAML, execute steps in order
-- 🌊 **Native Streaming** — First-class `streamText` support with `useChat` compatibility
+- 🌊 **Native Streaming** — First-class `streamText` support via `chat` primitive with `useChat` compatibility
 - 🔌 **Extensible Primitives** — Register custom step types, tools, and callbacks
 - 🔒 **Security First** — YAML parsing with `FAILSAFE_SCHEMA` prevents code execution
 - 📦 **Bundle Separation** — Three entry points for server, client, and full API access
 - 🌐 **Multi-Provider** — Built-in support for Google Gemini, Amazon Bedrock, and OpenRouter (400+ models)
+- 🔀 **Semantic Primitives** — `chat` for streaming frontend, `llm` for blocking workflows
 
 ## Installation
 
@@ -51,11 +52,10 @@ metadata:
 
 workflow:
   - id: "chat-interaction"
-    type: "llm"
+    type: "chat"
     config:
       provider: "google"
       model: "gemini-2.0-flash-exp"
-      stream: true
       system: "You are a helpful assistant."
       messages: "$input.messages"
 ```
@@ -71,11 +71,10 @@ metadata:
 
 workflow:
   - id: "chat"
-    type: "llm"
+    type: "chat"
     config:
       provider: "bedrock"
       model: "us.meta.llama3-2-1b-instruct-v1:0"
-      stream: true
       system: |
         You are a helpful, friendly assistant. Be concise and direct.
         Answer in the same language the user writes to you.
@@ -92,11 +91,10 @@ metadata:
 
 workflow:
   - id: "chat"
-    type: "llm"
+    type: "chat"
     config:
       provider: "openrouter"
       model: "qwen/qwen3-14b:free"  # or any model from openrouter.ai/models
-      stream: true
       system: "You are a helpful assistant."
       messages: "$input.messages"
 ```
@@ -211,10 +209,9 @@ metadata:
 
 workflow:
   - id: "step-1"
-    type: "llm"
+    type: "chat"          # or "llm" for non-streaming workflows
     config:
       model: "gemini-2.0-flash-exp"
-      stream: true
       system: "System prompt"
       messages: "$input.messages"
       tools:
@@ -222,6 +219,15 @@ workflow:
       onFinish: "callbackName"
     result: "stepOutput"
 ```
+
+### Primitive Types
+
+| Type | Behavior | Use Case |
+|------|----------|----------|
+| `chat` | Always streaming, converts UIMessage | Frontend chat interfaces (`useChat`) |
+| `llm` | Never streaming, returns complete result | Multi-step workflows, variable passing |
+| `call-agent` | Invokes another agent | Sub-agent orchestration |
+| `output-generator` | JSON template transform | Structured output generation |
 
 ### Variable Resolution
 
@@ -243,8 +249,9 @@ Beddel is fully compatible with Vercel AI SDK v6:
 
 - **Frontend:** `useChat` sends `UIMessage[]` with `{ parts: [...] }` format
 - **Backend:** `streamText`/`generateText` expects `ModelMessage[]` with `{ content: ... }`
-- **Automatic Conversion:** `convertToModelMessages()` bridges the gap
-- **Streaming:** `toUIMessageStreamResponse()` returns the correct format for `useChat`
+- **Automatic Conversion:** `chat` primitive uses `convertToModelMessages()` to bridge the gap
+- **Streaming:** `chat` primitive returns `toUIMessageStreamResponse()` for `useChat`
+- **Blocking:** `llm` primitive uses `generateText()` for workflow steps
 
 ## Technology Stack
 

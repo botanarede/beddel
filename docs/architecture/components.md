@@ -42,6 +42,8 @@
 
 ---
 
+## Primitives
+
 ### Primitive Handler Registry (`src/primitives/index.ts`)
 
 **Responsibility:** Register and lookup primitive handlers by step type.
@@ -50,67 +52,77 @@
 - `handlerRegistry: Record<string, PrimitiveHandler>`
 - `registerPrimitive(type: string, handler: PrimitiveHandler): void`
 
-**Dependencies:** `llm`, `output-generator`, `call-agent` primitives
+**Built-in Primitives:**
+- `chat` — Frontend streaming interface
+- `llm` — Workflow LLM calls (non-streaming)
+- `output-generator` — JSON transform
+- `call-agent` — Sub-agent invocation
 
-**Technology Stack:** Registry pattern implementation.
+---
+
+### LLM Core (`src/primitives/llm-core.ts`)
+
+**Responsibility:** Shared utilities for `chat` and `llm` primitives.
+
+**Key Interfaces:**
+- `mapTools(toolDefinitions): ToolSet` — Maps YAML tool definitions to SDK tools
+- `registerCallback(name: string, fn: CallbackFn): void` — Register lifecycle callbacks
+- `callbackRegistry: Record<string, CallbackFn>` — Stores registered callbacks
+- `LlmConfig` — Type definition for LLM step configuration
+
+**Dependencies:** `ai`, `toolRegistry`
+
+---
+
+### Chat Primitive (`src/primitives/chat.ts`)
+
+**Responsibility:** Frontend chat interface with streaming responses.
+
+**Behavior:**
+- **Always streams** — Returns `Response` via `toUIMessageStreamResponse()`
+- Converts `UIMessage[]` (from `useChat`) to `ModelMessage[]`
+- Supports `onFinish` and `onError` lifecycle callbacks
+
+**Key Interfaces:**
+- `chatPrimitive(config: StepConfig, context: ExecutionContext): Promise<Response>`
+
+**Dependencies:** `ai` (streamText, convertToModelMessages), `providerRegistry`, `toolRegistry`, `callbackRegistry`
+
+**Use for:** API routes serving `useChat` frontend hooks.
 
 ---
 
 ### LLM Primitive (`src/primitives/llm.ts`)
 
-**Responsibility:** Execute LLM calls with dual-mode support (streaming/blocking) and lifecycle hooks.
+**Responsibility:** Workflow LLM calls with complete results for chaining.
+
+**Behavior:**
+- **Never streams** — Returns `{ text, usage }` object
+- Uses `ModelMessage[]` format directly (no conversion)
+- Result stored in `context.variables` for subsequent steps
 
 **Key Interfaces:**
-- `llmPrimitive(config: StepConfig, context: ExecutionContext): Promise<Response | object>`
-- `mapTools(toolDefinitions): ToolSet` - Maps YAML tool definitions to SDK tools
-- `registerCallback(name: string, fn: CallbackFn): void` - Register lifecycle callbacks
-- `callbackRegistry: Record<string, CallbackFn>` - Stores registered callbacks
+- `llmPrimitive(config: StepConfig, context: ExecutionContext): Promise<Record<string, unknown>>`
 
-**Dependencies:** `ai`, `providerRegistry`, `toolRegistry`, `callbackRegistry`
+**Dependencies:** `ai` (generateText), `providerRegistry`, `toolRegistry`
 
-**Technology Stack (AI SDK v6):**
-- `streamText()` for streaming mode → `result.toUIMessageStreamResponse()`
-- `generateText()` for blocking mode → `{ text, usage }`
-- `convertToModelMessages()` for UIMessage[] → ModelMessage[] conversion
-- `dynamicTool()` for registry-based tool creation
-- `stopWhen: stepCountIs(5)` for multi-step tool loops
-- `onFinish` / `onError` lifecycle callbacks
-- `createModel()` from provider registry for dynamic provider selection
-
-**AI SDK v6 Message Format Compatibility:**
-- Frontend (`useChat`) sends `UIMessage[]` with `{ parts: [...] }` format
-- Backend (`streamText`/`generateText`) expects `ModelMessage[]` with `{ content: ... }`
-- `convertToModelMessages()` bridges this gap automatically
-- `toUIMessageStreamResponse()` returns the correct stream format for `useChat`
+**Use for:** Internal workflows, `call-agent`, multi-step pipelines.
 
 ---
 
-### Provider Registry (`src/providers/index.ts`)
+### Call Agent Primitive (`src/primitives/call-agent.ts`)
 
-**Responsibility:** Register and provide LLM provider implementations for dynamic model creation.
+**Responsibility:** Invoke another YAML workflow as a subroutine.
+
+**Behavior:**
+- Loads and executes another agent's workflow
+- Passes resolved input to the sub-agent
+- Returns sub-agent's result for workflow chaining
 
 **Key Interfaces:**
-- `providerRegistry: Record<string, ProviderImplementation>`
-- `registerProvider(name: string, implementation: ProviderImplementation): void`
-- `createModel(provider: string, config: ProviderConfig): LanguageModel`
-- `ProviderImplementation: { createModel: (config) => LanguageModel }`
-- `ProviderConfig: { model: string, [key: string]: unknown }`
+- `callAgentPrimitive(config: StepConfig, context: ExecutionContext): Promise<Response | Record<string, unknown>>`
 
-**Built-in Providers:**
-- `google` - Google Gemini via `@ai-sdk/google` (requires `GEMINI_API_KEY`)
-- `bedrock` - Amazon Bedrock via `@ai-sdk/amazon-bedrock` (requires `AWS_REGION`, defaults to `us-east-1`)
-
-**Environment Variables:**
-
-| Provider | Variable | Description |
-|----------|----------|-------------|
-| `google` | `GEMINI_API_KEY` | Google Gemini API key |
-| `bedrock` | `AWS_REGION` | AWS region (defaults to `us-east-1`) |
-| `bedrock` | `AWS_BEARER_TOKEN_BEDROCK` | Bedrock API key (or use standard AWS credentials) |
-
-**Dependencies:** `ai`, `@ai-sdk/google`, `@ai-sdk/amazon-bedrock`
-
-**Technology Stack:** Registry pattern with Vercel AI SDK LanguageModel interface.
+**Dependencies:** `loadYaml`, `WorkflowExecutor`, `resolveVariables`
 
 ---
 
@@ -123,17 +135,30 @@
 
 **Dependencies:** `resolveVariables`
 
-**Technology Stack:** Pure TypeScript.
+---
+
+## Providers
+
+### Provider Registry (`src/providers/index.ts`)
+
+**Responsibility:** Register and provide LLM provider implementations.
+
+**Key Interfaces:**
+- `providerRegistry: Record<string, ProviderImplementation>`
+- `registerProvider(name: string, implementation: ProviderImplementation): void`
+- `createModel(provider: string, config: ProviderConfig): LanguageModel`
+
+**Built-in Providers:**
+
+| Provider | Package | Environment Variables |
+|----------|---------|----------------------|
+| `google` | `@ai-sdk/google` | `GEMINI_API_KEY` |
+| `bedrock` | `@ai-sdk/amazon-bedrock` | `AWS_REGION`, AWS credentials |
+| `openrouter` | `@ai-sdk/openai` | `OPENROUTER_API_KEY` |
 
 ---
 
-### Call Agent Primitive (Placeholder)
-
-**Responsibility:** Invoke another YAML workflow as a subroutine.
-
-**Status:** 🚧 Coming Soon — currently registered as placeholder handler.
-
----
+## Tools
 
 ### Tool Registry (`src/tools/index.ts`)
 
@@ -142,101 +167,39 @@
 **Key Interfaces:**
 - `toolRegistry: Record<string, ToolImplementation>`
 - `registerTool(name: string, implementation: ToolImplementation): void`
-- `ToolImplementation: { description, parameters (Zod), execute }`
 
 **Built-in Tools:**
-- `calculator` - Evaluate mathematical expressions
-- `getCurrentTime` - Get current ISO timestamp
-
-**Dependencies:** `zod`
-
-**Technology Stack:** Zod schemas for parameter validation.
+- `calculator` — Evaluate mathematical expressions
+- `getCurrentTime` — Get current ISO timestamp
 
 ---
+
+## Server
 
 ### Server Handler (`src/server/handler.ts`)
 
 **Responsibility:** Factory for creating Next.js API route handlers.
 
 **Key Interfaces:**
-- `createBeddelHandler(options?: BeddelHandlerOptions): (request: NextRequest) => Promise<Response>`
-- `BeddelHandlerOptions: { agentsPath?: string }`
+- `createBeddelHandler(options?: BeddelHandlerOptions): BeddelHandler`
 
-**Dependencies:** `loadYaml`, `WorkflowExecutor`, `next/server`
-
-**Technology Stack:** Next.js App Router API Routes.
-
-**Usage:**
-```typescript
-// app/api/beddel/chat/route.ts
-import { createBeddelHandler } from 'beddel/server';
-
-export const POST = createBeddelHandler({
-  agentsPath: 'src/agents'  // Default: 'src/agents'
-});
-```
+**Options:**
+- `agentsPath` — Directory for user agents (default: `'src/agents'`)
+- `disableBuiltinAgents` — Disable built-in agents (default: `false`)
 
 ---
 
-## Extensibility APIs
+## Built-in Agents (`src/agents/`)
 
-Beddel follows the **Expansion Pack Pattern** for extensibility:
+Pre-configured agents bundled with the package:
 
-### `registerPrimitive(type, handler)`
-
-Add custom step types to the workflow engine.
-
-```typescript
-import { registerPrimitive } from 'beddel';
-
-registerPrimitive('http-fetch', async (config, context) => {
-  const response = await fetch(config.url);
-  return { data: await response.json() };
-});
-```
-
-### `registerTool(name, implementation)`
-
-Add custom tools for LLM function calling.
-
-```typescript
-import { registerTool } from 'beddel';
-import { z } from 'zod';
-
-registerTool('weatherLookup', {
-  description: 'Get weather for a city',
-  parameters: z.object({ city: z.string() }),
-  execute: async ({ city }) => fetchWeather(city),
-});
-```
-
-### `registerCallback(name, fn)`
-
-Add lifecycle hooks for streaming completion.
-
-```typescript
-import { registerCallback } from 'beddel';
-
-registerCallback('persistConversation', async ({ text, usage }) => {
-  await db.saveMessage(text, usage);
-});
-```
-
-### `registerProvider(name, implementation)`
-
-Add custom LLM providers for dynamic model selection.
-
-```typescript
-import { registerProvider } from 'beddel';
-import { createOpenAI } from '@ai-sdk/openai';
-
-registerProvider('openai', {
-  createModel: (config) => {
-    const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    return openai(config.model || 'gpt-4');
-  },
-});
-```
+| Agent | Type | Description |
+|-------|------|-------------|
+| `assistant.yaml` | `chat` | Google Gemini streaming assistant |
+| `assistant-bedrock.yaml` | `chat` | Amazon Bedrock assistant |
+| `assistant-openrouter.yaml` | `chat` | OpenRouter free tier assistant |
+| `text-generator.yaml` | `llm` | Text generation (non-streaming) |
+| `multi-step-assistant.yaml` | `call-agent` + `llm` | 4-step analysis pipeline |
 
 ---
 
@@ -258,15 +221,18 @@ graph TB
     
     subgraph "Primitives"
         Registry["index.ts (handlerRegistry)"]
-        LLMPrim["llm.ts"]
+        LLMCore["llm-core.ts (shared)"]
+        ChatPrim["chat.ts (streaming)"]
+        LLMPrim["llm.ts (blocking)"]
         OutputPrim["output.ts"]
-        CallAgent["call-agent (placeholder)"]
+        CallAgent["call-agent.ts"]
     end
     
     subgraph "Providers"
         ProvReg["index.ts (providerRegistry)"]
         Google["google"]
         Bedrock["bedrock"]
+        OpenRouter["openrouter"]
     end
     
     subgraph "Tools"
@@ -275,28 +241,33 @@ graph TB
         Time["getCurrentTime"]
     end
     
-    subgraph "Server"
-        Handler["handler.ts"]
+    subgraph "Built-in Agents"
+        Assistant["assistant.yaml"]
+        TextGen["text-generator.yaml"]
+        MultiStep["multi-step-assistant.yaml"]
     end
     
     Index --> Parser
     Index --> Executor
     Index --> Registry
-    Index --> ToolReg
-    Index --> ProvReg
-    Server --> Handler
+    Server --> Handler["handler.ts"]
     Handler --> Parser
     Handler --> Executor
+    Handler --> Assistant
     Executor --> Registry
     Executor --> VarResolver
+    Registry --> ChatPrim
     Registry --> LLMPrim
     Registry --> OutputPrim
     Registry --> CallAgent
-    LLMPrim --> ToolReg
+    ChatPrim --> LLMCore
+    LLMPrim --> LLMCore
+    LLMCore --> ToolReg
+    ChatPrim --> ProvReg
     LLMPrim --> ProvReg
+    CallAgent --> Parser
+    CallAgent --> Executor
     ProvReg --> Google
     ProvReg --> Bedrock
-    ToolReg --> Calc
-    ToolReg --> Time
+    ProvReg --> OpenRouter
 ```
-

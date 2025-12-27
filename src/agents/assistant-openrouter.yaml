@@ -8,10 +8,9 @@ metadata:
 
 workflow:
   - id: "chat-interaction"
-    type: "llm"
+    type: "chat"
     config:
       provider: "openrouter"
       model: "qwen/qwen3-coder:free"
-      stream: true
       system: "You are a helpful assistant."
       messages: "$input.messages"

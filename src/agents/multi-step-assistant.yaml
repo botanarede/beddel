@@ -1,0 +1,67 @@
+# Multi-Step Text Analyzer
+# Pipeline: Generate Text → Extract Entities → Classify Sentiment → Structured Summary
+
+metadata:
+  name: "Multi-Step Text Analyzer"
+  version: "1.0.0"
+  builtin: true
+  description: "4-step pipeline demonstrating variable passing between steps"
+
+workflow:
+  # Step 1: Generate sample text using text-generator agent
+  # Input: { messages: [{ role: "user", content: "Generate 200 chars about space exploration" }] }
+  - id: "generate-text"
+    type: "call-agent"
+    config:
+      agentId: "text-generator"
+      input:
+        messages: "$input.messages"
+    result: "generatedText"
+
+  # Step 2: Extract entities and topics from the generated text
+  - id: "extract-entities"
+    type: "llm"
+    config:
+      provider: "google"
+      model: "gemini-2.0-flash-exp"
+      system: |
+        You are an entity extraction specialist. Analyze the given text and extract:
+        - Named entities (people, places, organizations, dates)
+        - Main topics/themes
+        - Key concepts
+        
+        Output ONLY valid JSON (no markdown, no explanation):
+        {"entities":{"people":[],"places":[],"organizations":[],"dates":[]},"topics":[],"concepts":[]}
+      messages:
+        - role: "user"
+          content: "$stepResult.generatedText.generatedText.text"
+    result: "entities"
+
+  # Step 3: Classify sentiment of the text
+  - id: "classify-sentiment"
+    type: "llm"
+    config:
+      provider: "google"
+      model: "gemini-2.0-flash-exp"
+      system: |
+        You are a sentiment analysis expert. Analyze the emotional tone of the text.
+        
+        Output ONLY valid JSON (no markdown, no explanation):
+        {"overall":"positive|negative|neutral|mixed","confidence":0.8,"emotions":["joy"],"tone":"formal"}
+      messages:
+        - role: "user"
+          content: "$stepResult.generatedText.generatedText.text"
+    result: "sentiment"
+
+  # Step 4: Generate structured summary combining all analysis
+  - id: "final-summary"
+    type: "output-generator"
+    config:
+      template:
+        originalText: "$stepResult.generatedText.generatedText.text"
+        entities: "$stepResult.entities.text"
+        sentiment: "$stepResult.sentiment.text"
+        pipeline:
+          steps: 4
+          status: "completed"
+    result: "finalReport"

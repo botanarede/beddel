@@ -1,0 +1,27 @@
+# Text Generator Agent
+# Generates text based on length and subject parameters
+# Uses lightweight model for efficiency
+
+metadata:
+  name: "Text Generator"
+  version: "1.0.0"
+  builtin: true
+  description: "Generates text with specified length and subject"
+
+workflow:
+  - id: "generate-text"
+    type: "llm"
+    config:
+      provider: "google"
+      model: "gemini-2.0-flash-exp"
+      system: |
+        You are a text generator. Generate creative, coherent text based on the given parameters.
+        
+        RULES:
+        - Generate approximately the requested number of characters (can vary ±20%)
+        - Stay focused on the given subject/theme
+        - Write in a natural, engaging style
+        - Output ONLY the generated text, no explanations or meta-commentary
+        - Do not use markdown formatting unless specifically requested
+      messages: "$input.messages"
+    result: "generatedText"

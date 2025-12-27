@@ -8,10 +8,9 @@ metadata:
 
 workflow:
   - id: "chat-interaction"
-    type: "llm"
+    type: "chat"
     config:
       provider: "google"
       model: "gemini-2.0-flash-exp"
-      stream: true
       system: "You are a helpful assistant."
       messages: "$input.messages"

@@ -11,9 +11,9 @@ Unlike traditional "agent wrappers", Beddel is a **declarative pipeline executor
 | Concept | Definition |
 |---------|------------|
 | **Workflow** | A linear list of steps defined in YAML |
-| **Agent** | Just one step type (`llm`) within the workflow |
-| **Streaming** | Native `streamText` support, returns `Response` immediately |
-| **Primitive** | A handler function for a step type (llm, output-generator, call-agent) |
+| **Agent** | Just one step type (`chat` or `llm`) within the workflow |
+| **Streaming** | Native `streamText` support via `chat` primitive |
+| **Primitive** | A handler function for a step type (chat, llm, call-agent, output-generator) |
 
 ---
 
@@ -39,14 +39,21 @@ graph TD
     API --> Handler["createBeddelHandler"]
     Handler --> Loader["YAML Loader (FAILSAFE)"]
     Loader --> Executor["WorkflowExecutor"]
-    Executor --> LLM["llm Primitive"]
+    Executor --> Chat["chat Primitive (streaming)"]
+    Executor --> LLM["llm Primitive (blocking)"]
     Executor --> Output["output-generator Primitive"]
-    Executor --> CallAgent["call-agent (placeholder)"]
-    LLM --> SDK["Vercel AI SDK (streamText/generateText)"]
-    SDK --> Provider["Provider Registry"]
+    Executor --> CallAgent["call-agent Primitive"]
+    Chat --> SDK["Vercel AI SDK"]
+    LLM --> SDK
+    SDK --> StreamText["streamText()"]
+    SDK --> GenerateText["generateText()"]
+    StreamText --> Provider["Provider Registry"]
+    GenerateText --> Provider
     Provider --> Google["@ai-sdk/google (Gemini)"]
     Provider --> Bedrock["@ai-sdk/amazon-bedrock"]
-    LLM --> Tools["Tool Registry"]
+    Provider --> OpenRouter["@ai-sdk/openai (OpenRouter)"]
+    Chat --> Tools["Tool Registry"]
+    LLM --> Tools
     
     subgraph "Expansion Pack Pattern"
         PrimitiveRegistry["handlerRegistry"]
@@ -56,9 +63,7 @@ graph TD
     end
     
     Executor --> PrimitiveRegistry
-    LLM --> ToolRegistry
-    LLM --> CallbackRegistry
-    LLM --> ProviderRegistry
+    Chat --> CallbackRegistry
 ```
 
 ---
@@ -73,7 +78,9 @@ graph TD
   - `registerCallback(name, fn)` — Add lifecycle hooks
   - `registerProvider(name, impl)` — Add custom LLM providers
 
-- **Early Return Pattern:** When `llmPrimitive` returns `Response`, executor immediately returns to client — *Rationale:* Prevents buffering of streaming responses
+- **Early Return Pattern:** When `chatPrimitive` returns `Response`, executor immediately returns to client — *Rationale:* Prevents buffering of streaming responses
+
+- **Semantic Primitive Separation:** `chat` for streaming frontend, `llm` for blocking workflows — *Rationale:* Clear separation of concerns, no runtime mode detection needed
 
 - **Registry Pattern:** Primitives, tools, and callbacks use lookup maps — *Rationale:* Decouples YAML definitions from implementation details
 

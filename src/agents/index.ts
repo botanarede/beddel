@@ -19,6 +19,8 @@ export const BUILTIN_AGENTS = [
   'assistant',
   'assistant-bedrock', 
   'assistant-openrouter',
+  'text-generator',
+  'multi-step-assistant',
 ] as const;
 
 export type BuiltinAgentId = typeof BUILTIN_AGENTS[number];

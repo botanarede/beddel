@@ -2,8 +2,6 @@
 
 ## Consumer Setup Flow
 
-Setting up Beddel in a Next.js application:
-
 ### 1. Install Package
 
 ```bash
@@ -19,11 +17,14 @@ pnpm add beddel
 import { createBeddelHandler } from 'beddel/server';
 
 export const POST = createBeddelHandler({
-  agentsPath: 'src/agents'  // Optional, default: 'src/agents'
+  agentsPath: 'src/agents',      // Optional, default: 'src/agents'
+  disableBuiltinAgents: false,   // Optional, default: false
 });
 ```
 
-### 3. Create YAML Agent
+### 3. Create YAML Agents
+
+#### Frontend Chat Agent (uses `chat` primitive)
 
 ```yaml
 # src/agents/assistant.yaml
@@ -33,71 +34,113 @@ metadata:
 
 workflow:
   - id: "chat-interaction"
-    type: "llm"
+    type: "chat"
     config:
-      provider: "google"          # Optional: 'google' (default) or 'bedrock'
+      provider: "google"
       model: "gemini-2.0-flash-exp"
-      stream: true
-      system: "You are a helpful and concise assistant."
-      messages: "$input.messages"
-```
-
-**Using Amazon Bedrock:**
-
-```yaml
-# src/agents/bedrock-assistant.yaml
-metadata:
-  name: "Bedrock Assistant"
-  version: "1.0.0"
-
-workflow:
-  - id: "chat-interaction"
-    type: "llm"
-    config:
-      provider: "bedrock"
-      model: "anthropic.claude-3-haiku-20240307-v1:0"
-      stream: true
       system: "You are a helpful assistant."
       messages: "$input.messages"
 ```
 
-### 4. (Optional) Register Custom Extensions
+#### Workflow Agent (uses `llm` primitive)
 
-```typescript
-// app/api/beddel/chat/route.ts
-import { createBeddelHandler } from 'beddel/server';
-import { registerTool, registerCallback, registerProvider } from 'beddel';
-import { z } from 'zod';
-import { createOpenAI } from '@ai-sdk/openai';
+```yaml
+# src/agents/text-generator.yaml
+metadata:
+  name: "Text Generator"
+  version: "1.0.0"
 
-// Register custom LLM provider
-registerProvider('openai', {
-  createModel: (config) => {
-    const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    return openai(config.model || 'gpt-4');
-  },
-});
+workflow:
+  - id: "generate-text"
+    type: "llm"
+    config:
+      provider: "google"
+      model: "gemini-2.0-flash-exp"
+      system: "Generate creative text based on the prompt."
+      messages: "$input.messages"
+    result: "generatedText"
+```
 
-// Register custom tool
-registerTool('myTool', {
-  description: 'My custom tool',
-  parameters: z.object({ input: z.string() }),
-  execute: async ({ input }) => ({ result: input.toUpperCase() }),
-});
+#### Multi-Step Pipeline (uses `call-agent` + `llm`)
 
-// Register lifecycle callback
-registerCallback('saveConversation', async ({ text, usage }) => {
-  await db.saveMessage(text, usage);
-});
+```yaml
+# src/agents/analyzer.yaml
+metadata:
+  name: "Text Analyzer"
+  version: "1.0.0"
 
-export const POST = createBeddelHandler();
+workflow:
+  # Step 1: Generate text using another agent
+  - id: "generate"
+    type: "call-agent"
+    config:
+      agentId: "text-generator"
+      input:
+        messages: "$input.messages"
+    result: "generatedText"
+
+  # Step 2: Analyze the generated text
+  - id: "analyze"
+    type: "llm"
+    config:
+      provider: "google"
+      model: "gemini-2.0-flash-exp"
+      system: "Extract key topics from the text."
+      messages:
+        - role: "user"
+          content: "$stepResult.generatedText.generatedText.text"
+    result: "analysis"
+
+  # Step 3: Format output
+  - id: "format"
+    type: "output-generator"
+    config:
+      template:
+        originalText: "$stepResult.generatedText.generatedText.text"
+        topics: "$stepResult.analysis.text"
+    result: "finalReport"
+```
+
+### 4. Use with React (useChat)
+
+```tsx
+'use client';
+import { useChat } from '@ai-sdk/react';
+
+export default function Chat() {
+  const { messages, input, handleInputChange, handleSubmit } = useChat({
+    api: '/api/beddel/chat',
+    body: { agentId: 'assistant' },
+  });
+
+  return (
+    <div>
+      {messages.map((m) => (
+        <div key={m.id}>{m.role}: {m.content}</div>
+      ))}
+      <form onSubmit={handleSubmit}>
+        <input value={input} onChange={handleInputChange} />
+        <button type="submit">Send</button>
+      </form>
+    </div>
+  );
+}
 ```
 
 ---
 
-## YAML Structure
+## Primitive Selection Guide
 
-YAML files define a **Pipeline** of sequential steps:
+| Use Case | Primitive | Streaming | Message Format |
+|----------|-----------|-----------|----------------|
+| Frontend chat UI | `chat` | ✅ Always | UIMessage (with `parts`) |
+| Workflow step | `llm` | ❌ Never | ModelMessage (with `content`) |
+| Compose agents | `call-agent` | Depends | Passes through |
+| Transform data | `output-generator` | ❌ Never | N/A |
+
+---
+
+## YAML Structure
 
 ```yaml
 metadata:
@@ -106,24 +149,16 @@ metadata:
 
 workflow:
   - id: "step-1"
-    type: "llm"           # Primitive type
+    type: "chat"          # or "llm", "call-agent", "output-generator"
     config:
-      provider: "google"  # Optional: 'google' (default) or 'bedrock' or custom
+      provider: "google"  # Optional: 'google', 'bedrock', 'openrouter', or custom
       model: "gemini-2.0-flash-exp"
-      stream: true        # true = streaming, false = blocking
       system: "System prompt"
       messages: "$input.messages"
       tools:              # Optional: tools for function calling
         - name: "calculator"
-      onFinish: "callbackName"   # Optional: lifecycle hook
+      onFinish: "callbackName"   # Optional: lifecycle hook (chat only)
     result: "stepOutput"  # Optional: variable name for result
-
-  - id: "step-2"
-    type: "output-generator"
-    config:
-      template:
-        status: "completed"
-        tokens: "$stepOutput.usage"
 ```
 
 ### Variable Resolution Patterns
@@ -131,62 +166,67 @@ workflow:
 | Pattern | Description | Example |
 |---------|-------------|---------|
 | `$input.*` | Access request input data | `$input.messages` |
-| `$stepResult.varName.*` | Access step result by result name | `$stepResult.llmOutput.text` |
-| `$varName.*` | Legacy: direct variable access | `$llmOutput.usage` |
+| `$stepResult.varName.*` | Access step result by name | `$stepResult.llmOutput.text` |
 
 ---
 
-## Streaming Chat Flow
+## Chat Flow (Frontend)
 
 ```mermaid
 sequenceDiagram
     participant Client as Client (useChat)
     participant API as POST /api/beddel/chat
-    participant Loader as YAML Loader
     participant Executor as WorkflowExecutor
-    participant LLM as llmPrimitive
+    participant Chat as chatPrimitive
     participant SDK as Vercel AI SDK
 
     Client->>API: { agentId, messages: UIMessage[] }
-    API->>Loader: loadYaml(src/agents/{agentId}.yaml)
-    Loader-->>API: ParsedYaml
-    API->>Executor: new WorkflowExecutor(yaml)
     API->>Executor: execute({ messages })
-    
-    loop For each step in workflow
-        Executor->>Executor: Get handler from registry
-        Executor->>LLM: handler(config, context)
-        
-        alt stream: true
-            LLM->>LLM: convertToModelMessages(UIMessage[])
-            LLM->>SDK: streamText({ messages: ModelMessage[] })
-            SDK-->>LLM: StreamResult
-            LLM->>LLM: result.toUIMessageStreamResponse()
-            LLM-->>Executor: Response (stream)
-            Note over Executor: Break loop immediately
-            Executor-->>API: Response
-            API-->>Client: UI Message Stream
-        else stream: false
-            LLM->>LLM: convertToModelMessages(UIMessage[])
-            LLM->>SDK: generateText({ messages: ModelMessage[] })
-            SDK-->>LLM: TextResult
-            LLM-->>Executor: { text, usage }
-            Executor->>Executor: Store in context.variables
-        end
-    end
+    Executor->>Chat: handler(config, context)
+    Chat->>Chat: convertToModelMessages(UIMessage[])
+    Chat->>SDK: streamText({ messages: ModelMessage[] })
+    SDK-->>Chat: StreamResult
+    Chat->>Chat: result.toUIMessageStreamResponse()
+    Chat-->>Executor: Response (stream)
+    Executor-->>API: Response
+    API-->>Client: UI Message Stream
 ```
 
-### AI SDK v6 Message Format
+## Workflow Flow (Multi-Step)
 
-The LLM primitive handles message format conversion automatically:
+```mermaid
+sequenceDiagram
+    participant API as POST /api/beddel/chat
+    participant Executor as WorkflowExecutor
+    participant CallAgent as call-agent
+    participant SubExecutor as Sub-WorkflowExecutor
+    participant LLM as llmPrimitive
+    participant Output as output-generator
 
-| Source | Format | Example |
-|--------|--------|---------|
-| Frontend (`useChat`) | `UIMessage[]` | `{ role: "user", parts: [{ type: "text", text: "Hello" }] }` |
-| Backend (`streamText`) | `ModelMessage[]` | `{ role: "user", content: "Hello" }` |
+    API->>Executor: execute({ messages })
+    
+    Note over Executor: Step 1: call-agent
+    Executor->>CallAgent: handler(config, context)
+    CallAgent->>SubExecutor: execute(input)
+    SubExecutor->>LLM: handler(config, context)
+    LLM-->>SubExecutor: { text, usage }
+    SubExecutor-->>CallAgent: { generatedText: {...} }
+    CallAgent-->>Executor: result
+    Executor->>Executor: Store in context.variables
+    
+    Note over Executor: Step 2: llm
+    Executor->>LLM: handler(config, context)
+    LLM-->>Executor: { text, usage }
+    Executor->>Executor: Store in context.variables
+    
+    Note over Executor: Step 3: output-generator
+    Executor->>Output: handler(config, context)
+    Output-->>Executor: { formatted data }
+    
+    Executor-->>API: Response.json(result)
+```
 
-- `convertToModelMessages()` converts `UIMessage[]` → `ModelMessage[]`
-- `toUIMessageStreamResponse()` returns the correct stream format for `useChat`
+---
 
 ## Tool Loop Flow
 
@@ -194,12 +234,12 @@ When tools are defined, the LLM may invoke them in a multi-step loop:
 
 ```mermaid
 sequenceDiagram
-    participant LLM as llmPrimitive
-    participant SDK as streamText
+    participant Primitive as chat/llm Primitive
+    participant SDK as streamText/generateText
     participant Tools as Tool Registry
     participant Calc as calculator
 
-    LLM->>SDK: streamText({ stopWhen: stepCountIs(5), tools })
+    Primitive->>SDK: { stopWhen: stepCountIs(5), tools }
     
     loop Until stopWhen condition met
         SDK->>SDK: LLM generates response
@@ -214,53 +254,30 @@ sequenceDiagram
         end
     end
     
-    SDK-->>LLM: Final StreamResult
+    SDK-->>Primitive: Final Result
 ```
 
-## Variable Resolution Flow
+---
 
-How variables like `$input.messages` are resolved:
+## Lifecycle Hooks (chat primitive only)
 
 ```mermaid
 sequenceDiagram
-    participant Config as Step Config
-    participant Resolver as Variable Resolver
-    participant Context as ExecutionContext
-
-    Config->>Resolver: "$input.messages"
-    Resolver->>Context: context.input.messages
-    Context-->>Resolver: Message[]
-    Resolver-->>Config: Resolved value
-    
-    Config->>Resolver: "$llmOutput.text"
-    Resolver->>Context: context.variables.get("llmOutput").text
-    Context-->>Resolver: "Hello!"
-    Resolver-->>Config: Resolved value
-```
-
-## onFinish Lifecycle Hook Flow
-
-How `onFinish` executes after streaming completes (Option B: direct callbacks):
-
-```mermaid
-sequenceDiagram
-    participant LLM as llmPrimitive
+    participant Chat as chatPrimitive
     participant SDK as streamText
     participant Registry as callbackRegistry
     participant Callback as persistConversation
 
-    LLM->>SDK: streamText({ onFinish, onError })
+    Chat->>SDK: streamText({ onFinish, onError })
     SDK->>SDK: Stream tokens to client
     
     Note over SDK: Stream completes
     
-    SDK->>LLM: onFinish({ text, usage, totalUsage, steps })
-    LLM->>LLM: config.onFinish = "persistConversation"
-    LLM->>Registry: callbackRegistry["persistConversation"]
-    Registry-->>LLM: callback function
-    LLM->>Callback: callback({ text, usage, totalUsage, steps })
+    SDK->>Chat: onFinish({ text, usage, ... })
+    Chat->>Registry: callbackRegistry["persistConversation"]
+    Registry-->>Chat: callback function
+    Chat->>Callback: callback({ text, usage, ... })
     Callback->>Callback: Save to database
-    Callback-->>LLM: Done
     
-    Note over LLM: Response already sent to client
+    Note over Chat: Response already sent to client
 ```

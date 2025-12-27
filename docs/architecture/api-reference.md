@@ -1,6 +1,6 @@
 # API Reference
 
-> **Beddel Protocol v1.0.0** — Complete API documentation for all public exports.
+> **Beddel Protocol v1.0.4** — Complete API documentation for all public exports.
 
 ---
 
@@ -57,9 +57,9 @@ const executor = new WorkflowExecutor(yaml);
 const result = await executor.execute({ messages: [...] });
 
 if (result instanceof Response) {
-  return result; // Streaming response
+  return result; // Streaming response (from 'chat' primitive)
 }
-return Response.json(result); // Blocking result
+return Response.json(result); // Blocking result (from 'llm' primitive)
 ```
 
 **Constructor:** `new WorkflowExecutor(yaml: ParsedYaml)`
@@ -76,9 +76,10 @@ return Response.json(result); // Blocking result
 Map of primitive step types to their handler functions.
 
 **Built-in handlers:**
-- `llm` — AI text generation (streaming/blocking)
+- `chat` — Frontend chat interface (always streaming, converts UIMessage)
+- `llm` — Workflow LLM calls (never streaming, uses ModelMessage directly)
 - `output-generator` — Deterministic JSON transform
-- `call-agent` — Sub-agent invocation (placeholder)
+- `call-agent` — Sub-agent invocation
 
 #### `toolRegistry: Record<string, ToolImplementation>`
 
@@ -94,7 +95,8 @@ Map of provider names to their implementations for LLM model creation.
 
 **Built-in providers:**
 - `google` — Google Gemini via `@ai-sdk/google` (requires `GEMINI_API_KEY`)
-- `bedrock` — Amazon Bedrock via `@ai-sdk/amazon-bedrock` (auto-detects AWS credentials)
+- `bedrock` — Amazon Bedrock via `@ai-sdk/amazon-bedrock` (requires AWS credentials)
+- `openrouter` — OpenRouter via `@ai-sdk/openai` (requires `OPENROUTER_API_KEY`, 400+ models)
 
 ---
 
@@ -130,7 +132,7 @@ registerTool('weatherLookup', {
 
 #### `registerCallback(name: string, callback: CallbackFn): void`
 
-Register a lifecycle callback for streaming hooks.
+Register a lifecycle callback for streaming hooks (used by `chat` primitive).
 
 ```typescript
 import { registerCallback } from 'beddel';
@@ -163,12 +165,10 @@ Create a LanguageModel instance from a registered provider.
 ```typescript
 import { createModel } from 'beddel';
 
-const model = createModel('google', { model: 'gemini-1.5-flash' });
-// Or use bedrock
+const model = createModel('google', { model: 'gemini-2.0-flash-exp' });
 const bedrockModel = createModel('bedrock', { model: 'anthropic.claude-3-haiku-20240307-v1:0' });
+const openrouterModel = createModel('openrouter', { model: 'qwen/qwen3-coder:free' });
 ```
-
-**Throws:** Error if provider is not found, listing available providers.
 
 ---
 
@@ -183,7 +183,8 @@ Factory function for creating Next.js API route handlers.
 import { createBeddelHandler } from 'beddel/server';
 
 export const POST = createBeddelHandler({
-  agentsPath: 'src/agents'  // Optional, default: 'src/agents'
+  agentsPath: 'src/agents',      // Optional, default: 'src/agents'
+  disableBuiltinAgents: false,   // Optional, default: false
 });
 ```
 
@@ -192,10 +193,9 @@ export const POST = createBeddelHandler({
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `agentsPath` | `string` | `'src/agents'` | Directory containing YAML agent files |
+| `disableBuiltinAgents` | `boolean` | `false` | Disable built-in agents bundled with package |
 
-**Request Body:**
-
-The request body accepts messages in AI SDK v6 `UIMessage[]` format (from `useChat`):
+**Request Body (for `chat` primitive):**
 
 ```json
 {
@@ -209,15 +209,22 @@ The request body accepts messages in AI SDK v6 `UIMessage[]` format (from `useCh
 }
 ```
 
-> **AI SDK v6 Compatibility:** The handler automatically converts `UIMessage[]` (frontend format with `parts`) to `ModelMessage[]` (backend format with `content`) using `convertToModelMessages()`. The streaming response uses `toUIMessageStreamResponse()` for proper `useChat` integration.
+**Request Body (for `llm` primitive / workflows):**
+
+```json
+{
+  "agentId": "text-generator",
+  "messages": [
+    { "role": "user", "content": "Generate text about cats" }
+  ]
+}
+```
 
 ---
 
 ## `beddel/client`
 
 Type-only exports safe for client-side bundles (no Node.js dependencies).
-
-### Types
 
 ```typescript
 import type {
@@ -232,6 +239,109 @@ import type {
 
 ---
 
+## Primitives
+
+### `chat` Primitive
+
+Frontend chat interface. **Always streams** responses for responsive UX.
+
+**Use when:**
+- Input comes from `useChat` frontend hook
+- Messages are in `UIMessage` format (with `parts` array)
+
+**Behavior:**
+- Converts `UIMessage[]` to `ModelMessage[]` automatically
+- Returns streaming `Response` via `toUIMessageStreamResponse()`
+- Supports `onFinish` and `onError` lifecycle callbacks
+
+```yaml
+workflow:
+  - id: "chat"
+    type: "chat"
+    config:
+      provider: "google"
+      model: "gemini-2.0-flash-exp"
+      system: "You are a helpful assistant."
+      messages: "$input.messages"
+      onFinish: "saveConversation"
+```
+
+### `llm` Primitive
+
+Workflow LLM calls. **Never streams** — returns complete result for workflow chaining.
+
+**Use when:**
+- Building multi-step workflows
+- Result needs to be passed to next step
+- Called from `call-agent` or other workflow steps
+
+**Behavior:**
+- Uses `ModelMessage[]` format directly (no conversion)
+- Returns `{ text, usage }` object
+- Result stored in `context.variables` for subsequent steps
+
+```yaml
+workflow:
+  - id: "generate"
+    type: "llm"
+    config:
+      provider: "google"
+      model: "gemini-2.0-flash-exp"
+      system: "Generate creative text."
+      messages:
+        - role: "user"
+          content: "$input.prompt"
+    result: "generatedText"
+```
+
+### `call-agent` Primitive
+
+Invoke another agent's workflow as a sub-routine.
+
+**Use when:**
+- Composing complex workflows from simpler agents
+- Reusing agent logic across multiple workflows
+
+```yaml
+workflow:
+  - id: "generate-text"
+    type: "call-agent"
+    config:
+      agentId: "text-generator"
+      input:
+        messages: "$input.messages"
+    result: "generatedText"
+```
+
+### `output-generator` Primitive
+
+Deterministic JSON transform using variable resolution.
+
+```yaml
+workflow:
+  - id: "format-output"
+    type: "output-generator"
+    config:
+      template:
+        text: "$stepResult.generatedText.text"
+        status: "completed"
+    result: "finalOutput"
+```
+
+---
+
+## Built-in Agents
+
+| Agent ID | Provider | Description |
+|----------|----------|-------------|
+| `assistant` | Google | Streaming chat assistant |
+| `assistant-bedrock` | Bedrock | Llama 3.2 assistant |
+| `assistant-openrouter` | OpenRouter | Free tier assistant |
+| `text-generator` | Google | Text generation (non-streaming) |
+| `multi-step-assistant` | Google | 4-step analysis pipeline |
+
+---
+
 ## Type Definitions
 
 ### `ParsedYaml`
@@ -243,31 +353,14 @@ interface ParsedYaml {
 }
 ```
 
-### `YamlMetadata`
-
-```typescript
-interface YamlMetadata {
-  name: string;
-  version: string;
-}
-```
-
 ### `WorkflowStep`
 
 ```typescript
 interface WorkflowStep {
   id: string;
-  type: string;  // 'llm' | 'output-generator' | 'call-agent' | custom
+  type: string;  // 'chat' | 'llm' | 'output-generator' | 'call-agent' | custom
   config: StepConfig;
-  result?: string;  // Variable name to store step result
-}
-```
-
-### `StepConfig`
-
-```typescript
-interface StepConfig {
-  [key: string]: unknown;  // Step-specific configuration
+  result?: string;
 }
 ```
 
@@ -289,69 +382,6 @@ type PrimitiveHandler = (
 ) => Promise<Response | Record<string, unknown>>;
 ```
 
-### `ToolImplementation`
-
-```typescript
-interface ToolImplementation {
-  description: string;
-  parameters: z.ZodSchema;
-  execute: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
-}
-```
-
-### `CallbackFn`
-
-```typescript
-type CallbackFn = (payload: Record<string, unknown>) => void | Promise<void>;
-```
-
-### `ProviderImplementation`
-
-```typescript
-interface ProviderImplementation {
-  createModel: (config: ProviderConfig) => LanguageModel;
-}
-```
-
-### `ProviderConfig`
-
-```typescript
-interface ProviderConfig {
-  model: string;
-  [key: string]: unknown;
-}
-```
-
----
-
-## AI SDK v6 Compatibility
-
-Beddel is fully compatible with Vercel AI SDK v6 message formats:
-
-### Message Format Conversion
-
-| Source | Format | Structure |
-|--------|--------|-----------|
-| Frontend (`useChat`) | `UIMessage[]` | `{ role, parts: [{ type: "text", text }] }` |
-| Backend (`streamText`) | `ModelMessage[]` | `{ role, content }` |
-
-The LLM primitive automatically handles this conversion:
-
-```typescript
-// Internal conversion flow
-const rawMessages = resolveVariables(config.messages, context) as UIMessage[];
-const messages = await convertToModelMessages(rawMessages);
-```
-
-### Streaming Response
-
-For streaming mode, `toUIMessageStreamResponse()` returns the correct format for `useChat`:
-
-```typescript
-// Streaming mode returns UI-compatible stream
-return result.toUIMessageStreamResponse();
-```
-
 ---
 
 ## Change Log
@@ -359,5 +389,7 @@ return result.toUIMessageStreamResponse();
 | Date | Version | Description |
 |------|---------|-------------|
 | 2024-12-24 | 1.0.0 | Initial API reference |
-| 2024-12-24 | 1.0.1 | AI SDK v6 compatibility: UIMessage/ModelMessage conversion |
-| 2024-12-25 | 1.0.2 | Provider registry: registerProvider, createModel, bedrock support |
+| 2024-12-24 | 1.0.1 | AI SDK v6 compatibility |
+| 2024-12-25 | 1.0.2 | Provider registry, bedrock support |
+| 2024-12-26 | 1.0.3 | OpenRouter provider, built-in agents |
+| 2024-12-27 | 1.0.4 | Separated `chat` and `llm` primitives, implemented `call-agent` |

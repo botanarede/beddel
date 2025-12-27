@@ -9,11 +9,10 @@ metadata:
 
 workflow:
   - id: "chat"
-    type: "llm"
+    type: "chat"
     config:
       provider: "bedrock"
       model: "us.meta.llama3-2-1b-instruct-v1:0"
-      stream: true
       system: |
         You are a helpful, friendly assistant. Be concise and direct.
         Answer in the same language the user writes to you.
