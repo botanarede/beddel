@@ -26,6 +26,15 @@ export type { ToolImplementation } from './tools';
 export { providerRegistry, registerProvider, createModel } from './providers';
 export type { ProviderImplementation, ProviderConfig } from './providers';
 
+// Built-in agents registry
+export { 
+    BUILTIN_AGENTS, 
+    getBuiltinAgentsPath, 
+    getBuiltinAgentPath, 
+    isBuiltinAgent 
+} from './agents';
+export type { BuiltinAgentId } from './agents';
+
 // Types (re-exported for convenience, also available via beddel/client)
 export type {
     ParsedYaml,

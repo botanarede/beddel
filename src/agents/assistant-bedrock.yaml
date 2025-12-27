@@ -1,0 +1,20 @@
+# Built-in Bedrock Assistant
+# Uses Meta Llama 3.2 1B - lightweight and cheap model on Bedrock
+
+metadata:
+  name: "Bedrock Assistant"
+  version: "1.0.0"
+  description: "Simple assistant using Llama 3.2 1B (lightweight)"
+  builtin: true
+
+workflow:
+  - id: "chat"
+    type: "llm"
+    config:
+      provider: "bedrock"
+      model: "us.meta.llama3-2-1b-instruct-v1:0"
+      stream: true
+      system: |
+        You are a helpful, friendly assistant. Be concise and direct.
+        Answer in the same language the user writes to you.
+      messages: "$input.messages"
