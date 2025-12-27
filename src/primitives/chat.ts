@@ -1,9 +1,14 @@
 /**
  * Beddel Protocol - Chat Primitive
  * 
- * Primitive for frontend chat interfaces using useChat hook.
- * ALWAYS streams responses for responsive UX.
- * Expects UIMessage format (with 'parts' array) and converts to ModelMessage.
+ * DESIGN DECISION: This primitive ALWAYS streams. There is no `stream` config option.
+ * Streaming behavior is semantically determined by primitive type:
+ * - `chat` → Always streams (frontend UX)
+ * - `llm` → Never streams (workflow chaining)
+ * 
+ * MESSAGE CONVERSION: Uses `convertToModelMessages()` because input comes from
+ * `useChat` hook which sends `UIMessage[]` format. The AI SDK v6 `streamText`
+ * expects `ModelMessage[]` format.
  * 
  * Use this primitive when:
  * - Input comes from useChat frontend hook

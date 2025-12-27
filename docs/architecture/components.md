@@ -126,6 +126,32 @@
 
 ---
 
+### Design Decision: Semantic Primitive Separation
+
+**Why `chat` converts messages and `llm` doesn't:**
+
+The AI SDK v6 has two message formats:
+- `UIMessage[]` — Frontend format from `useChat` hook (with `parts` array)
+- `ModelMessage[]` — Backend format for `streamText`/`generateText` (with `content`)
+
+| Primitive | Input Format | Conversion | Reason |
+|-----------|--------------|------------|--------|
+| `chat` | `UIMessage[]` | `convertToModelMessages()` | Data comes from `useChat` frontend |
+| `llm` | `ModelMessage[]` | None | Data comes from workflow steps or YAML |
+
+**Why no `stream` property in YAML:**
+
+The streaming behavior is **semantically determined by the primitive type**, not a configuration flag:
+- `type: "chat"` → Always streams (for responsive frontend UX)
+- `type: "llm"` → Never streams (result needed for workflow chaining)
+
+This design is cleaner than a `stream: true/false` flag because:
+1. Prevents misconfiguration (e.g., streaming in a multi-step workflow)
+2. Makes intent explicit in the YAML
+3. Aligns with AI SDK v6 patterns (`streamText` vs `generateText`)
+
+---
+
 ### Output Primitive (`src/primitives/output.ts`)
 
 **Responsibility:** Deterministic JSON transform using variable resolution.

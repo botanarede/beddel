@@ -1,7 +1,7 @@
 # Beddel Protocol
 
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![npm version](https://img.shields.io/badge/npm-1.0.0-brightgreen.svg)](https://www.npmjs.com/package/beddel)
+[![npm version](https://img.shields.io/badge/npm-1.0.4-brightgreen.svg)](https://www.npmjs.com/package/beddel)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue.svg)](https://www.typescriptlang.org/)
 [![AI SDK](https://img.shields.io/badge/AI%20SDK-v6-purple.svg)](https://sdk.vercel.ai/)
 
