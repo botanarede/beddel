@@ -14,7 +14,7 @@
 - 🔌 **Extensible Primitives** — Register custom step types, tools, and callbacks
 - 🔒 **Security First** — YAML parsing with `FAILSAFE_SCHEMA` prevents code execution
 - 📦 **Bundle Separation** — Three entry points for server, client, and full API access
-- 🌐 **Multi-Provider** — Built-in support for Google Gemini and Amazon Bedrock
+- 🌐 **Multi-Provider** — Built-in support for Google Gemini, Amazon Bedrock, and OpenRouter (400+ models)
 
 ## Installation
 
@@ -82,6 +82,25 @@ workflow:
       messages: "$input.messages"
 ```
 
+#### Example 3: OpenRouter (400+ Models)
+
+```yaml
+# src/agents/assistant-openrouter.yaml
+metadata:
+  name: "OpenRouter Assistant"
+  version: "1.0.0"
+
+workflow:
+  - id: "chat"
+    type: "llm"
+    config:
+      provider: "openrouter"
+      model: "qwen/qwen3-14b:free"  # or any model from openrouter.ai/models
+      stream: true
+      system: "You are a helpful assistant."
+      messages: "$input.messages"
+```
+
 ### 3. Set Environment Variables
 
 ```bash
@@ -94,6 +113,9 @@ AWS_BEARER_TOKEN_BEDROCK=your_bedrock_api_key
 # Or use standard AWS credentials:
 # AWS_ACCESS_KEY_ID=your_access_key
 # AWS_SECRET_ACCESS_KEY=your_secret_key
+
+# For OpenRouter
+OPENROUTER_API_KEY=your_openrouter_api_key
 ```
 
 ### 4. Use with React (useChat)
@@ -128,6 +150,7 @@ export default function Chat() {
 |----------|----------------------|---------------|
 | `google` | `GEMINI_API_KEY` | `gemini-1.5-flash` |
 | `bedrock` | `AWS_REGION`, `AWS_BEARER_TOKEN_BEDROCK` (or AWS credentials) | `anthropic.claude-3-haiku-20240307-v1:0` |
+| `openrouter` | `OPENROUTER_API_KEY` | `qwen/qwen3-14b:free` |
 
 > **Note:** The Bedrock provider requires `AWS_REGION` to be set (defaults to `us-east-1` if not provided).
 
@@ -232,6 +255,7 @@ Beddel is fully compatible with Vercel AI SDK v6:
 | AI Core | `ai` | 6.x |
 | AI Provider | `@ai-sdk/google` | 3.x |
 | AI Provider | `@ai-sdk/amazon-bedrock` | 4.x |
+| AI Provider | `@ai-sdk/openai` | 1.x |
 | Validation | `zod` | 3.x |
 | YAML Parser | `js-yaml` | 4.x |
 

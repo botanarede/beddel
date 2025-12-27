@@ -11,6 +11,7 @@
 import type { LanguageModel } from 'ai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createAmazonBedrock } from '@ai-sdk/amazon-bedrock';
+import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 
 /**
  * Configuration passed to provider's createModel method.
@@ -120,5 +121,23 @@ registerProvider('bedrock', {
             region: process.env.AWS_REGION || 'us-east-1',
         });
         return bedrock(config.model || 'anthropic.claude-3-haiku-20240307-v1:0');
+    },
+});
+
+/**
+ * OpenRouter Provider (Built-in)
+ * 
+ * Uses @openrouter/ai-sdk-provider for access to 400+ models.
+ * Requires OPENROUTER_API_KEY environment variable.
+ * Default model: qwen/qwen3-coder:free (free tier)
+ * 
+ * Requirements: 1.4, 4.3
+ */
+registerProvider('openrouter', {
+    createModel: (config: ProviderConfig): LanguageModel => {
+        const openrouter = createOpenRouter({
+            apiKey: process.env.OPENROUTER_API_KEY,
+        });
+        return openrouter(config.model || 'qwen/qwen3-coder:free');
     },
 });

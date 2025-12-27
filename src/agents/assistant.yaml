@@ -1,0 +1,17 @@
+# Built-in Streaming Assistant
+# Uses Google Gemini for fast, streaming responses
+
+metadata:
+  name: "Streaming Assistant"
+  version: "1.0.0"
+  builtin: true
+
+workflow:
+  - id: "chat-interaction"
+    type: "llm"
+    config:
+      provider: "google"
+      model: "gemini-2.0-flash-exp"
+      stream: true
+      system: "You are a helpful assistant."
+      messages: "$input.messages"

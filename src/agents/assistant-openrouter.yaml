@@ -1,0 +1,17 @@
+# Built-in OpenRouter Assistant
+# Uses OpenRouter for access to 400+ models
+
+metadata:
+  name: "OpenRouter Assistant"
+  version: "1.0.0"
+  builtin: true
+
+workflow:
+  - id: "chat-interaction"
+    type: "llm"
+    config:
+      provider: "openrouter"
+      model: "qwen/qwen3-coder:free"
+      stream: true
+      system: "You are a helpful assistant."
+      messages: "$input.messages"
