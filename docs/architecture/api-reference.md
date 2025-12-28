@@ -80,6 +80,7 @@ Map of primitive step types to their handler functions.
 - `llm` — Workflow LLM calls (never streaming, uses ModelMessage directly)
 - `output-generator` — Deterministic JSON transform
 - `call-agent` — Sub-agent invocation
+- `mcp-tool` — External MCP server tool execution
 
 #### `toolRegistry: Record<string, ToolImplementation>`
 
@@ -328,6 +329,66 @@ workflow:
     result: "finalOutput"
 ```
 
+### `mcp-tool` Primitive
+
+Connect to external MCP servers via SSE and execute tools.
+
+**Use when:**
+- Integrating with GitMCP for documentation fetching
+- Connecting to Context7 or other MCP services
+- Building agents that need external tool access
+
+**Behavior:**
+- Lazy loads MCP SDK (optional dependency)
+- Connects via SSE transport
+- Supports tool discovery via `list_tools`
+- Returns `{ success, data, toolNames?, error? }`
+
+**Config Options:**
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `url` | `string` | Yes | MCP server URL (SSE endpoint) |
+| `tool` | `string` | Yes | Tool name to execute (or `list_tools`) |
+| `arguments` | `object` | No | Arguments to pass to the tool |
+| `timeout` | `number` | No | Timeout in ms (default: 30000) |
+
+```yaml
+workflow:
+  - id: "fetch-docs"
+    type: "mcp-tool"
+    config:
+      url: "https://gitmcp.io/vercel/ai"
+      tool: "fetch_ai_documentation"
+      arguments: {}
+    result: "mcpDocs"
+```
+
+**Multi-step Example (MCP + Chat):**
+
+```yaml
+workflow:
+  # Step 1: Fetch documentation from GitMCP
+  - id: "fetch-docs"
+    type: "mcp-tool"
+    config:
+      url: "https://gitmcp.io/owner/repo"
+      tool: "fetch_repo_documentation"
+      arguments: {}
+    result: "mcpDocs"
+
+  # Step 2: Respond using the fetched documentation
+  - id: "respond"
+    type: "chat"
+    config:
+      provider: "google"
+      model: "gemini-2.0-flash-exp"
+      system: |
+        You have access to documentation:
+        $stepResult.mcpDocs.data
+      messages: "$input.messages"
+```
+
 ---
 
 ## Built-in Agents
@@ -337,6 +398,7 @@ workflow:
 | `assistant` | Google | Streaming chat assistant |
 | `assistant-bedrock` | Bedrock | Llama 3.2 assistant |
 | `assistant-openrouter` | OpenRouter | Free tier assistant |
+| `assistant-gitmcp` | Google + MCP | Documentation assistant via GitMCP |
 | `text-generator` | Google | Text generation (non-streaming) |
 | `multi-step-assistant` | Google | 4-step analysis pipeline |
 
@@ -393,3 +455,4 @@ type PrimitiveHandler = (
 | 2024-12-25 | 1.0.2 | Provider registry, bedrock support |
 | 2024-12-26 | 1.0.3 | OpenRouter provider, built-in agents |
 | 2024-12-27 | 1.0.4 | Separated `chat` and `llm` primitives, implemented `call-agent` |
+| 2024-12-28 | 1.0.5 | Added `mcp-tool` primitive, `assistant-gitmcp` agent, system prompt variable resolution |

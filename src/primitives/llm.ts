@@ -45,10 +45,13 @@ export const llmPrimitive: PrimitiveHandler = async (
     const hasTools = llmConfig.tools && llmConfig.tools.length > 0;
     const tools = hasTools ? mapTools(llmConfig.tools!) : undefined;
 
+    // Resolve system prompt (may contain $stepResult.* variables from previous steps)
+    const system = resolveVariables(llmConfig.system, context) as string | undefined;
+
     const result = await generateText({
         model,
         messages,
-        system: llmConfig.system,
+        system,
         stopWhen: hasTools ? stepCountIs(5) : undefined,
         tools,
     });

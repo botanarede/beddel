@@ -12,7 +12,8 @@ packages/beddel/
 │   │   ├── assistant-bedrock.yaml # Amazon Bedrock assistant
 │   │   ├── assistant-openrouter.yaml # OpenRouter assistant
 │   │   ├── text-generator.yaml   # Text generation (non-streaming)
-│   │   └── multi-step-assistant.yaml # 4-step analysis pipeline
+│   │   ├── multi-step-assistant.yaml # 4-step analysis pipeline
+│   │   └── assistant-gitmcp.yaml # GitMCP documentation assistant
 │   ├── core/
 │   │   ├── parser.ts             # YAML parsing (FAILSAFE_SCHEMA)
 │   │   ├── workflow.ts           # WorkflowExecutor class
@@ -23,7 +24,8 @@ packages/beddel/
 │   │   ├── chat.ts               # Frontend streaming primitive
 │   │   ├── llm.ts                # Workflow blocking primitive
 │   │   ├── output.ts             # JSON transform primitive
-│   │   └── call-agent.ts         # Sub-agent invocation primitive
+│   │   ├── call-agent.ts         # Sub-agent invocation primitive
+│   │   └── mcp-tool.ts           # MCP server tool execution primitive
 │   ├── providers/
 │   │   └── index.ts              # Provider registry (google, bedrock, openrouter)
 │   ├── server/
@@ -66,7 +68,8 @@ primitives/
 ├── chat.ts           # type: "chat" — streaming, converts UIMessage
 ├── llm.ts            # type: "llm" — blocking, uses ModelMessage
 ├── output.ts         # type: "output-generator" — JSON transform
-└── call-agent.ts     # type: "call-agent" — sub-agent invocation
+├── call-agent.ts     # type: "call-agent" — sub-agent invocation
+└── mcp-tool.ts       # type: "mcp-tool" — MCP server integration
 ```
 
 ### Primitive Comparison
@@ -77,6 +80,7 @@ primitives/
 | `llm` | Never | ModelMessage (direct) | Workflows, pipelines |
 | `output-generator` | Never | N/A | JSON transform |
 | `call-agent` | Depends | Passes through | Sub-agent composition |
+| `mcp-tool` | Never | N/A | External MCP servers |
 
 ---
 
@@ -89,6 +93,7 @@ Agents bundled with the package, available without configuration:
 | `assistant.yaml` | `chat` | Google | Streaming chat assistant |
 | `assistant-bedrock.yaml` | `chat` | Bedrock | Llama 3.2 assistant |
 | `assistant-openrouter.yaml` | `chat` | OpenRouter | Free tier assistant |
+| `assistant-gitmcp.yaml` | `mcp-tool` + `chat` | Google + MCP | Documentation assistant via GitMCP |
 | `text-generator.yaml` | `llm` | Google | Text generation |
 | `multi-step-assistant.yaml` | `call-agent` + `llm` | Google | 4-step pipeline |
 

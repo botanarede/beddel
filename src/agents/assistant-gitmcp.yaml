@@ -1,0 +1,38 @@
+# GitMCP Documentation Assistant
+# Fetches documentation from GitHub repos via GitMCP and answers questions
+
+metadata:
+  name: "GitMCP Documentation Assistant"
+  version: "1.0.0"
+  builtin: true
+  description: "Assistant that fetches documentation from GitHub repos via GitMCP MCP server"
+
+workflow:
+  # Step 1: Fetch documentation from GitMCP
+  # GitMCP URL format: https://gitmcp.io/{owner}/{repo}
+  # Default: Beddel Protocol docs
+  - id: "fetch-docs"
+    type: "mcp-tool"
+    config:
+      url: "https://gitmcp.io/botanarede/beddel"
+      tool: "fetch_beddel_documentation"
+      arguments: {}
+    result: "mcpDocs"
+
+  # Step 2: Respond using the fetched documentation as context
+  - id: "respond"
+    type: "chat"
+    config:
+      provider: "google"
+      model: "gemini-2.0-flash-exp"
+      system: |
+        You are a helpful assistant specialized in the Beddel Protocol.
+        You have access to the official documentation below.
+        
+        Use this documentation to answer questions accurately.
+        If the documentation doesn't cover the topic, say so clearly.
+        
+        ## Documentation
+        
+        $stepResult.mcpDocs.data
+      messages: "$input.messages"

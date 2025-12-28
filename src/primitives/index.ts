@@ -12,12 +12,14 @@ import { chatPrimitive } from './chat';
 import { llmPrimitive } from './llm';
 import { outputPrimitive } from './output';
 import { callAgentPrimitive } from './call-agent';
+import { mcpToolPrimitive } from './mcp-tool';
 
 // Re-export from llm-core for consumer access
 export { registerCallback, callbackRegistry } from './llm-core';
 export { chatPrimitive } from './chat';
 export { llmPrimitive } from './llm';
 export { callAgentPrimitive } from './call-agent';
+export { mcpToolPrimitive } from './mcp-tool';
 
 /**
  * Registry of primitive handlers keyed by step type.
@@ -27,6 +29,7 @@ export { callAgentPrimitive } from './call-agent';
  * - 'llm': Workflow/API calls (ModelMessage with 'content' → direct use)
  * - 'output-generator': Deterministic variable mapping
  * - 'call-agent': Sub-agent invocation
+ * - 'mcp-tool': External MCP server tool execution
  */
 export const handlerRegistry: Record<string, PrimitiveHandler> = {
     /**
@@ -54,6 +57,13 @@ export const handlerRegistry: Record<string, PrimitiveHandler> = {
      * Loads and executes another agent's workflow.
      */
     'call-agent': callAgentPrimitive,
+
+    /**
+     * MCP Tool Primitive - External MCP server integration.
+     * Connects via SSE and executes tools from MCP servers.
+     * Use for: GitMCP, Context7, custom MCP servers.
+     */
+    'mcp-tool': mcpToolPrimitive,
 };
 
 /**

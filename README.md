@@ -228,6 +228,7 @@ workflow:
 | `llm` | Never streaming, returns complete result | Multi-step workflows, variable passing |
 | `call-agent` | Invokes another agent | Sub-agent orchestration |
 | `output-generator` | JSON template transform | Structured output generation |
+| `mcp-tool` | Connects to MCP servers via SSE | External tool integration (GitMCP, Context7) |
 
 ### Variable Resolution
 
@@ -263,6 +264,7 @@ Beddel is fully compatible with Vercel AI SDK v6:
 | AI Provider | `@ai-sdk/google` | 3.x |
 | AI Provider | `@ai-sdk/amazon-bedrock` | 4.x |
 | AI Provider | `@ai-sdk/openai` | 1.x |
+| MCP Client | `@modelcontextprotocol/sdk` | 1.x |
 | Validation | `zod` | 3.x |
 | YAML Parser | `js-yaml` | 4.x |
 

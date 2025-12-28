@@ -57,6 +57,7 @@
 - `llm` — Workflow LLM calls (non-streaming)
 - `output-generator` — JSON transform
 - `call-agent` — Sub-agent invocation
+- `mcp-tool` — External MCP server integration
 
 ---
 
@@ -81,6 +82,7 @@
 **Behavior:**
 - **Always streams** — Returns `Response` via `toUIMessageStreamResponse()`
 - Converts `UIMessage[]` (from `useChat`) to `ModelMessage[]`
+- **Resolves variables in system prompt** (e.g., `$stepResult.mcpDocs.data`)
 - Supports `onFinish` and `onError` lifecycle callbacks
 
 **Key Interfaces:**
@@ -99,6 +101,7 @@
 **Behavior:**
 - **Never streams** — Returns `{ text, usage }` object
 - Uses `ModelMessage[]` format directly (no conversion)
+- **Resolves variables in system prompt** (e.g., `$stepResult.*.text`)
 - Result stored in `context.variables` for subsequent steps
 
 **Key Interfaces:**
@@ -123,6 +126,35 @@
 - `callAgentPrimitive(config: StepConfig, context: ExecutionContext): Promise<Response | Record<string, unknown>>`
 
 **Dependencies:** `loadYaml`, `WorkflowExecutor`, `resolveVariables`
+
+---
+
+### MCP Tool Primitive (`src/primitives/mcp-tool.ts`)
+
+**Responsibility:** Connect to external MCP servers via SSE and execute tools.
+
+**Behavior:**
+- Lazy loads `@modelcontextprotocol/sdk` to avoid issues if not installed
+- Connects via SSE transport to MCP servers
+- Supports tool discovery via `list_tools` special tool name
+- 30s timeout protection (configurable)
+- Returns `{ success, data, toolNames?, error? }`
+
+**Key Interfaces:**
+- `mcpToolPrimitive(config: StepConfig, context: ExecutionContext): Promise<Record<string, unknown>>`
+
+**Config Options:**
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `url` | `string` | Yes | MCP server URL (SSE endpoint) |
+| `tool` | `string` | Yes | Tool name to execute (or `list_tools` for discovery) |
+| `arguments` | `object` | No | Arguments to pass to the tool |
+| `timeout` | `number` | No | Timeout in ms (default: 30000) |
+
+**Dependencies:** `@modelcontextprotocol/sdk` (optional, lazy-loaded)
+
+**Use for:** GitMCP, Context7, custom MCP servers.
 
 ---
 
@@ -224,6 +256,7 @@ Pre-configured agents bundled with the package:
 | `assistant.yaml` | `chat` | Google Gemini streaming assistant |
 | `assistant-bedrock.yaml` | `chat` | Amazon Bedrock assistant |
 | `assistant-openrouter.yaml` | `chat` | OpenRouter free tier assistant |
+| `assistant-gitmcp.yaml` | `mcp-tool` + `chat` | Documentation assistant via GitMCP |
 | `text-generator.yaml` | `llm` | Text generation (non-streaming) |
 | `multi-step-assistant.yaml` | `call-agent` + `llm` | 4-step analysis pipeline |
 
@@ -252,6 +285,7 @@ graph TB
         LLMPrim["llm.ts (blocking)"]
         OutputPrim["output.ts"]
         CallAgent["call-agent.ts"]
+        McpTool["mcp-tool.ts"]
     end
     
     subgraph "Providers"
@@ -269,6 +303,7 @@ graph TB
     
     subgraph "Built-in Agents"
         Assistant["assistant.yaml"]
+        AssistantGitMCP["assistant-gitmcp.yaml"]
         TextGen["text-generator.yaml"]
         MultiStep["multi-step-assistant.yaml"]
     end
@@ -286,6 +321,7 @@ graph TB
     Registry --> LLMPrim
     Registry --> OutputPrim
     Registry --> CallAgent
+    Registry --> McpTool
     ChatPrim --> LLMCore
     LLMPrim --> LLMCore
     LLMCore --> ToolReg

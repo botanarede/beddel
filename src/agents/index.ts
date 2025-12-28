@@ -19,6 +19,7 @@ export const BUILTIN_AGENTS = [
   'assistant',
   'assistant-bedrock', 
   'assistant-openrouter',
+  'assistant-gitmcp',
   'text-generator',
   'multi-step-assistant',
 ] as const;
