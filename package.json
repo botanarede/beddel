@@ -1,6 +1,6 @@
 {
     "name": "beddel",
-    "version": "1.0.5",
+    "version": "1.0.6",
     "description": "Declarative Sequential Pipeline Executor for YAML workflows with native streaming and Vercel AI SDK v6 support",
     "author": "Bota na Rede",
     "license": "MIT",
