@@ -13,8 +13,9 @@
 
 metadata:
   name: "Business Analyzer"
-  version: "1.0.0"
+  version: "1.1.0"
   description: "Analyzes business reviews and generates actionable insights"
+  builtin: true
 
 workflow:
   # Step 1: Fetch all reviews with auto-pagination
@@ -46,20 +47,28 @@ workflow:
         5. Trend analysis comparing recent vs older reviews
         6. Actionable recommendations
         
-        Format your response as structured JSON.
+        Return ONLY valid JSON (no markdown, no ```):
+        {
+          "sentimentScore": 8,
+          "positiveThemes": [{"theme": "Great service", "count": 15}],
+          "improvementAreas": [{"area": "Wait times", "count": 5}],
+          "urgentReviews": [{"reviewId": "xxx", "rating": 1, "issue": "summary"}],
+          "trendAnalysis": "Recent reviews show improvement...",
+          "recommendations": ["Focus on...", "Consider..."]
+        }
       messages:
         - role: "user"
-          content: |
-            Analyze these business reviews:
-            
-            Total Reviews: $stepResult.reviewsData.totalReviewCount
-            Average Rating: $stepResult.reviewsData.averageRating
-            
-            Reviews Data:
-            $stepResult.reviewsData.reviews
+          content: "$input.reviewsPayload"
+    result: "analysisRaw"
+
+  # Step 3: Parse analysis JSON
+  - id: "parse-analysis"
+    type: "output-generator"
+    config:
+      json: "$stepResult.analysisRaw.text"
     result: "analysis"
 
-  # Step 3: Generate response suggestions for negative reviews
+  # Step 4: Generate response suggestions for negative reviews
   - id: "generate-responses"
     type: "llm"
     config:
@@ -76,24 +85,29 @@ workflow:
         - Keep responses under 150 words
         - Be specific to the complaint mentioned
         
-        Format as JSON array with reviewId and suggestedResponse.
+        Return ONLY valid JSON array (no markdown, no ```):
+        [{"reviewId": "xxx", "rating": 2, "originalComment": "...", "suggestedResponse": "..."}]
+        
+        If no negative reviews, return: []
       messages:
         - role: "user"
-          content: |
-            Generate response suggestions for these reviews:
-            $stepResult.reviewsData.reviews
-    result: "responseSuggestions"
+          content: "$input.reviewsPayload"
+    result: "responsesRaw"
 
-  # Step 4: Compile final report
-  - id: "compile-report"
+  # Step 5: Parse responses JSON
+  - id: "parse-responses"
     type: "output-generator"
     config:
-      template:
-        summary:
-          totalReviews: "$stepResult.reviewsData.totalReviewCount"
-          averageRating: "$stepResult.reviewsData.averageRating"
-          analysisDate: "$input.analysisDate"
-        analysis: "$stepResult.analysis.text"
-        responseSuggestions: "$stepResult.responseSuggestions.text"
-        rawReviews: "$stepResult.reviewsData.reviews"
-    result: "finalReport"
+      json: "$stepResult.responsesRaw.text"
+    result: "responseSuggestions"
+
+# Explicit Return: Define the API response contract
+return:
+  success: true
+  summary:
+    totalReviews: "$stepResult.reviewsData.totalReviewCount"
+    averageRating: "$stepResult.reviewsData.averageRating"
+    pagesFetched: "$stepResult.reviewsData.data.pagesFetched"
+  analysis: "$stepResult.analysis"
+  responseSuggestions: "$stepResult.responseSuggestions"
+  reviews: "$stepResult.reviewsData.reviews"
