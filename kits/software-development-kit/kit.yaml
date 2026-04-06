@@ -1,0 +1,25 @@
+name: software-development-kit
+version: "0.1.0"
+description: "Development workflow tools — validation gates and epic creation"
+author: "Beddel Team"
+tools:
+  - name: pytest_gate
+    target: "kits.software_development_kit.tools.gates:pytest_gate"
+    description: "Run pytest with fail-on-error"
+    category: gates
+  - name: ruff_check_gate
+    target: "kits.software_development_kit.tools.gates:ruff_check_gate"
+    description: "Run ruff linter"
+    category: gates
+  - name: ruff_format_gate
+    target: "kits.software_development_kit.tools.gates:ruff_format_gate"
+    description: "Run ruff formatter check"
+    category: gates
+  - name: mypy_gate
+    target: "kits.software_development_kit.tools.gates:mypy_gate"
+    description: "Run mypy type checker"
+    category: gates
+workflows:
+  - name: create-epic
+    path: workflows/create-epic.yaml
+    description: "Create epic scaffolding (directories, template files)"

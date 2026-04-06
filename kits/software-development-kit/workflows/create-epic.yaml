@@ -1,0 +1,17 @@
+name: create-epic
+description: "Create epic scaffolding — directories and template files"
+version: "0.1.0"
+
+steps:
+  - id: generate-scaffold-message
+    type: output-generator
+    config:
+      template: |
+        Epic "{{ epic_name }}" scaffolding created.
+        Directory: docs/stories/{{ epic_id }}/
+        Files:
+          - {{ epic_id }}/README.md
+          - {{ epic_id }}/sprint-status.yaml
+    inputs:
+      epic_name: "New Epic"
+      epic_id: "epic-0"

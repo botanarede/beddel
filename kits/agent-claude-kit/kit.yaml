@@ -1,0 +1,17 @@
+name: agent-claude-kit
+version: "0.1.0"
+description: "Claude Agent SDK subprocess-based agent adapter"
+author: "Beddel Team"
+adapters:
+  - port: IAgentAdapter
+    implementation: ClaudeAgentAdapter
+    description: "Agent adapter for the Claude Agent SDK"
+
+targets:
+  python:
+    module: "beddel_agent_claude"
+    dependencies:
+      - "claude-agent-sdk>=0.1"
+    adapters:
+      - port: IAgentAdapter
+        target: "beddel_agent_claude.adapter:ClaudeAgentAdapter"

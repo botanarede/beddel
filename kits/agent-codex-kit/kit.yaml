@@ -1,0 +1,16 @@
+name: agent-codex-kit
+version: "0.1.0"
+description: "Codex Docker-isolated agent adapter"
+author: "Beddel Team"
+adapters:
+  - port: IAgentAdapter
+    implementation: CodexAgentAdapter
+    description: "Agent adapter for the OpenAI Codex CLI via Docker"
+
+targets:
+  python:
+    module: "beddel_agent_codex"
+    dependencies: []
+    adapters:
+      - port: IAgentAdapter
+        target: "beddel_agent_codex.adapter:CodexAgentAdapter"
