@@ -13,4 +13,5 @@ targets:
     dependencies: []
     adapters:
       - port: IAgentAdapter
+        name: kiro-cli
         target: "beddel_agent_kiro.adapter:KiroCLIAgentAdapter"
