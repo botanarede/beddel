@@ -14,4 +14,5 @@ targets:
       - "claude-agent-sdk>=0.1"
     adapters:
       - port: IAgentAdapter
+        name: claude
         target: "beddel_agent_claude.adapter:ClaudeAgentAdapter"

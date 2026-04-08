@@ -13,4 +13,5 @@ targets:
     dependencies: []
     adapters:
       - port: IAgentAdapter
+        name: codex
         target: "beddel_agent_codex.adapter:CodexAgentAdapter"
