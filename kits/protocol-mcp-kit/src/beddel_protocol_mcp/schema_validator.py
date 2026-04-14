@@ -2,7 +2,7 @@
 
 Validates tool arguments against a tool's ``inputSchema`` using the
 ``jsonschema`` library.  The ``jsonschema`` package is an optional
-dependency (``pip install beddel[mcp]``).  Imports are guarded with
+dependency (``pip install jsonschema``).  Imports are guarded with
 ``try/except ImportError`` to provide a clear error message when the
 extra is not installed.
 """
@@ -18,7 +18,7 @@ try:
     from jsonschema import ValidationError, validate
 except ImportError as _imp_err:
     raise ImportError(
-        "jsonschema not installed. Install with: pip install beddel[mcp]"
+        "jsonschema not installed. Install with: pip install jsonschema"
     ) from _imp_err
 
 __all__ = ["validate_tool_arguments"]

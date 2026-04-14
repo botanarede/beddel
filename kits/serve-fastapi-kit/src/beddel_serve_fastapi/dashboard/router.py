@@ -18,9 +18,9 @@ from fastapi.responses import JSONResponse
 from sse_starlette.sse import EventSourceResponse
 
 from beddel.domain.models import Workflow
-from beddel.integrations.dashboard.bridge import DashboardSSEBridge
-from beddel.integrations.dashboard.history import ExecutionHistoryStore
-from beddel.integrations.dashboard.inspector import WorkflowInspector
+from beddel_serve_fastapi.dashboard.bridge import DashboardSSEBridge
+from beddel_serve_fastapi.dashboard.history import ExecutionHistoryStore
+from beddel_serve_fastapi.dashboard.inspector import WorkflowInspector
 
 __all__ = ["create_dashboard_router"]
 

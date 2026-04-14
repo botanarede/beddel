@@ -4,7 +4,7 @@ This adapter bridges the Beddel domain core to local MCP servers using the
 ``mcp`` Python SDK's ``stdio_client()`` context manager and ``ClientSession``
 for JSON-RPC 2.0 communication over stdio transport.
 
-The ``mcp`` SDK is an optional dependency (``pip install beddel[mcp]``).
+The ``mcp`` SDK is an optional dependency (``pip install mcp``).
 Imports are guarded with ``try/except ImportError`` to provide a clear
 error message when the extra is not installed.
 """
@@ -58,7 +58,7 @@ class StdioMCPClient:
         if not _MCP_AVAILABLE:
             raise MCPError(
                 code=MCP_CONNECTION_FAILED,
-                message=("MCP SDK not installed. Install with: pip install beddel[mcp]"),
+                message=("MCP SDK not installed. Install with: pip install mcp"),
             )
         self._params = StdioServerParameters(
             command=command,

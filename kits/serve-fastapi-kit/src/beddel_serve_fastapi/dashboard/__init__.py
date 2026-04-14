@@ -26,12 +26,12 @@ def create_agent_pipeline_router() -> tuple:
     """Create a FastAPI router for agent pipeline endpoints.
 
     Convenience re-export of
-    :func:`beddel.integrations.dashboard.pipeline.create_agent_pipeline_router`.
+    :func:`beddel_serve_fastapi.dashboard.pipeline.create_agent_pipeline_router`.
 
     Returns:
         A 2-tuple of ``(APIRouter, register_adapter)`` callable.
     """
-    from beddel.integrations.dashboard.pipeline import (
+    from beddel_serve_fastapi.dashboard.pipeline import (
         create_agent_pipeline_router as _create_pipeline_router,
     )
 
@@ -69,15 +69,15 @@ def create_dashboard_router(
 
     Example::
 
-        from beddel.integrations.dashboard import create_dashboard_router
+        from beddel_serve_fastapi.dashboard import create_dashboard_router
 
         router = create_dashboard_router(workflows, executor)
         app.include_router(router)
     """
-    from beddel.integrations.dashboard.bridge import DashboardSSEBridge
-    from beddel.integrations.dashboard.history import ExecutionHistoryStore
-    from beddel.integrations.dashboard.inspector import WorkflowInspector
-    from beddel.integrations.dashboard.router import (
+    from beddel_serve_fastapi.dashboard.bridge import DashboardSSEBridge
+    from beddel_serve_fastapi.dashboard.history import ExecutionHistoryStore
+    from beddel_serve_fastapi.dashboard.inspector import WorkflowInspector
+    from beddel_serve_fastapi.dashboard.router import (
         create_dashboard_router as _create_router,
     )
 
@@ -106,10 +106,10 @@ def create_dashboard_router(
     )
 
     if agent_adapters is not None:
-        from beddel.integrations.dashboard.pipeline import (
+        from beddel_serve_fastapi.dashboard.pipeline import (
             create_agent_pipeline_router as _create_pipeline_router,
         )
-        from beddel.integrations.dashboard.pipeline.agent_adapter import (
+        from beddel_serve_fastapi.dashboard.pipeline.agent_adapter import (
             AgentPipelineAdapter,
         )
 
@@ -128,11 +128,11 @@ def create_dashboard_router(
 def __getattr__(name: str) -> object:
     """Lazy-load dashboard symbols to avoid import-time side effects."""
     if name == "ExecutionHistoryStore":
-        from beddel.integrations.dashboard.history import ExecutionHistoryStore
+        from beddel_serve_fastapi.dashboard.history import ExecutionHistoryStore
 
         return ExecutionHistoryStore
     if name == "create_agent_pipeline_router":
-        from beddel.integrations.dashboard.pipeline import (
+        from beddel_serve_fastapi.dashboard.pipeline import (
             create_agent_pipeline_router,
         )
 

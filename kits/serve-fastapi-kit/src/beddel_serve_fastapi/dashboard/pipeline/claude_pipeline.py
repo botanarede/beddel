@@ -9,8 +9,8 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from beddel.integrations.dashboard.pipeline.agent_adapter import AgentPipelineAdapter
-from beddel.integrations.dashboard.pipeline.models import AgentPipelineEvent
+from beddel_serve_fastapi.dashboard.pipeline.agent_adapter import AgentPipelineAdapter
+from beddel_serve_fastapi.dashboard.pipeline.models import AgentPipelineEvent
 
 __all__ = ["ClaudePipelineAdapter"]
 

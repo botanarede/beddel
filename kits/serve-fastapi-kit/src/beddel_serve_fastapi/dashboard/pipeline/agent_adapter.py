@@ -18,7 +18,7 @@ from typing import Any
 
 from beddel.domain.errors import AgentError
 from beddel.domain.models import AgentResult
-from beddel.integrations.dashboard.pipeline.models import (
+from beddel_serve_fastapi.dashboard.pipeline.models import (
     AgentHealthStatus,
     AgentPipelineEvent,
 )

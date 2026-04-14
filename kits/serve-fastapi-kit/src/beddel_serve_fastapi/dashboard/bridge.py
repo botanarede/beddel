@@ -2,9 +2,9 @@
 
 Provides :class:`DashboardSSEBridge`, which orchestrates workflow execution
 via a :class:`~beddel.domain.executor.WorkflowExecutor`, pipes the event
-stream through :class:`~beddel.integrations.sse.BeddelSSEAdapter`, and
+stream through :class:`~beddel_serve_fastapi.sse.BeddelSSEAdapter`, and
 records execution history in an
-:class:`~beddel.integrations.dashboard.history.ExecutionHistoryStore`.
+:class:`~beddel_serve_fastapi.dashboard.history.ExecutionHistoryStore`.
 """
 
 from __future__ import annotations
@@ -16,8 +16,8 @@ from typing import Any
 
 from beddel.domain.executor import WorkflowExecutor
 from beddel.domain.models import Workflow
-from beddel.integrations.dashboard.history import ExecutionHistoryStore, ExecutionRecord
-from beddel.integrations.sse import BeddelSSEAdapter
+from beddel_serve_fastapi.dashboard.history import ExecutionHistoryStore, ExecutionRecord
+from beddel_serve_fastapi.sse import BeddelSSEAdapter
 
 __all__ = ["DashboardSSEBridge"]
 

@@ -15,10 +15,10 @@ The kit is part of the Beddel monorepo. To use it standalone, add the kit's `src
 export PYTHONPATH="kits/serve-fastapi-kit/src:$PYTHONPATH"
 ```
 
-Or install the Beddel SDK with the fastapi extra (when available):
+Or install the kit dependencies directly:
 
 ```bash
-pip install beddel[fastapi]
+pip install fastapi sse-starlette
 ```
 
 ## Usage
