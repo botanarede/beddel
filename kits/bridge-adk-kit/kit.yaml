@@ -1,0 +1,16 @@
+name: bridge-adk-kit
+version: "0.1.0"
+description: "ADK Bridge — wraps Beddel workflows as ADK FunctionTools"
+author: "Beddel Team"
+integrations:
+  - name: BeddelADKTool
+    module: tool
+    description: "Wraps a Beddel YAML workflow as an ADK FunctionTool"
+  - name: create_adk_agent
+    module: agent
+    description: "Factory for creating ADK agents with Beddel workflow tools"
+targets:
+  python:
+    module: "beddel_bridge_adk"
+    dependencies:
+      - "google-adk>=1.0.0,<2.0.0"
