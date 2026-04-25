@@ -15,15 +15,12 @@ from unittest.mock import MagicMock
 import pytest
 
 # ---------------------------------------------------------------------------
-# Path setup for standalone kit test execution
+# Path setup — add kit src/ so ``import beddel_bridge_adk`` resolves.
+# ``beddel`` itself must be installed (pip install beddel).
 # ---------------------------------------------------------------------------
 
 _KIT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_KIT_ROOT / "src"))
-
-_PROJECT_ROOT = _KIT_ROOT.parent.parent
-sys.path.insert(0, str(_PROJECT_ROOT / "src" / "beddel-py" / "src"))
-sys.path.insert(0, str(_PROJECT_ROOT / "src" / "beddel-py" / "tests"))
 
 # ---------------------------------------------------------------------------
 # Mock ADK modules — injected before any beddel_bridge_adk import
