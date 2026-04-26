@@ -1,8 +1,9 @@
 """Shared fixtures for bridge-adk-kit tests.
 
-Injects mock ``google.adk`` modules into ``sys.modules`` BEFORE any test
-imports ``beddel_bridge_adk``, so the ``try/except ImportError`` guard in
-``tool.py`` and ``agent.py`` resolves to the mocked classes.
+When ``google-adk`` is installed, tests run against the REAL ADK classes.
+When absent, mock modules are injected into ``sys.modules`` so the
+``try/except ImportError`` guard in ``tool.py`` and ``agent.py`` resolves
+to lightweight stand-ins.
 """
 
 from __future__ import annotations
@@ -22,14 +23,23 @@ import pytest
 _KIT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_KIT_ROOT / "src"))
 
+
 # ---------------------------------------------------------------------------
-# Mock ADK modules — injected before any beddel_bridge_adk import
+# Detect whether real google-adk is available
 # ---------------------------------------------------------------------------
 
-_mock_google = MagicMock()
-_mock_google_adk = MagicMock()
-_mock_google_adk_tools = MagicMock()
-_mock_google_adk_agents = MagicMock()
+try:
+    from google.adk.tools import FunctionTool as _RealFunctionTool  # noqa: F401
+    from google.adk.tools import ToolContext as _RealToolContext  # noqa: F401
+
+    HAS_REAL_ADK = True
+except ImportError:
+    HAS_REAL_ADK = False
+
+
+# ---------------------------------------------------------------------------
+# Mock ADK classes (used only when real ADK is absent)
+# ---------------------------------------------------------------------------
 
 
 class MockFunctionTool:
@@ -55,25 +65,30 @@ class MockAgent:
             setattr(self, k, v)
 
 
-_mock_google_adk_tools.FunctionTool = MockFunctionTool
-_mock_google_adk_tools.ToolContext = MockToolContext
-_mock_google_adk_agents.Agent = MockAgent
+if not HAS_REAL_ADK:
+    # Inject mocks only when real ADK is absent.
+    _mock_google = MagicMock()
+    _mock_google_adk = MagicMock()
+    _mock_google_adk_tools = MagicMock()
+    _mock_google_adk_agents = MagicMock()
 
-# Wire the mock hierarchy so attribute access works:
-_mock_google.adk = _mock_google_adk
-_mock_google_adk.tools = _mock_google_adk_tools
-_mock_google_adk.agents = _mock_google_adk_agents
+    _mock_google_adk_tools.FunctionTool = MockFunctionTool
+    _mock_google_adk_tools.ToolContext = MockToolContext
+    _mock_google_adk_agents.Agent = MockAgent
 
-# Patch sys.modules BEFORE any test file imports beddel_bridge_adk.
-sys.modules.setdefault("google", _mock_google)
-sys.modules.setdefault("google.adk", _mock_google_adk)
-sys.modules.setdefault("google.adk.tools", _mock_google_adk_tools)
-sys.modules.setdefault("google.adk.agents", _mock_google_adk_agents)
+    _mock_google.adk = _mock_google_adk
+    _mock_google_adk.tools = _mock_google_adk_tools
+    _mock_google_adk.agents = _mock_google_adk_agents
 
-# Force-reload beddel_bridge_adk modules so they pick up the mocked ADK.
-for _mod_name in list(sys.modules):
-    if _mod_name.startswith("beddel_bridge_adk"):
-        del sys.modules[_mod_name]
+    sys.modules["google"] = _mock_google
+    sys.modules["google.adk"] = _mock_google_adk
+    sys.modules["google.adk.tools"] = _mock_google_adk_tools
+    sys.modules["google.adk.agents"] = _mock_google_adk_agents
+
+    # Force-reload beddel_bridge_adk modules so they pick up the mocked ADK.
+    for _mod_name in list(sys.modules):
+        if _mod_name.startswith("beddel_bridge_adk"):
+            del sys.modules[_mod_name]
 
 
 # ---------------------------------------------------------------------------

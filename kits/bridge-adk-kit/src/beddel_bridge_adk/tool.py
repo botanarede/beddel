@@ -87,18 +87,28 @@ class BeddelADKTool:
         """Tool description derived from the workflow or constructor override."""
         return self._description
 
-    async def _execute(self, tool_context: Any = None, **kwargs: Any) -> dict[str, Any]:
+    # Key used to inject ADK session metadata into the workflow inputs dict.
+    # Double-underscore prefix avoids collision with user-defined workflow inputs.
+    _ADK_SESSION_KEY: str = "__beddel_adk_session__"
+
+    async def execute(
+        self,
+        inputs: dict[str, Any] | None = None,
+        tool_context: Any = None,
+    ) -> dict[str, Any]:
         """Execute the wrapped Beddel workflow.
 
         When an ADK ``ToolContext`` is available, session metadata
         (``session_id`` and ``user_id``) is extracted from
         ``tool_context.state`` and injected into the executor's
-        ``ExecutionContext.metadata`` via the inputs dict.
+        ``ExecutionContext.metadata`` via the inputs dict under the
+        ``__beddel_adk_session__`` key.
 
         Args:
+            inputs: Workflow input parameters as a dict.  Defaults to an
+                empty dict when ``None``.
             tool_context: ADK ``ToolContext`` injected by the ADK runtime
                 (optional — ``None`` when called outside ADK).
-            **kwargs: Workflow input parameters.
 
         Returns:
             A dict with ``"step_results"`` and ``"metadata"`` keys.
@@ -107,7 +117,7 @@ class BeddelADKTool:
             ValueError: When the underlying workflow raises a
                 :class:`~beddel.domain.errors.BeddelError`.
         """
-        inputs: dict[str, Any] = dict(kwargs)
+        effective_inputs: dict[str, Any] = dict(inputs or {})
 
         # Propagate ADK session metadata when ToolContext is available.
         if tool_context is not None and _HAS_ADK and isinstance(tool_context, _ToolContext):
@@ -118,15 +128,20 @@ class BeddelADKTool:
             if "user_id" in state:
                 adk_metadata["user_id"] = state["user_id"]
             if adk_metadata:
-                inputs["_adk_metadata"] = adk_metadata
+                effective_inputs[self._ADK_SESSION_KEY] = adk_metadata
 
         try:
-            return await self._executor.execute(self._workflow, inputs)
+            return await self._executor.execute(self._workflow, effective_inputs)
         except BeddelError as exc:
             raise ValueError(f"BEDDEL:{exc.code}: {exc.message}") from exc
 
     def as_adk_tool(self) -> FunctionTool:
         """Return an ADK ``FunctionTool`` wrapping this Beddel workflow.
+
+        The returned tool accepts a single ``inputs`` parameter (JSON-style
+        dict) so that ADK can generate a proper schema for the model.
+        ``tool_context`` is injected by the ADK runtime automatically when
+        the function signature includes a ``ToolContext``-typed parameter.
 
         Raises:
             ImportError: When ``google-adk`` is not installed.
@@ -137,10 +152,23 @@ class BeddelADKTool:
                 "Install it with: pip install beddel[bridge-adk]"
             )
 
-        # Build the tool function with proper name and docstring for ADK
-        # schema generation.
-        async def _tool_func(tool_context: Any = None, **kwargs: Any) -> dict[str, Any]:
-            return await self._execute(tool_context=tool_context, **kwargs)
+        # Capture self for the closure.
+        bridge = self
+
+        async def _tool_func(
+            inputs: dict[str, Any] | None = None,
+            tool_context: Any = None,
+        ) -> dict[str, Any]:
+            """Execute a Beddel workflow with the given inputs.
+
+            Args:
+                inputs: Workflow input parameters as a dict.
+                tool_context: ADK ToolContext (injected by runtime).
+
+            Returns:
+                Workflow result with step_results and metadata.
+            """
+            return await bridge.execute(inputs=inputs, tool_context=tool_context)
 
         _tool_func.__name__ = self._name
         _tool_func.__doc__ = self._description
