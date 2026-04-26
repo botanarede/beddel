@@ -52,6 +52,26 @@ async for chunk in provider.stream(
 | `GOOGLE_API_KEY` env var | Checked first; passed as `api_key` to the client |
 | Application Default Credentials (ADC) | Fallback when no API key is set |
 
+### Vertex AI ADC
+
+When no `GOOGLE_API_KEY` is set, the adapter falls back to Vertex AI mode using Application Default Credentials:
+
+```python
+# Set GCP project (required for Vertex AI)
+export GOOGLE_CLOUD_PROJECT=my-project-id
+export GOOGLE_CLOUD_LOCATION=us-central1  # optional, defaults to us-central1
+
+# Authenticate via gcloud
+gcloud auth application-default login
+
+provider = GeminiLLMProvider()  # Uses Vertex AI ADC automatically
+```
+
+| Env Var | Required | Default | Description |
+|---------|----------|---------|-------------|
+| `GOOGLE_CLOUD_PROJECT` | Yes (for Vertex AI) | — | GCP project ID |
+| `GOOGLE_CLOUD_LOCATION` | No | `us-central1` | GCP region |
+
 ### Safety Settings
 
 Pass Gemini safety settings via the `safety_settings` kwarg:

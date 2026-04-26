@@ -98,7 +98,11 @@ class TestConstruction:
             provider = GeminiLLMProvider()
 
         assert isinstance(provider, ILLMProvider)
-        mock_genai.Client.assert_called_once_with()
+        mock_genai.Client.assert_called_once_with(
+            vertexai=True,
+            project=None,
+            location="us-central1",
+        )
 
 
     @patch("beddel_provider_gemini.adapter.genai")
@@ -381,7 +385,7 @@ class TestMessageConversion:
         assert system_instruction == "You are helpful.\nBe concise."
         assert len(contents) == 1
         assert contents[0]["role"] == "user"
-        assert contents[0]["parts"] == "Hello"
+        assert contents[0]["parts"] == [{"text": "Hello"}]
 
     def test_user_and_assistant_roles_mapped(self) -> None:
         """User maps to 'user', assistant maps to 'model'."""
