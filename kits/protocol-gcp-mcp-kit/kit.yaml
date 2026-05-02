@@ -1,0 +1,18 @@
+name: protocol-gcp-mcp-kit
+version: "0.1.0"
+description: "Google Managed MCP Server client adapter (BigQuery, Maps, Cloud SQL, etc.)"
+author: "Beddel Team"
+adapters:
+  - port: IMCPClient
+    implementation: GCPMCPClient
+    description: "MCP client for Google Managed MCP Servers via SSE with ADC auth"
+
+targets:
+  python:
+    module: "beddel_protocol_gcp_mcp"
+    dependencies:
+      - "mcp>=1.0"
+      - "google-auth>=2.0"
+    adapters:
+      - port: IMCPClient
+        target: "beddel_protocol_gcp_mcp.client:GCPMCPClient"
