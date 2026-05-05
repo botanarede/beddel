@@ -1,19 +1,23 @@
 # tools-shell-kit
 
-Shell command execution via SafeSubprocessRunner.
-
-## Install
-
-```bash
-beddel kit install tools-shell-kit
-```
+Shell command execution tool via SafeSubprocessRunner.
 
 ## Dependencies
 
-None — stdlib only.
+None (stdlib only).
+
+## Tools
+
+| Name | Description |
+|------|-------------|
+| shell_exec | Execute shell command safely |
 
 ## Usage
 
-```python
-from beddel_tools_shell.tools import shell_exec
+Install with the appropriate extra:
+
 ```
+pip install beddel[default]
+```
+
+The kit is auto-discovered by the Beddel engine when its dependencies are installed.

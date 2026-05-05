@@ -182,3 +182,149 @@ class TestImportErrorPath:
         finally:
             tool_mod._HAS_ADK = original_flag
             tool_mod._FunctionTool = original_ft
+
+
+class TestReadWorkflowSourceLocal:
+    """_read_workflow_source() should read local files unchanged."""
+
+    def test_reads_local_file(self, valid_workflow_yaml: str) -> None:
+        from beddel_bridge_adk.tool import _read_workflow_source
+
+        content = _read_workflow_source(valid_workflow_yaml)
+        assert "id: test-workflow" in content
+        assert "primitive: llm" in content
+
+
+class TestReadWorkflowSourceGCS:
+    """_read_workflow_source() should load YAML from GCS URIs via mocked Client."""
+
+    _GCS_YAML = (
+        "id: test-workflow\n"
+        "name: Test Workflow\n"
+        "description: A test workflow for unit tests\n"
+        'version: "1.0"\n'
+        "steps:\n"
+        "  - id: step-1\n"
+        "    primitive: llm\n"
+        "    config:\n"
+        "      model: gpt-4o-mini\n"
+        '      prompt: "Hello"\n'
+    )
+
+    def test_gcs_uri_loads_via_client(self) -> None:
+        """When workflow_path is gs://bucket/path, use GCS Client."""
+        import beddel_bridge_adk.tool as tool_mod
+
+        mock_blob = MagicMock()
+        mock_blob.download_as_text.return_value = self._GCS_YAML
+
+        mock_bucket = MagicMock()
+        mock_bucket.blob.return_value = mock_blob
+
+        mock_client = MagicMock()
+        mock_client.bucket.return_value = mock_bucket
+
+        mock_gcs_module = MagicMock()
+        mock_gcs_module.Client.return_value = mock_client
+
+        original_has_gcs = tool_mod._HAS_GCS
+        original_gcs_storage = getattr(tool_mod, "_gcs_storage", None)
+        try:
+            tool_mod._HAS_GCS = True
+            tool_mod._gcs_storage = mock_gcs_module
+
+            result = tool_mod._read_workflow_source(
+                "gs://my-bucket/workflows/test.yaml"
+            )
+
+            assert result == self._GCS_YAML
+            mock_gcs_module.Client.assert_called_once()
+            mock_client.bucket.assert_called_once_with("my-bucket")
+            mock_bucket.blob.assert_called_once_with("workflows/test.yaml")
+            mock_blob.download_as_text.assert_called_once()
+        finally:
+            tool_mod._HAS_GCS = original_has_gcs
+            if original_gcs_storage is not None:
+                tool_mod._gcs_storage = original_gcs_storage
+
+    def test_gcs_uri_nested_path(self) -> None:
+        """GCS URIs with deeply nested blob paths are parsed correctly."""
+        import beddel_bridge_adk.tool as tool_mod
+
+        mock_blob = MagicMock()
+        mock_blob.download_as_text.return_value = self._GCS_YAML
+
+        mock_bucket = MagicMock()
+        mock_bucket.blob.return_value = mock_blob
+
+        mock_client = MagicMock()
+        mock_client.bucket.return_value = mock_bucket
+
+        mock_gcs_module = MagicMock()
+        mock_gcs_module.Client.return_value = mock_client
+
+        original_has_gcs = tool_mod._HAS_GCS
+        original_gcs_storage = getattr(tool_mod, "_gcs_storage", None)
+        try:
+            tool_mod._HAS_GCS = True
+            tool_mod._gcs_storage = mock_gcs_module
+
+            tool_mod._read_workflow_source(
+                "gs://beddel-workflows/v1/prod/workflows/summarize.yaml"
+            )
+
+            mock_client.bucket.assert_called_once_with("beddel-workflows")
+            mock_bucket.blob.assert_called_once_with(
+                "v1/prod/workflows/summarize.yaml"
+            )
+        finally:
+            tool_mod._HAS_GCS = original_has_gcs
+            if original_gcs_storage is not None:
+                tool_mod._gcs_storage = original_gcs_storage
+
+    def test_gcs_uri_raises_import_error_when_no_gcs(self) -> None:
+        """When _HAS_GCS is False, a helpful ImportError is raised."""
+        import beddel_bridge_adk.tool as tool_mod
+
+        original_has_gcs = tool_mod._HAS_GCS
+        try:
+            tool_mod._HAS_GCS = False
+            with pytest.raises(ImportError, match="google-cloud-storage"):
+                tool_mod._read_workflow_source("gs://bucket/path.yaml")
+        finally:
+            tool_mod._HAS_GCS = original_has_gcs
+
+    def test_beddel_adk_tool_init_with_gcs_uri(self) -> None:
+        """BeddelADKTool.__init__ works end-to-end with a GCS URI."""
+        import beddel_bridge_adk.tool as tool_mod
+
+        mock_blob = MagicMock()
+        mock_blob.download_as_text.return_value = self._GCS_YAML
+
+        mock_bucket = MagicMock()
+        mock_bucket.blob.return_value = mock_blob
+
+        mock_client = MagicMock()
+        mock_client.bucket.return_value = mock_bucket
+
+        mock_gcs_module = MagicMock()
+        mock_gcs_module.Client.return_value = mock_client
+
+        original_has_gcs = tool_mod._HAS_GCS
+        original_gcs_storage = getattr(tool_mod, "_gcs_storage", None)
+        try:
+            tool_mod._HAS_GCS = True
+            tool_mod._gcs_storage = mock_gcs_module
+
+            registry = PrimitiveRegistry()
+            executor = WorkflowExecutor(registry)
+            tool = BeddelADKTool(
+                "gs://my-bucket/workflows/test.yaml", executor
+            )
+
+            assert tool.name == "test-workflow"
+            assert tool.description == "A test workflow for unit tests"
+        finally:
+            tool_mod._HAS_GCS = original_has_gcs
+            if original_gcs_storage is not None:
+                tool_mod._gcs_storage = original_gcs_storage

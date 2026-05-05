@@ -1,19 +1,26 @@
 # tools-gates-kit
 
-Validation gate tools (pytest, ruff, mypy) for CI pipelines.
-
-## Install
-
-```bash
-beddel kit install tools-gates-kit
-```
+Validation gate tools (pytest, ruff, mypy) via shell_exec.
 
 ## Dependencies
 
-None — stdlib only.
+None (stdlib only).
+
+## Tools
+
+| Name | Description |
+|------|-------------|
+| pytest_run | Run pytest |
+| ruff_check | Run ruff check |
+| ruff_format | Run ruff format check |
+| mypy_check | Run mypy type check |
 
 ## Usage
 
-```python
-from beddel_tools_gates.tools import pytest_run, ruff_check, ruff_format, mypy_check
+Install with the appropriate extra:
+
 ```
+pip install beddel[default]
+```
+
+The kit is auto-discovered by the Beddel engine when its dependencies are installed.

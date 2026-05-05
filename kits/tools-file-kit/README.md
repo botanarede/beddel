@@ -2,18 +2,23 @@
 
 File I/O tools (read, write) with path validation.
 
-## Install
-
-```bash
-beddel kit install tools-file-kit
-```
-
 ## Dependencies
 
-None — stdlib only.
+None (stdlib only).
+
+## Tools
+
+| Name | Description |
+|------|-------------|
+| file_read | Read file content |
+| file_write | Write file content |
 
 ## Usage
 
-```python
-from beddel_tools_file.tools import file_read, file_write
+Install with the appropriate extra:
+
 ```
+pip install beddel[default]
+```
+
+The kit is auto-discovered by the Beddel engine when its dependencies are installed.

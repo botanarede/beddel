@@ -1,9 +1,10 @@
-# serve-fastapi-kit
+# ag-ui-kit
 
-FastAPI serving + SSE.
+AG-UI protocol adapter for dashboard integration.
 
 ## Dependencies
 
+- `ag-ui-protocol>=0.1`
 - `fastapi>=0.100`
 - `sse-starlette>=1.6`
 
@@ -11,8 +12,8 @@ FastAPI serving + SSE.
 
 | Name | Description |
 |------|-------------|
-| create_beddel_handler | One-line workflow-to-endpoint factory with SSE streaming |
-| BeddelSSEAdapter | SSE adapter for Beddel workflow event streams |
+| BeddelAGUIAdapter | AG-UI adapter for Beddel workflow event streams |
+| create_agui_endpoint | FastAPI AG-UI endpoint factory |
 
 ## Usage
 

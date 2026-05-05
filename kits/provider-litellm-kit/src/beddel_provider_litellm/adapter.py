@@ -44,6 +44,7 @@ _PREFIX_ENV_MAP: dict[str, str] = {
     "azure/": "AZURE_API_KEY",
     "cohere/": "COHERE_API_KEY",
     "mistral/": "MISTRAL_API_KEY",
+    "xiaomi_mimo/": "XIAOMI_MIMO_API_KEY",
 }
 
 
@@ -167,11 +168,11 @@ class LiteLLMAdapter(ILLMProvider):
                 details={"model": model, "provider_error": str(exc)},
             ) from exc
 
-        choice = response.choices[0]  # type: ignore[union-attr]
-        usage = response.usage  # type: ignore[union-attr]
+        choice = response.choices[0]
+        usage = response.usage
         result: dict[str, Any] = {
             "content": choice.message.content,
-            "model": response.model,  # type: ignore[union-attr]
+            "model": response.model,
             "usage": {
                 "prompt_tokens": usage.prompt_tokens if usage else 0,
                 "completion_tokens": usage.completion_tokens if usage else 0,
@@ -244,8 +245,8 @@ class LiteLLMAdapter(ILLMProvider):
             ) from exc
 
         try:
-            async for chunk in response:  # type: ignore[union-attr]
-                delta = chunk.choices[0].delta  # type: ignore[union-attr]
+            async for chunk in response:
+                delta = chunk.choices[0].delta
                 if delta.content is not None:
                     yield delta.content
         except AuthenticationError as exc:

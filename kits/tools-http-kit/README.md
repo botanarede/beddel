@@ -2,20 +2,22 @@
 
 HTTP request tool via httpx.
 
-## Install
-
-```bash
-beddel kit install tools-http-kit
-```
-
 ## Dependencies
 
-```bash
-pip install httpx
-```
+- `httpx>=0.27`
+
+## Tools
+
+| Name | Description |
+|------|-------------|
+| http_request | HTTP request |
 
 ## Usage
 
-```python
-from beddel_tools_http.http import http_request
+Install with the appropriate extra:
+
 ```
+pip install beddel[default]
+```
+
+The kit is auto-discovered by the Beddel engine when its dependencies are installed.

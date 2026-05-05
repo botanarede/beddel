@@ -45,6 +45,47 @@ try:
 except ImportError:
     _HAS_ADK = False
 
+try:
+    from google.cloud import storage as _gcs_storage
+
+    _HAS_GCS = True
+except ImportError:
+    _HAS_GCS = False
+
+
+def _read_workflow_source(workflow_path: str) -> str:
+    """Read workflow YAML from a local path or a ``gs://`` URI.
+
+    When *workflow_path* starts with ``gs://``, the YAML is downloaded via
+    :class:`google.cloud.storage.Client` using Application Default
+    Credentials.  Otherwise the path is treated as a local file and read
+    with :meth:`pathlib.Path.read_text`.
+
+    Args:
+        workflow_path: Local file path **or** ``gs://bucket/blob`` URI.
+
+    Returns:
+        The raw YAML string.
+
+    Raises:
+        ImportError: When a ``gs://`` URI is given but
+            ``google-cloud-storage`` is not installed.
+    """
+    if workflow_path.startswith("gs://"):
+        if not _HAS_GCS:
+            raise ImportError(
+                "google-cloud-storage is required to load workflows from GCS. "
+                "Install it with: pip install google-cloud-storage"
+            )
+        # Parse gs://bucket/path/to/blob
+        without_scheme = workflow_path[len("gs://"):]
+        bucket_name, _, blob_path = without_scheme.partition("/")
+        client = _gcs_storage.Client()
+        blob = client.bucket(bucket_name).blob(blob_path)
+        return blob.download_as_text()
+
+    return Path(workflow_path).read_text(encoding="utf-8")
+
 
 class BeddelADKTool:
     """Wraps a Beddel YAML workflow as an ADK ``FunctionTool``.
@@ -55,7 +96,7 @@ class BeddelADKTool:
     :class:`~beddel.domain.executor.WorkflowExecutor`.
 
     Args:
-        workflow_path: Path to the workflow YAML file.
+        workflow_path: Local file path **or** ``gs://bucket/blob`` URI.
         executor: A configured :class:`WorkflowExecutor` instance.
         name: Optional tool name override.  Defaults to the workflow id.
         description: Optional tool description override.  Defaults to the
@@ -69,7 +110,7 @@ class BeddelADKTool:
         name: str | None = None,
         description: str | None = None,
     ) -> None:
-        yaml_str = Path(workflow_path).read_text(encoding="utf-8")
+        yaml_str = _read_workflow_source(workflow_path)
         self._workflow: Workflow = WorkflowParser.parse(yaml_str)
         self._executor = executor
         self._name = name or self._workflow.id

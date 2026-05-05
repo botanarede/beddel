@@ -1,44 +1,23 @@
 # provider-litellm-kit
 
-LiteLLM provider adapter for the Beddel SDK. Implements the `ILLMProvider` port to execute completions and streaming via LiteLLM's unified API across 100+ LLM providers.
+LiteLLM multi-provider LLM adapter.
 
 ## Dependencies
 
-- `litellm>=1.40,<1.82.7`
+- `litellm>=1.40`
 
-## Install
+## Adapters
 
-The kit is part of the Beddel monorepo. To use it standalone, add the kit's `src/` directory to your Python path:
-
-```bash
-export PYTHONPATH="kits/provider-litellm-kit/src:$PYTHONPATH"
-```
-
-Or install the Beddel SDK with the litellm extra (when available):
-
-```bash
-pip install beddel[litellm]
-```
+| Port | Implementation | Description |
+|------|---------------|-------------|
+| ILLMProvider | LiteLLMAdapter | Multi-provider LLM access via LiteLLM |
 
 ## Usage
 
-```python
-from beddel_provider_litellm.adapter import LiteLLMAdapter
+Install with the appropriate extra:
 
-adapter = LiteLLMAdapter(default_api_key="sk-...")
-
-# Single-turn completion
-result = await adapter.complete("openai/gpt-4o", [{"role": "user", "content": "Hello!"}])
-print(result["content"])
-
-# Streaming
-async for chunk in adapter.stream("openai/gpt-4o", [{"role": "user", "content": "Hello!"}]):
-    print(chunk, end="")
+```
+pip install beddel[default]
 ```
 
-## Running Tests
-
-```bash
-cd kits/provider-litellm-kit
-python -m pytest tests/ -x
-```
+The kit is auto-discovered by the Beddel engine when its dependencies are installed.

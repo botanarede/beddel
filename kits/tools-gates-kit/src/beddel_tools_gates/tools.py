@@ -8,8 +8,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from beddel.tools import beddel_tool
 from beddel_tools_shell.tools import shell_exec
+
+from beddel.tools import beddel_tool
 
 
 @beddel_tool(name="pytest_run", description="Run pytest", category="gates")
