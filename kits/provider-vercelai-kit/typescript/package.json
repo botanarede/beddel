@@ -1,0 +1,19 @@
+{
+  "name": "@beddel/provider-vercelai",
+  "version": "0.1.0",
+  "description": "Vercel AI SDK multi-provider LLM adapter for Beddel TypeScript SDK",
+  "type": "module",
+  "main": "./src/index.ts",
+  "dependencies": {
+    "ai": "^4.0.0",
+    "@ai-sdk/openai": "^1.0.0"
+  },
+  "peerDependencies": {
+    "@ai-sdk/anthropic": "^1.0.0",
+    "@ai-sdk/google": "^1.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@ai-sdk/anthropic": { "optional": true },
+    "@ai-sdk/google": { "optional": true }
+  }
+}

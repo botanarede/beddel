@@ -1,0 +1,16 @@
+name: observability-mock-kit
+version: "0.1.0"
+description: "Observability category kit with ITracer"
+author: "Beddel Team"
+adapters:
+  - port: ITracer
+    implementation: MockTracer
+    description: "Mock tracer adapter for testing"
+targets:
+  python:
+    module: "beddel_observability_mock"
+    dependencies:
+      - "opentelemetry-api>=1.0"
+    adapters:
+      - port: ITracer
+        target: "beddel_observability_mock.adapter:MockTracer"

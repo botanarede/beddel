@@ -1,0 +1,16 @@
+name: provider-mock-kit
+version: "0.1.0"
+description: "Provider category kit with ILLMProvider"
+author: "Beddel Team"
+adapters:
+  - port: ILLMProvider
+    implementation: MockLLMProvider
+    description: "Mock LLM provider adapter for testing"
+targets:
+  python:
+    module: "beddel_provider_mock"
+    dependencies:
+      - "litellm>=1.40"
+    adapters:
+      - port: ILLMProvider
+        target: "beddel_provider_mock.adapter:MockLLMProvider"

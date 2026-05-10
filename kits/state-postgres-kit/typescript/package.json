@@ -1,0 +1,11 @@
+{
+  "name": "@beddel/state-postgres",
+  "version": "0.1.0",
+  "description": "PostgreSQL state persistence adapter for Beddel",
+  "type": "module",
+  "main": "src/index.ts",
+  "peerDependencies": {
+    "pg": "^8.0"
+  },
+  "license": "MIT"
+}

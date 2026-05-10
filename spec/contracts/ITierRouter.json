@@ -1,0 +1,23 @@
+{
+  "name": "ITierRouter",
+  "description": "Contract for model tier routing strategies. Maps logical tier names (e.g. 'fast', 'balanced', 'powerful') to concrete model identifiers. The default implementation performs a static dict lookup; future implementations can use bandit-based adaptive routing.",
+  "methods": [
+    {
+      "name": "route",
+      "params": [
+        { "name": "tier", "type": "string", "required": true },
+        { "name": "prompt_complexity", "type": "Optional<float>", "required": false }
+      ],
+      "return_type": "string",
+      "async": false,
+      "description": "Resolve a tier name to a concrete model identifier. prompt_complexity is optional and ignored by static implementations; reserved for future bandit-based routers."
+    }
+  ],
+  "behavioral_expectations": [
+    "Must implement structural subtyping (Protocol) — no explicit inheritance required",
+    "route() must return a concrete model identifier string (e.g. 'gpt-4o-mini')",
+    "route() must raise PrimitiveError with code BEDDEL-PRIM-320 when the tier name is not recognised",
+    "When prompt_complexity is null/None, the router must still return a valid model identifier",
+    "Tier names are case-sensitive strings"
+  ]
+}

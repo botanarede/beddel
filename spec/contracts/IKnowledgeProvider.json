@@ -1,0 +1,44 @@
+{
+  "name": "IKnowledgeProvider",
+  "description": "Contract for knowledge architecture provider implementations. Provides structured access to knowledge bases with semantic querying, individual entry retrieval, and source catalog management. Supports RAG (Retrieval-Augmented Generation) patterns for enriching LLM context with domain knowledge.",
+  "methods": [
+    {
+      "name": "query",
+      "params": [
+        { "name": "question", "type": "string", "required": true, "description": "Natural language question to search the knowledge base" },
+        { "name": "context", "type": "dict[string, Any] | null", "required": false, "description": "Optional context dict to refine the search (e.g., workflow metadata, domain hints)" }
+      ],
+      "return_type": "list[KnowledgeEntry]",
+      "async": true,
+      "description": "Query the knowledge base with a natural language question. Returns relevant knowledge entries sorted by confidence score (highest first). Optional context dict can refine results."
+    },
+    {
+      "name": "get",
+      "params": [
+        { "name": "key", "type": "string", "required": true, "description": "Unique key identifying the knowledge entry" }
+      ],
+      "return_type": "KnowledgeEntry | null",
+      "async": true,
+      "description": "Retrieve a specific knowledge entry by key. Returns null if the key does not exist in any knowledge source."
+    },
+    {
+      "name": "list_sources",
+      "params": [],
+      "return_type": "list[KnowledgeSource]",
+      "async": true,
+      "description": "List all registered knowledge sources. Returns metadata about each source including name, type, and URI. Useful for discovery and source management."
+    }
+  ],
+  "behavioral_expectations": [
+    "Must implement structural subtyping (Protocol) — no explicit inheritance required",
+    "All methods are async — knowledge backends may involve I/O (database, API, file system)",
+    "KnowledgeEntry contains: content (str), source (str), confidence (float 0.0–1.0), metadata (dict)",
+    "KnowledgeSource contains: name (str), type (str), description (str)",
+    "query() results must be sorted by confidence descending (0.0–1.0 normalized)",
+    "query() with no matches must return an empty list (not raise)",
+    "get() must return null (not raise) for unknown keys",
+    "list_sources() must return all registered sources even if they contain no entries",
+    "Confidence scores must be normalized to 0.0–1.0 range across all sources",
+    "Context parameter in query() is optional — omitting it performs a context-free search"
+  ]
+}

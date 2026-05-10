@@ -1,0 +1,23 @@
+{
+  "name": "IContextReducer",
+  "description": "Contract for pluggable context reduction strategies. Port for context-window management in chat-based primitives. Implementations provide strategies such as summarization, semantic selection, or sliding-window approaches to replace FIFO truncation.",
+  "methods": [
+    {
+      "name": "reduce",
+      "params": [
+        { "name": "messages", "type": "list<dict>", "required": true },
+        { "name": "token_budget", "type": "integer", "required": true }
+      ],
+      "return_type": "list<dict>",
+      "async": true,
+      "description": "Reduce a message list to fit within a token budget. Receives the full message history and returns a subset (or transformed version) that fits within the given token budget."
+    }
+  ],
+  "behavioral_expectations": [
+    "Must implement structural subtyping (Protocol) — no explicit inheritance required",
+    "Tool-call assistant messages and their corresponding tool-response messages must be kept as atomic pairs — dropping one side produces invalid sequences",
+    "The returned list must fit within token_budget",
+    "Message ordering must be preserved — no reordering allowed",
+    "reduce() must return valid message sequences (each dict containing at least 'role' and 'content' keys)"
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "name": "IPIITokenizer",
+  "description": "Contract for PII (Personally Identifiable Information) tokenization implementations. Replaces PII patterns in text with opaque tokens and provides reverse mapping for detokenization. Used by PIIMiddleware to protect sensitive data before LLM processing.",
+  "methods": [
+    {
+      "name": "tokenize",
+      "params": [
+        { "name": "text", "type": "string", "required": true, "description": "Input text potentially containing PII patterns (emails, phone numbers, SSNs, etc.)" }
+      ],
+      "return_type": "tuple[string, TokenMap]",
+      "async": false,
+      "description": "Scan text for PII patterns and replace each match with an opaque token. Returns the sanitized text and a TokenMap (dict[str, str]) mapping tokens back to original values."
+    },
+    {
+      "name": "detokenize",
+      "params": [
+        { "name": "text", "type": "string", "required": true, "description": "Sanitized text containing opaque PII tokens" },
+        { "name": "token_map", "type": "TokenMap", "required": true, "description": "Mapping from opaque tokens to original PII values, as returned by tokenize()" }
+      ],
+      "return_type": "string",
+      "async": false,
+      "description": "Replace all opaque tokens in the text with their original PII values using the provided TokenMap. Tokens not found in the map are left unchanged."
+    }
+  ],
+  "behavioral_expectations": [
+    "Must implement structural subtyping (Protocol) — no explicit inheritance required",
+    "TokenMap is dict[str, str] mapping opaque token strings to original PII values",
+    "All methods are synchronous — tokenization is a CPU-bound string operation",
+    "tokenize() must be idempotent — tokenizing already-tokenized text should not double-tokenize",
+    "detokenize(tokenize(text)) must return the original text (round-trip fidelity)",
+    "Token format should be deterministic and collision-resistant (e.g., <<PII_EMAIL_1>>)",
+    "Empty text input must return empty text with empty TokenMap",
+    "Unknown PII patterns (not matching any configured regex) are left unchanged"
+  ]
+}

@@ -1,12 +1,15 @@
 name: guardrail-model-armor-kit
-version: "0.1.0"
-description: "Model Armor guardrail strategy for prompt injection defense"
-author: "Beddel Team"
-
+version: 0.1.0
+description: Model Armor guardrail strategy for prompt injection defense
+author: Beddel Team
 targets:
   python:
-    module: "beddel_guardrail_model_armor"
+    status: implemented
+    module: beddel_guardrail_model_armor
     dependencies:
-      - "google-auth>=2.0"
-      - "google-cloud-modelarmor>=0.1.0"
-      - "httpx>=0.27.0"
+    - google-auth>=2.0
+    - google-cloud-modelarmor>=0.1.0
+    - httpx>=0.27.0
+  typescript:
+    status: planned
+    implementation_path: ./typescript/src/guardrail.ts

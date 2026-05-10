@@ -1,0 +1,29 @@
+name: dashboard-adapters-kit
+version: 0.1.0
+description: Dashboard pipeline adapters normalizing agent events to Pipeline Protocol
+author: Beddel Team
+adapters:
+- port: AgentPipelineAdapter
+  implementation: OpenClawPipelineAdapter
+  description: Translates OpenClaw agent events to Pipeline Protocol
+- port: AgentPipelineAdapter
+  implementation: ClaudePipelineAdapter
+  description: Translates Claude agent events to Pipeline Protocol
+- port: AgentPipelineAdapter
+  implementation: CodexPipelineAdapter
+  description: Translates Codex agent events to Pipeline Protocol
+targets:
+  python:
+    status: planned
+    implementation_path: ./python/src/beddel_dashboard_adapters/__init__.py
+  typescript:
+    status: implemented
+    package: '@beddel/dashboard-adapters'
+    dependencies: []
+    adapters:
+    - port: AgentPipelineAdapter
+      target: ./src/openclaw-pipeline.ts:OpenClawPipelineAdapter
+    - port: AgentPipelineAdapter
+      target: ./src/claude-pipeline.ts:ClaudePipelineAdapter
+    - port: AgentPipelineAdapter
+      target: ./src/codex-pipeline.ts:CodexPipelineAdapter

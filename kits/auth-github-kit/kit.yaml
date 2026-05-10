@@ -1,10 +1,13 @@
 name: auth-github-kit
-version: "0.1.0"
-description: "GitHub OAuth Device Flow credential management"
-author: "Beddel Team"
-
+version: 0.1.0
+description: GitHub OAuth Device Flow credential management
+author: Beddel Team
 targets:
   python:
-    module: "beddel_auth_github"
+    status: implemented
+    module: beddel_auth_github
     dependencies:
-      - "httpx>=0.27"
+    - httpx>=0.27
+  typescript:
+    status: planned
+    implementation_path: ./typescript/src/auth.ts

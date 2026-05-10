@@ -1,0 +1,111 @@
+# Create or update epics index deterministically
+id: update_epics_index
+name: Update Epics Index
+description: >
+  Ensures epics/index.md exists, updates the table row for the epic and stamps last_updated.
+version: "1.0"
+
+input_schema:
+  type: object
+  properties:
+    project_root: { type: string }
+    epics_index: { type: string }
+    epic_num: { type: integer }
+    epic_title: { type: string }
+    wave: { type: string }
+  required: [project_root, epics_index, epic_num, epic_title, wave]
+
+steps:
+  - id: update_index
+    primitive: tool
+    config:
+      tool: shell_exec
+      arguments:
+        cmd: >
+          python - <<'PY'
+          import datetime, pathlib, re
+
+          idx_path = pathlib.Path("$input.epics_index").resolve()
+          idx_path.parent.mkdir(parents=True, exist_ok=True)
+          today = datetime.date.today().isoformat()
+          epic_num = int("$input.epic_num")
+          epic_title = "$input.epic_title"
+          wave = "$input.wave"
+
+          base = f"""---
+project: poc
+generated: {today}
+last_updated: {today}
+---
+
+# poc - Epic Breakdown
+
+## Overview
+
+This document provides the index for the sharded epic breakdown of poc. Each epic is a separate file in this directory.
+
+## Requirements Inventory
+
+### Functional Requirements
+
+### Non-Functional Requirements
+
+### Additional Requirements
+
+## FR Coverage Map
+
+## Epic Index
+
+| Epic | Title | Wave | File | Status |
+|------|-------|------|------|--------|
+"""
+
+          if not idx_path.exists():
+              idx_path.write_text(base)
+
+          content = idx_path.read_text().splitlines()
+
+          # ensure header exists
+          if "| Epic | Title | Wave | File | Status |" not in idx_path.read_text():
+              content.append("| Epic | Title | Wave | File | Status |")
+              content.append("|------|-------|------|------|--------|")
+
+          row = f"| {epic_num} | {epic_title} | {wave} | [epic-{epic_num}.md](epic-{epic_num}.md) | backlog |"
+          table_start = None
+          for i, line in enumerate(content):
+              if re.match(r"\\|\\s*Epic\\s*\\|", line):
+                  table_start = i + 2  # data lines start after separator
+                  break
+
+          if table_start is None:
+              content.extend(["", "| Epic | Title | Wave | File | Status |", "|------|-------|------|------|--------|"])
+              table_start = len(content)
+
+          # replace or append row for epic
+          replaced = False
+          for i in range(table_start, len(content)):
+              if re.match(fr"\\|\\s*{epic_num}\\s*\\|", content[i]):
+                  content[i] = row
+                  replaced = True
+                  break
+              if content[i].strip() == "":
+                  break
+          if not replaced:
+              content.insert(table_start, row)
+
+          # update last_updated frontmatter line
+          for i, line in enumerate(content):
+              if line.startswith("last_updated:"):
+                  content[i] = f"last_updated: {today}"
+                  break
+
+          idx_path.write_text("\\n".join(content) + "\\n")
+          print(f"UPDATED {idx_path}")
+          PY
+
+  - id: summarize
+    primitive: output-generator
+    config:
+      template: |
+        {"status":"OK","epics_index":"$input.epics_index"}
+      format: json

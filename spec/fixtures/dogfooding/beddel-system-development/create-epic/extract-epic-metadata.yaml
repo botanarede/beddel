@@ -1,0 +1,65 @@
+# Extract title and wave deterministically from generated epic markdown
+id: extract_epic_metadata
+name: Extract Epic Metadata
+description: >
+  Reads the generated epic markdown and extracts frontmatter title and wave as JSON.
+version: "1.0"
+
+input_schema:
+  type: object
+  properties:
+    epic_file: { type: string }
+  required: [epic_file]
+
+steps:
+  - id: extract
+    primitive: tool
+    config:
+      tool: shell_exec
+      arguments:
+        cmd: >
+          python - <<'PY'
+          import json, pathlib, re, sys
+
+          epic_file = pathlib.Path("$input.epic_file").resolve()
+
+          def out(status, **kwargs):
+              print(json.dumps({"status": status, **kwargs}))
+              sys.exit(0)
+
+          if not epic_file.exists():
+              out("ERROR", message=f"epic file missing: {epic_file}")
+
+          text = epic_file.read_text()
+          match = re.match(r"---\n(.*?)\n---", text, re.S)
+          if not match:
+              out("ERROR", message="frontmatter missing")
+
+          frontmatter = match.group(1)
+
+          def extract_field(name):
+              field = re.search(rf"^{name}:\s*\"?(.*?)\"?$", frontmatter, re.M)
+              return field.group(1).strip() if field else None
+
+          title = extract_field("title")
+          wave = extract_field("wave")
+
+          out("OK", title=title, wave=wave)
+          PY
+
+  - id: guard
+    primitive: guardrail
+    config:
+      data: "$stepResult.extract.result.stdout"
+      schema:
+        fields:
+          status: { type: str, required: true }
+          title: { type: str, required: false }
+          wave: { type: str, required: false }
+      strategy: correct
+
+  - id: report
+    primitive: output-generator
+    config:
+      template: "$stepResult.guard.data"
+      format: json

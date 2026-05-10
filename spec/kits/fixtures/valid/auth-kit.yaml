@@ -1,0 +1,18 @@
+name: auth-mock-kit
+version: "0.1.0"
+description: "Auth category kit with tools"
+author: "Beddel Team"
+tools:
+  - name: auth-login
+    target: "auth_mock.tools:login"
+    description: "Mock authentication login tool"
+    category: "auth"
+  - name: auth-refresh
+    target: "auth_mock.tools:refresh_token"
+    description: "Mock token refresh tool"
+    category: "auth"
+targets:
+  python:
+    module: "beddel_auth_mock"
+    dependencies:
+      - "httpx>=0.27"

@@ -1,0 +1,28 @@
+{
+  "name": "ICoordinationStrategy",
+  "description": "Contract for multi-agent coordination strategy implementations. Orchestrates multiple agent adapters to collaboratively complete a coordination task. Supports patterns like supervisor delegation, agent handoff, and parallel dispatch.",
+  "methods": [
+    {
+      "name": "coordinate",
+      "params": [
+        { "name": "agents", "type": "dict[string, IAgentAdapter]", "required": true, "description": "Registry of named agent adapters available for coordination" },
+        { "name": "task", "type": "CoordinationTask", "required": true, "description": "The coordination task to execute, including prompt, subtasks, context_data, and timeout" },
+        { "name": "context", "type": "ExecutionContext", "required": true, "description": "Current workflow execution context with variables, deps, and metadata" }
+      ],
+      "return_type": "CoordinationResult",
+      "async": true,
+      "description": "Coordinate multiple agents to complete a task. The strategy determines how agents interact (supervisor delegates, handoff chains, parallel fan-out). Returns a CoordinationResult with the synthesized output and per-agent execution details."
+    }
+  ],
+  "behavioral_expectations": [
+    "Must implement structural subtyping (Protocol) — no explicit inheritance required",
+    "The coordinate() method is async — agent interactions involve I/O",
+    "CoordinationTask contains: prompt (str), subtasks (list[str]), context_data (dict), timeout (float | None)",
+    "CoordinationResult contains: output (str), agent_results (dict[str, AgentResult]), strategy_name (str), metadata (dict)",
+    "Must handle agent failures gracefully — a single agent failure should not crash the entire coordination",
+    "Must respect timeout constraint to prevent infinite coordination loops",
+    "Three built-in patterns: supervisor (one agent delegates to others), handoff (sequential agent chain), parallel_dispatch (concurrent fan-out/fan-in)",
+    "Agent selection from the registry is strategy-dependent — not all agents need to participate",
+    "Must propagate execution context to all participating agents"
+  ]
+}

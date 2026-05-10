@@ -1,0 +1,34 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "shell_exec input",
+  "description": "Input parameters for the shell_exec builtin tool.",
+  "type": "object",
+  "properties": {
+    "cmd": {
+      "type": "string",
+      "description": "Shell command string to execute."
+    },
+    "timeout": {
+      "type": "integer",
+      "default": 60,
+      "description": "Maximum execution time in seconds."
+    },
+    "cwd": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null,
+      "description": "Working directory for the subprocess."
+    },
+    "fail_on_error": {
+      "type": "boolean",
+      "default": false,
+      "description": "If true, raise on non-zero exit code."
+    }
+  },
+  "required": [
+    "cmd"
+  ],
+  "additionalProperties": false
+}

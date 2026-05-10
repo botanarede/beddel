@@ -1,0 +1,276 @@
+{
+  "$defs": {
+    "KitAdapterDeclaration": {
+      "description": "Declaration of an adapter binding provided by a Solution Kit.\n\nSupports two declaration formats:\n\n1. **Explicit format** \u2014 ``name`` + ``target`` identify the adapter:\n\n   .. code-block:: yaml\n\n      adapters:\n        - name: my-adapter\n          target: \"my_kit.adapters:MyAdapter\"\n          port: ILLMPort\n\n2. **Implementation shorthand** \u2014 ``implementation`` names the class\n   directly (resolved at load time):\n\n   .. code-block:: yaml\n\n      adapters:\n        - port: IAgentAdapter\n          implementation: OpenClawAgentAdapter\n\nA ``@model_validator`` ensures at least one format is provided.\n\nAttributes:\n    name: Logical name used to reference this adapter (optional).\n    target: Import path in ``module:class`` format (optional).\n    port: Port interface name that this adapter implements.\n    implementation: Class name resolved at load time (optional).\n    description: Optional human-readable description.",
+      "properties": {
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "target": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target"
+        },
+        "port": {
+          "title": "Port",
+          "type": "string"
+        },
+        "implementation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Implementation"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        }
+      },
+      "required": [
+        "port"
+      ],
+      "title": "KitAdapterDeclaration",
+      "type": "object"
+    },
+    "KitContractDeclaration": {
+      "description": "Declaration of a contract (schema) provided by a Solution Kit.\n\nAttributes:\n    name: Logical name used to reference this contract.\n    schema_path: Path to the schema file, relative to the kit root.\n    description: Optional human-readable description.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "schema_path": {
+          "title": "Schema Path",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        }
+      },
+      "required": [
+        "name",
+        "schema_path"
+      ],
+      "title": "KitContractDeclaration",
+      "type": "object"
+    },
+    "KitToolDeclaration": {
+      "description": "Declaration of a tool provided by a Solution Kit.\n\nMaps a logical tool name to a Python callable target using\n``module:function`` format \u2014 the same pattern as the inline\n:class:`~beddel.domain.models.ToolDeclaration`.\n\nAttributes:\n    name: Logical name used to reference this tool.\n    target: Import path in ``module:function`` format.\n    description: Optional human-readable description.\n    category: Tool category for taxonomy grouping.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "target": {
+          "title": "Target",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "category": {
+          "default": "general",
+          "title": "Category",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "target"
+      ],
+      "title": "KitToolDeclaration",
+      "type": "object"
+    },
+    "KitLanguageTarget": {
+      "description": "Per-language target block in kit.yaml. All four metadata fields below (status, implementation_path, unavailable_reason, dev_note) are optional and additive — kits that omit them remain valid. additionalProperties remain permissive so language-specific fields (package, module, dependencies, tools, adapters) coexist.\n\nstatus semantics:\n  - implemented: source code present in this language under this kit; manifest declarations resolve to real targets.\n  - planned: declared but not yet implemented in this language; implementation_path SHOULD point at the future entry.\n  - unavailable: cannot be implemented in this language (e.g. framework-specific). unavailable_reason SHOULD point at the peer kit.\n\nIntroduced in protocol version 2026-05-09 (Epic K4 unification).",
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "status": {
+          "enum": ["implemented", "planned", "unavailable"],
+          "title": "Status",
+          "description": "Implementation status of this language target."
+        },
+        "implementation_path": {
+          "type": "string",
+          "title": "Implementation Path",
+          "description": "Repo-relative path to the planned/implemented entry point. Recommended when status=planned."
+        },
+        "unavailable_reason": {
+          "type": "string",
+          "title": "Unavailable Reason",
+          "description": "Human-readable rationale when status=unavailable. SHOULD reference a peer kit by name."
+        },
+        "dev_note": {
+          "type": "string",
+          "title": "Dev Note",
+          "description": "Free-form note for contributors (e.g. library choice rationale, prior art pointers)."
+        }
+      }
+    },
+    "KitWorkflowDeclaration": {
+      "description": "Declaration of a workflow YAML asset provided by a Solution Kit.\n\nAttributes:\n    name: Logical name used to reference this workflow.\n    path: Path to the workflow YAML file, relative to the kit root.\n    description: Optional human-readable description.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        }
+      },
+      "required": [
+        "name",
+        "path"
+      ],
+      "title": "KitWorkflowDeclaration",
+      "type": "object"
+    }
+  },
+  "description": "JSON Schema for kit.yaml manifest files in the Beddel kit ecosystem",
+  "properties": {
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "version": {
+      "title": "Version",
+      "type": "string"
+    },
+    "description": {
+      "title": "Description",
+      "type": "string"
+    },
+    "author": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Author"
+    },
+    "dependencies": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Dependencies",
+      "type": "array"
+    },
+    "tools": {
+      "items": {
+        "$ref": "#/$defs/KitToolDeclaration"
+      },
+      "title": "Tools",
+      "type": "array"
+    },
+    "workflows": {
+      "items": {
+        "$ref": "#/$defs/KitWorkflowDeclaration"
+      },
+      "title": "Workflows",
+      "type": "array"
+    },
+    "adapters": {
+      "items": {
+        "$ref": "#/$defs/KitAdapterDeclaration"
+      },
+      "title": "Adapters",
+      "type": "array"
+    },
+    "contracts": {
+      "items": {
+        "$ref": "#/$defs/KitContractDeclaration"
+      },
+      "title": "Contracts",
+      "type": "array"
+    },
+    "targets": {
+      "additionalProperties": true,
+      "title": "Targets",
+      "type": "object",
+      "description": "Per-language target declarations. Each language target may include status, implementation_path, unavailable_reason, and dev_note fields (see KitLanguageTarget). Additional language-specific fields (package, dependencies, tools, adapters, module) remain permissive.",
+      "properties": {
+        "python": {
+          "$ref": "#/$defs/KitLanguageTarget"
+        },
+        "typescript": {
+          "$ref": "#/$defs/KitLanguageTarget"
+        }
+      }
+    }
+  },
+  "required": [
+    "name",
+    "version",
+    "description"
+  ],
+  "title": "Beddel Kit Manifest",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beddel.dev/schemas/kit-manifest.schema.json"
+}

@@ -1,0 +1,29 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "http_request output",
+  "description": "Output structure for the http_request builtin tool.",
+  "type": "object",
+  "properties": {
+    "status_code": {
+      "type": "integer",
+      "description": "HTTP response status code."
+    },
+    "body": {
+      "type": "string",
+      "description": "Response body as text."
+    },
+    "headers": {
+      "type": "object",
+      "description": "Response headers.",
+      "additionalProperties": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "status_code",
+    "body",
+    "headers"
+  ],
+  "additionalProperties": false
+}

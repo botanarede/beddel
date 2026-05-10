@@ -1,0 +1,20 @@
+name: memory-vertex-kit
+version: 0.1.0
+description: Google Vertex AI Memory Bank adapter for Beddel
+author: Beddel Team
+adapters:
+- port: IMemoryProvider
+  implementation: VertexMemoryProvider
+  description: Episodic memory via Google Vertex AI Memory Bank
+targets:
+  python:
+    status: planned
+    implementation_path: ./python/src/beddel_memory_vertex/__init__.py
+  typescript:
+    status: implemented
+    package: '@beddel/memory-vertex'
+    dependencies:
+    - '@google-cloud/vertexai: ^1.0'
+    adapters:
+    - port: IMemoryProvider
+      target: ./src/provider.ts:VertexMemoryProvider

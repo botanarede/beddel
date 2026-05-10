@@ -1,0 +1,66 @@
+{
+  "name": "IBudgetEnforcer",
+  "description": "Contract for per-workflow budget enforcement implementations. Tracks cumulative token/cost usage across workflow steps and reports the current budget state. The executor checks the budget after each step and triggers degradation or hard-stop behaviour accordingly.",
+  "methods": [
+    {
+      "name": "track_usage",
+      "params": [
+        { "name": "step_id", "type": "string", "required": true },
+        { "name": "usage", "type": "dict", "required": true, "description": "Usage dict from the LLM provider response, typically containing prompt_tokens, completion_tokens, and total_cost keys" }
+      ],
+      "return_type": "void",
+      "async": false,
+      "description": "Record token/cost usage for a completed step."
+    },
+    {
+      "name": "check_budget",
+      "params": [],
+      "return_type": "BudgetStatus",
+      "async": false,
+      "description": "Return the current budget state. Returns a BudgetStatus indicating whether the workflow is within budget, degraded, or exceeded."
+    },
+    {
+      "name": "get_remaining",
+      "params": [],
+      "return_type": "float",
+      "async": false,
+      "description": "Return the remaining budget in USD. Returns a non-negative float. Returns 0.0 when the budget is fully consumed."
+    }
+  ],
+  "properties": [
+    {
+      "name": "cumulative_cost",
+      "type": "float",
+      "readonly": true,
+      "description": "Total cost accumulated so far in USD."
+    },
+    {
+      "name": "max_cost_usd",
+      "type": "float",
+      "readonly": true,
+      "description": "Hard budget limit in USD."
+    },
+    {
+      "name": "degradation_model",
+      "type": "string",
+      "readonly": true,
+      "description": "Model identifier used when budget is degraded."
+    },
+    {
+      "name": "degradation_threshold",
+      "type": "float",
+      "readonly": true,
+      "description": "Fraction of max_cost_usd that triggers degradation (0.0 to 1.0)."
+    }
+  ],
+  "behavioral_expectations": [
+    "Must implement structural subtyping (Protocol) — no explicit inheritance required",
+    "track_usage() must accumulate costs across multiple calls for the same workflow",
+    "check_budget() must return one of: 'within_budget', 'degraded', or 'exceeded' states",
+    "get_remaining() must return a non-negative float; returns 0.0 when budget is fully consumed",
+    "When cumulative_cost reaches degradation_threshold * max_cost_usd, the enforcer must report degraded state",
+    "When cumulative_cost reaches or exceeds max_cost_usd, the enforcer must report exceeded state",
+    "Properties must be read-only — external code must not mutate budget state directly",
+    "Usage dict should support at minimum: prompt_tokens, completion_tokens, total_cost keys"
+  ]
+}
