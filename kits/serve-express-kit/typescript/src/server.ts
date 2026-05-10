@@ -1,5 +1,6 @@
 import type { WorkflowExecutor } from "../../../src/domain/executor.js";
 import type { Workflow } from "../../../src/domain/models.js";
+import type { Request, Response, NextFunction } from "express";
 
 /**
  * Configuration for the Beddel Express server.
@@ -40,11 +41,10 @@ export async function createBeddelServer(config: BeddelServerConfig): Promise<un
 	app.use(express.json());
 
 	if (config.cors) {
-		app.use((_req: unknown, res: { setHeader: (name: string, value: string) => void }, next: () => void) => {
-			const response = res;
-			response.setHeader("Access-Control-Allow-Origin", "*");
-			response.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-			response.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+		app.use((req: Request, res: Response, next: NextFunction) => {
+			res.setHeader("Access-Control-Allow-Origin", "*");
+			res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+			res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 			next();
 		});
 	}

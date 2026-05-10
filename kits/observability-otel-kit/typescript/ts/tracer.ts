@@ -92,6 +92,10 @@ export class OTelTracer implements ITracer<unknown> {
 
 function requireOTelApi(): { trace: { getTracer: (name: string) => { startSpan: (name: string) => unknown } } } | null {
 	try {
+		// Use require() for synchronous lazy load — dynamic import() cannot be used here
+		// because startSpan() is synchronous per the ITracer port contract and making it
+		// async would cascade breaking changes to the interface. The require() call is
+		// intentional and safe: @opentelemetry/api is an optional peer dependency.
 		// eslint-disable-next-line @typescript-eslint/no-require-imports
 		return require("@opentelemetry/api");
 	} catch {
