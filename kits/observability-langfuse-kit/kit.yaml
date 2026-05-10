@@ -1,18 +1,26 @@
 name: observability-langfuse-kit
-version: "0.1.0"
-description: "Langfuse observability tracing adapter"
-author: "Beddel Team"
+version: 0.1.0
+description: Langfuse observability tracing adapter
+author: Beddel Team
 adapters:
-  - port: ITracer
-    implementation: LangfuseTracerAdapter
-    description: "Observability tracing via Langfuse"
-
+- port: ITracer
+  implementation: LangfuseTracerAdapter
+  description: Observability tracing via Langfuse
 targets:
   python:
-    module: "beddel_observability_langfuse"
+    status: implemented
+    module: beddel_observability_langfuse
     dependencies:
-      - "langfuse>=2.0"
+    - langfuse>=2.0
     adapters:
-      - port: ITracer
-        name: langfuse
-        target: "beddel_observability_langfuse.adapter:LangfuseTracerAdapter"
+    - port: ITracer
+      name: langfuse
+      target: beddel_observability_langfuse.adapter:LangfuseTracerAdapter
+  typescript:
+    status: implemented
+    package: '@beddel/observability-langfuse'
+    dependencies:
+    - 'langfuse: ^3'
+    adapters:
+    - port: ITracer
+      target: ./src/adapter.ts:LangfuseTracerAdapter

@@ -1,18 +1,23 @@
 name: provider-gemini-kit
-version: "0.1.0"
-description: "Google Gemini direct LLM provider adapter"
-author: "Beddel Team"
+version: 0.1.0
+description: Google Gemini direct LLM provider adapter
+author: Beddel Team
 adapters:
-  - port: ILLMProvider
-    implementation: GeminiLLMProvider
-    description: "Direct Gemini API access via google-genai SDK"
-
+- port: ILLMProvider
+  implementation: GeminiLLMProvider
+  description: Direct Gemini API access via google-genai SDK
 targets:
   python:
-    module: "beddel_provider_gemini"
+    status: implemented
+    module: beddel_provider_gemini
     dependencies:
-      - "google-genai>=1.0.0"
+    - google-genai>=1.0.0
     adapters:
-      - port: ILLMProvider
-        name: gemini
-        target: "beddel_provider_gemini.adapter:GeminiLLMProvider"
+    - port: ILLMProvider
+      name: gemini
+      target: beddel_provider_gemini.adapter:GeminiLLMProvider
+  typescript:
+    status: planned
+    implementation_path: ./typescript/src/provider.ts
+    dev_note: See peer kit provider-gemini-adk-kit for prior art using @google/adk. TS implementation may use @google/genai
+      for symmetry with the Python google-generativeai package.

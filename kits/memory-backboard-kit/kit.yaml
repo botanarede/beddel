@@ -1,0 +1,20 @@
+name: memory-backboard-kit
+version: 0.1.0
+description: Backboard content-based memory adapter for Beddel
+author: Beddel Team
+adapters:
+- port: IMemoryProvider
+  implementation: BackboardMemoryProvider
+  description: Episodic memory via Backboard content-based API
+targets:
+  python:
+    status: planned
+    implementation_path: ./python/src/beddel_memory_backboard/__init__.py
+  typescript:
+    status: implemented
+    package: '@beddel/memory-backboard'
+    dependencies:
+    - 'backboard-sdk: ^0.1'
+    adapters:
+    - port: IMemoryProvider
+      target: ./src/provider.ts:BackboardMemoryProvider

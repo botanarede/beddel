@@ -1,18 +1,26 @@
 name: agent-claude-kit
-version: "0.1.0"
-description: "Claude Agent SDK subprocess-based agent adapter"
-author: "Beddel Team"
+version: 0.1.0
+description: Claude Agent SDK subprocess-based agent adapter
+author: Beddel Team
 adapters:
-  - port: IAgentAdapter
-    implementation: ClaudeAgentAdapter
-    description: "Agent adapter for the Claude Agent SDK"
-
+- port: IAgentAdapter
+  implementation: ClaudeAgentAdapter
+  description: Agent adapter for the Claude Agent SDK
 targets:
   python:
-    module: "beddel_agent_claude"
+    status: implemented
+    module: beddel_agent_claude
     dependencies:
-      - "claude-agent-sdk>=0.1"
+    - claude-agent-sdk>=0.1
     adapters:
-      - port: IAgentAdapter
-        name: claude
-        target: "beddel_agent_claude.adapter:ClaudeAgentAdapter"
+    - port: IAgentAdapter
+      name: claude
+      target: beddel_agent_claude.adapter:ClaudeAgentAdapter
+  typescript:
+    status: implemented
+    package: '@beddel/agent-claude'
+    dependencies:
+    - '@anthropic-ai/sdk: ^0.30'
+    adapters:
+    - port: IAgentAdapter
+      target: ./src/adapter.ts:ClaudeAgentAdapter

@@ -1,23 +1,31 @@
 name: protocol-mcp-kit
-version: "0.1.0"
-description: "Model Context Protocol client adapters (stdio and SSE)"
-author: "Beddel Team"
+version: 0.1.0
+description: Model Context Protocol client adapters (stdio and SSE)
+author: Beddel Team
 adapters:
-  - port: IMCPClient
-    implementation: StdioMCPClient
-    description: "MCP client via stdio transport"
-  - port: IMCPClient
-    implementation: SSEMCPClient
-    description: "MCP client via SSE transport"
-
+- port: IMCPClient
+  implementation: StdioMCPClient
+  description: MCP client via stdio transport
+- port: IMCPClient
+  implementation: SSEMCPClient
+  description: MCP client via SSE transport
 targets:
   python:
-    module: "beddel_protocol_mcp"
+    status: implemented
+    module: beddel_protocol_mcp
     dependencies:
-      - "mcp>=1.0"
-      - "jsonschema>=4.0"
+    - mcp>=1.0
+    - jsonschema>=4.0
     adapters:
-      - port: IMCPClient
-        target: "beddel_protocol_mcp.stdio_client:StdioMCPClient"
-      - port: IMCPClient
-        target: "beddel_protocol_mcp.sse_client:SSEMCPClient"
+    - port: IMCPClient
+      target: beddel_protocol_mcp.stdio_client:StdioMCPClient
+    - port: IMCPClient
+      target: beddel_protocol_mcp.sse_client:SSEMCPClient
+  typescript:
+    status: implemented
+    package: '@beddel/protocol-mcp'
+    dependencies:
+    - '@modelcontextprotocol/sdk: ^1.0'
+    adapters:
+    - port: IMCPClient
+      target: ./src/mcp-stdio-client.ts:MCPStdioClient

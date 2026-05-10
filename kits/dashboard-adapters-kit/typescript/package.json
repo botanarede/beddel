@@ -1,0 +1,12 @@
+{
+  "name": "@beddel/dashboard-adapters",
+  "version": "0.1.0",
+  "description": "Dashboard pipeline adapters for Beddel TypeScript SDK",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "@beddel/memory-backboard",
+  "version": "0.1.0",
+  "description": "Backboard content-based memory adapter for Beddel",
+  "type": "module",
+  "main": "src/index.ts",
+  "peerDependencies": {
+    "backboard-sdk": "^0.1"
+  },
+  "license": "MIT"
+}

@@ -1,17 +1,20 @@
 name: agent-kiro-kit
-version: "0.1.0"
-description: "Kiro CLI subprocess-based agent adapter"
-author: "Beddel Team"
+version: 0.1.0
+description: Kiro CLI subprocess-based agent adapter
+author: Beddel Team
 adapters:
-  - port: IAgentAdapter
-    implementation: KiroCLIAgentAdapter
-    description: "Agent adapter for the Kiro CLI"
-
+- port: IAgentAdapter
+  implementation: KiroCLIAgentAdapter
+  description: Agent adapter for the Kiro CLI
 targets:
   python:
-    module: "beddel_agent_kiro"
+    status: implemented
+    module: beddel_agent_kiro
     dependencies: []
     adapters:
-      - port: IAgentAdapter
-        name: kiro-cli
-        target: "beddel_agent_kiro.adapter:KiroCLIAgentAdapter"
+    - port: IAgentAdapter
+      name: kiro-cli
+      target: beddel_agent_kiro.adapter:KiroCLIAgentAdapter
+  typescript:
+    status: planned
+    implementation_path: ./typescript/src/kiro.ts
