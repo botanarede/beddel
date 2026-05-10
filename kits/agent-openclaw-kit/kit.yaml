@@ -1,18 +1,25 @@
 name: agent-openclaw-kit
-version: "0.1.0"
-description: "OpenClaw Gateway HTTP API agent adapter"
-author: "Beddel Team"
+version: 0.1.0
+description: OpenClaw Gateway HTTP API agent adapter
+author: Beddel Team
 adapters:
-  - port: IAgentAdapter
-    implementation: OpenClawAgentAdapter
-    description: "Agent adapter for the OpenClaw Gateway HTTP API"
-
+- port: IAgentAdapter
+  implementation: OpenClawAgentAdapter
+  description: Agent adapter for the OpenClaw Gateway HTTP API
 targets:
   python:
-    module: "beddel_agent_openclaw"
+    status: implemented
+    module: beddel_agent_openclaw
     dependencies:
-      - "httpx>=0.27"
+    - httpx>=0.27
     adapters:
-      - port: IAgentAdapter
-        name: openclaw
-        target: "beddel_agent_openclaw.adapter:OpenClawAgentAdapter"
+    - port: IAgentAdapter
+      name: openclaw
+      target: beddel_agent_openclaw.adapter:OpenClawAgentAdapter
+  typescript:
+    status: implemented
+    package: '@beddel/agent-openclaw'
+    dependencies: []
+    adapters:
+    - port: IAgentAdapter
+      target: ./src/adapter.ts:OpenClawAgentAdapter

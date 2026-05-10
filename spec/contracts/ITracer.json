@@ -1,0 +1,38 @@
+{
+  "name": "ITracer",
+  "description": "Port interface for observability tracing. Defines the contract for trace span management. Implementations bridge the domain core to a tracing backend (e.g. OpenTelemetry). Generic over SpanT, the opaque span handle type used by the concrete implementation.",
+  "generic_parameters": [
+    { "name": "SpanT", "description": "Opaque span handle type used by the concrete implementation (e.g. None for NoOpTracer, Span for OpenTelemetry adapter)" }
+  ],
+  "methods": [
+    {
+      "name": "start_span",
+      "params": [
+        { "name": "name", "type": "string", "required": true },
+        { "name": "attributes", "type": "Optional<dict>", "required": false, "default": null }
+      ],
+      "return_type": "Optional<SpanT>",
+      "async": false,
+      "description": "Start a trace span. Returns an opaque span handle passed back to end_span(), or null if span creation fails."
+    },
+    {
+      "name": "end_span",
+      "params": [
+        { "name": "span", "type": "Optional<SpanT>", "required": true },
+        { "name": "attributes", "type": "Optional<dict>", "required": false, "default": null }
+      ],
+      "return_type": "void",
+      "async": false,
+      "description": "End a trace span with optional final attributes. Accepts the opaque span handle returned by start_span(), or null if no span was created."
+    }
+  ],
+  "behavioral_expectations": [
+    "Must use abstract base class inheritance (ABC, Generic[SpanT]) — concrete implementations must subclass ITracer",
+    "Both methods are synchronous — tracing APIs (e.g. OpenTelemetry) do not perform I/O",
+    "start_span() must return null gracefully if span creation fails, never raise",
+    "end_span() must accept null span handles without raising",
+    "Attributes dict values should be simple types (string, integer, float, boolean)",
+    "A NoOpTracer implementation must exist that returns null from start_span and silently ignores end_span",
+    "Span names should follow dotted convention (e.g. 'workflow.execute', 'step.run')"
+  ]
+}

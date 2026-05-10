@@ -1,0 +1,65 @@
+# =============================================================================
+# Beddel Validation Gates via Tool Primitives
+# =============================================================================
+#
+# 4-step deterministic workflow replicating run-gates.sh:
+#   Steps 1-4: tool primitives calling shell commands (fail-fast via raise)
+#   No guardrail step needed — tools raise RuntimeError on non-zero exit
+#
+# Compared to run-gates-agent.yaml (1 step, LLM-interpreted):
+#   - 4 steps instead of 1
+#   - Deterministic execution (no LLM, no API cost)
+#   - Same gates, same fail-fast semantics
+#   - Inline tool declarations — no CLI flags needed
+#
+# Tool resolution (3-layer merge):
+#   builtins → inline YAML (tools: section) → CLI --tool flags
+#   Inline declarations below make this workflow self-contained.
+#
+# Example CLI usage:
+#   beddel run spec/fixtures/dogfooding/run-gates-tool.yaml
+# =============================================================================
+
+id: run_gates_tool
+name: Validation Gates (Tool)
+description: "4 quality gates via tool primitives: pytest, ruff check, ruff format, mypy."
+version: "1.0"
+
+tools:
+  - name: pytest_run
+    target: "beddel.tools.gates:pytest_run"
+  - name: ruff_check
+    target: "beddel.tools.gates:ruff_check"
+  - name: ruff_format
+    target: "beddel.tools.gates:ruff_format"
+  - name: mypy_check
+    target: "beddel.tools.gates:mypy_check"
+
+steps:
+  - id: pytest
+    primitive: tool
+    config:
+      tool: pytest_run
+      arguments:
+        cmd: "pytest spec/ src/beddel-py/tests/ -x --timeout=30"
+
+  - id: ruff_check
+    primitive: tool
+    config:
+      tool: ruff_check
+      arguments:
+        cmd: "ruff check src/beddel-py/"
+
+  - id: ruff_format
+    primitive: tool
+    config:
+      tool: ruff_format
+      arguments:
+        cmd: "ruff format --check src/beddel-py/"
+
+  - id: mypy
+    primitive: tool
+    config:
+      tool: mypy_check
+      arguments:
+        cmd: "mypy src/beddel-py/src/"

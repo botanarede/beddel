@@ -1,0 +1,120 @@
+# Lean orchestration of create-epic using deterministic subflows + agent-exec
+id: create_epic_driver
+name: Create Epic (Driver)
+description: >
+  Resolve context, delegates synthesis to kiro-cli (epic-creator), then runs validation/index/commit.
+version: "1.0"
+
+input_schema:
+  type: object
+  properties:
+    project_root: { type: string }
+    epic: { type: string }
+    model: { type: string, default: "claude-sonnet-4.6" }
+  required: [project_root, epic]
+
+steps:
+  - id: resolve_context
+    primitive: tool
+    config:
+      tool: shell_exec
+      arguments:
+        cmd: >
+          beddel run ../../beddel/spec/fixtures/dogfooding/beddel-system-development/create-epic/resolve-epic-context.yaml
+          --json-output
+          -i project_root="$input.project_root" -i epic="$input.epic"
+
+  - id: parse_context
+    primitive: guardrail
+    config:
+      data: "$stepResult.resolve_context.result.stdout"
+      schema:
+        fields:
+          status: { type: str, required: true }
+          epic_num: { type: int, required: false }
+      strategy: correct
+
+  - id: create_epic
+    primitive: agent-exec
+    config:
+      adapter: kiro-cli
+      prompt: "epic-creator $stepResult.parse_context.data.epic_num"
+      model: "$input.model"
+      sandbox: workspace-write
+      tools:
+        - beddel-dev-system-epic-creator
+
+  - id: extract_metadata
+    primitive: tool
+    config:
+      tool: shell_exec
+      arguments:
+        cmd: >
+          beddel run ../../beddel/spec/fixtures/dogfooding/beddel-system-development/create-epic/extract-epic-metadata.yaml
+          --json-output
+          -i epic_file="$stepResult.parse_context.data.output_file"
+
+  - id: parse_metadata
+    primitive: guardrail
+    config:
+      data: "$stepResult.extract_metadata.result.stdout"
+      schema:
+        fields:
+          status: { type: str, required: true }
+          title: { type: str, required: false }
+          wave: { type: str, required: false }
+      strategy: correct
+
+  - id: validate_epic
+    primitive: tool
+    config:
+      tool: shell_exec
+      arguments:
+        cmd: >
+          beddel run ../../beddel/spec/fixtures/dogfooding/beddel-system-development/create-epic/validate-epic-structure.yaml
+          --json-output
+          -i project_root="$input.project_root"
+          -i epic_file="$stepResult.parse_context.data.output_file"
+          -i sprint_status="$stepResult.parse_context.data.sprint_status"
+          -i epic_num="$stepResult.parse_context.data.epic_num"
+
+  - id: update_index
+    primitive: tool
+    config:
+      tool: shell_exec
+      arguments:
+        cmd: >
+          beddel run ../../beddel/spec/fixtures/dogfooding/beddel-system-development/create-epic/update-epics-index.yaml
+          --json-output
+          -i project_root="$input.project_root"
+          -i epics_index="$stepResult.parse_context.data.epics_index"
+          -i epic_num="$stepResult.parse_context.data.epic_num"
+          -i epic_title="$stepResult.parse_metadata.data.title"
+          -i wave="$stepResult.parse_metadata.data.wave"
+
+  - id: git_commit
+    primitive: tool
+    config:
+      tool: shell_exec
+      arguments:
+        cmd: >
+          beddel run ../../beddel/spec/fixtures/dogfooding/beddel-system-development/create-epic/git-commit-epic.yaml
+          --json-output
+          -i project_root="$input.project_root"
+          -i epic_file="$stepResult.parse_context.data.output_file"
+          -i epics_index="$stepResult.parse_context.data.epics_index"
+          -i epic_num="$stepResult.parse_context.data.epic_num"
+          -i epic_title="$stepResult.parse_metadata.data.title"
+
+  - id: summary
+    primitive: output-generator
+    config:
+      template: |
+        {
+          "epic_num": $stepResult.parse_context.data.epic_num,
+          "epic_file": "$stepResult.parse_context.data.output_file",
+          "metadata": $stepResult.parse_metadata.data,
+          "validation": $stepResult.validate_epic.result.stdout,
+          "commit": $stepResult.git_commit.result.stdout
+        }
+      format: json

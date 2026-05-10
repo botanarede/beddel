@@ -1,18 +1,21 @@
 name: tools-http-kit
-version: "0.1.0"
-description: "HTTP request tool via httpx"
-author: "Beddel Team"
+version: 0.1.0
+description: HTTP request tool via httpx
+author: Beddel Team
 tools:
-  - name: http_request
-    target: "beddel_tools_http.http:http_request"
-    description: "HTTP request"
-    category: http
-
+- name: http_request
+  target: beddel_tools_http.http:http_request
+  description: HTTP request
+  category: http
 targets:
   python:
-    module: "beddel_tools_http"
+    status: implemented
+    module: beddel_tools_http
     dependencies:
-      - "httpx>=0.27"
+    - httpx>=0.27
     tools:
-      - name: http_request
-        target: "beddel_tools_http.http:http_request"
+    - name: http_request
+      target: beddel_tools_http.http:http_request
+  typescript:
+    status: planned
+    implementation_path: ./typescript/src/http.ts

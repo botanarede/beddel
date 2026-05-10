@@ -1,17 +1,20 @@
 name: memory-gcp-kit
-version: "0.1.0"
-description: "GCP Agent Engine Memory Bank adapter implementing IMemoryProvider"
-author: "Beddel Team"
+version: 0.1.0
+description: GCP Agent Engine Memory Bank adapter implementing IMemoryProvider
+author: Beddel Team
 adapters:
-  - port: IMemoryProvider
-    implementation: GCPMemoryProvider
-    description: "Memory provider for GCP Agent Engine Memory Bank with ADC auth"
-
+- port: IMemoryProvider
+  implementation: GCPMemoryProvider
+  description: Memory provider for GCP Agent Engine Memory Bank with ADC auth
 targets:
   python:
-    module: "beddel_memory_gcp"
+    status: implemented
+    module: beddel_memory_gcp
     dependencies:
-      - "google-cloud-aiplatform>=1.80.0"
+    - google-cloud-aiplatform>=1.80.0
     adapters:
-      - port: IMemoryProvider
-        target: "beddel_memory_gcp.provider:GCPMemoryProvider"
+    - port: IMemoryProvider
+      target: beddel_memory_gcp.provider:GCPMemoryProvider
+  typescript:
+    status: planned
+    implementation_path: ./typescript/src/memory.ts

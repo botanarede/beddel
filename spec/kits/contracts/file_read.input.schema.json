@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "file_read input",
+  "description": "Input parameters for the file_read builtin tool.",
+  "type": "object",
+  "properties": {
+    "path": {
+      "type": "string",
+      "description": "Relative file path to read."
+    }
+  },
+  "required": [
+    "path"
+  ],
+  "additionalProperties": false
+}

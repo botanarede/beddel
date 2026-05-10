@@ -1,0 +1,16 @@
+name: agent-mock-kit
+version: "0.1.0"
+description: "Agent category kit with IAgentAdapter"
+author: "Beddel Team"
+adapters:
+  - port: IAgentAdapter
+    implementation: MockAgentAdapter
+    description: "Mock agent adapter for testing"
+targets:
+  python:
+    module: "beddel_agent_mock"
+    dependencies:
+      - "httpx>=0.27"
+    adapters:
+      - port: IAgentAdapter
+        target: "beddel_agent_mock.adapter:MockAgentAdapter"

@@ -1,0 +1,24 @@
+{
+  "name": "IExecutionStrategy",
+  "description": "Contract for workflow execution strategies. Strategies control how a workflow's steps are iterated and executed. The default SequentialStrategy runs steps in declaration order; future strategies (parallel, goal-oriented, reflection) can be plugged in without modifying the executor core.",
+  "methods": [
+    {
+      "name": "execute",
+      "params": [
+        { "name": "workflow", "type": "Workflow", "required": true },
+        { "name": "context", "type": "ExecutionContext", "required": true },
+        { "name": "step_runner", "type": "StepRunner", "required": true }
+      ],
+      "return_type": "void",
+      "async": true,
+      "description": "Execute the workflow steps using this strategy. The strategy iterates the workflow's steps and calls step_runner(step, context) for each one. Results are stored in context.step_results as a side-effect of the callback."
+    }
+  ],
+  "behavioral_expectations": [
+    "Must implement structural subtyping (Protocol) — no explicit inheritance required",
+    "The strategy only decides which steps to run and in what order — per-step concerns (condition evaluation, timeout, error strategies, lifecycle hooks) are handled by the step_runner callback",
+    "Results must be stored in context.step_results via the step_runner callback — the strategy itself returns void",
+    "execute() must call step_runner for each step it decides to run",
+    "The strategy must respect context.suspended state"
+  ]
+}

@@ -1,0 +1,47 @@
+{
+  "name": "IDecisionStore",
+  "description": "Contract for structured decision persistence implementations. Records decisions made during workflow execution with intent, options, rationale, and chosen outcome. Supports querying decision history for audit trails and decision-centric runtime patterns.",
+  "methods": [
+    {
+      "name": "append",
+      "params": [
+        { "name": "workflow_id", "type": "string", "required": true, "description": "Unique identifier of the workflow execution" },
+        { "name": "decision", "type": "Decision", "required": true, "description": "Structured decision record to persist" }
+      ],
+      "return_type": "void",
+      "async": true,
+      "description": "Append a decision record to the workflow's decision history. Decisions are append-only — existing records are never modified."
+    },
+    {
+      "name": "query",
+      "params": [
+        { "name": "workflow_id", "type": "string | null", "required": false, "description": "Filter by workflow ID. If null, queries across all workflows." },
+        { "name": "step_id", "type": "string | null", "required": false, "description": "Filter by step ID within the workflow." },
+        { "name": "since", "type": "string | null", "required": false, "description": "Filter decisions after this ISO 8601 timestamp." },
+        { "name": "until", "type": "string | null", "required": false, "description": "Filter decisions before this ISO 8601 timestamp." }
+      ],
+      "return_type": "list[Decision]",
+      "async": true,
+      "description": "Query decision history with optional filters. All filter parameters are optional — omitting all returns the full history. Results are ordered chronologically (oldest first)."
+    },
+    {
+      "name": "delete",
+      "params": [
+        { "name": "workflow_id", "type": "string", "required": true, "description": "Unique identifier of the workflow execution to clean up" }
+      ],
+      "return_type": "void",
+      "async": true,
+      "description": "Remove all decision records for a workflow. Called during cleanup. Idempotent — deleting non-existent records is a no-op."
+    }
+  ],
+  "behavioral_expectations": [
+    "Must implement structural subtyping (Protocol) — no explicit inheritance required",
+    "All methods are async — storage backends may involve I/O operations",
+    "Decision is a structured record with: id (str), intent (str), options (list[str]), chosen (str), reasoning (str), outcome (str | None), step_id (str | None), workflow_id (str | None), timestamp (str | None)",
+    "append() is append-only — existing decisions must never be modified or overwritten",
+    "query() with no filters must return all decisions (full history)",
+    "query() results must be ordered chronologically (oldest first)",
+    "delete() must be idempotent — deleting non-existent records must not raise",
+    "Concurrent appends for the same workflow_id must be safe (ordering preserved)"
+  ]
+}

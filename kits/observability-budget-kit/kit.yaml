@@ -1,0 +1,25 @@
+name: observability-budget-kit
+version: 0.1.0
+description: Budget enforcement adapters with Langfuse integration
+author: Beddel Team
+adapters:
+- port: IBudgetEnforcer
+  implementation: LangfuseBudgetEnforcer
+  description: Budget enforcer with Langfuse cost-tracking integration
+- port: IBudgetEnforcer
+  implementation: PersistentBudgetEnforcer
+  description: Budget enforcer with persistent storage across workflow runs
+targets:
+  python:
+    status: planned
+    implementation_path: ./python/src/beddel_observability_budget/__init__.py
+  typescript:
+    status: implemented
+    package: '@beddel/observability-budget'
+    dependencies:
+    - 'langfuse: ^3'
+    adapters:
+    - port: IBudgetEnforcer
+      target: ./src/langfuse-budget.ts:LangfuseBudgetEnforcer
+    - port: IBudgetEnforcer
+      target: ./src/persistent-budget.ts:PersistentBudgetEnforcer

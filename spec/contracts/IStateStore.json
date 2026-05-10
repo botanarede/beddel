@@ -1,0 +1,44 @@
+{
+  "name": "IStateStore",
+  "description": "Contract for workflow state persistence implementations. Provides checkpoint/restore capability for durable execution, allowing workflows to survive process restarts by persisting their execution state.",
+  "methods": [
+    {
+      "name": "save",
+      "params": [
+        { "name": "workflow_id", "type": "string", "required": true, "description": "Unique identifier of the workflow execution" },
+        { "name": "state", "type": "dict[string, Any]", "required": true, "description": "Serializable state dictionary containing workflow checkpoint data" }
+      ],
+      "return_type": "void",
+      "async": true,
+      "description": "Persist the workflow execution state. Overwrites any previously saved state for the same workflow_id. The state dict must be JSON-serializable."
+    },
+    {
+      "name": "load",
+      "params": [
+        { "name": "workflow_id", "type": "string", "required": true, "description": "Unique identifier of the workflow execution to restore" }
+      ],
+      "return_type": "dict[string, Any] | null",
+      "async": true,
+      "description": "Load previously persisted workflow state. Returns null if no state exists for the given workflow_id (first execution or after deletion)."
+    },
+    {
+      "name": "delete",
+      "params": [
+        { "name": "workflow_id", "type": "string", "required": true, "description": "Unique identifier of the workflow execution to clean up" }
+      ],
+      "return_type": "void",
+      "async": true,
+      "description": "Remove persisted state for a workflow. Called after successful workflow completion to clean up. Idempotent — deleting non-existent state is a no-op."
+    }
+  ],
+  "behavioral_expectations": [
+    "Must implement structural subtyping (Protocol) — no explicit inheritance required",
+    "All methods are async — storage backends may involve I/O operations",
+    "State dict must be JSON-serializable (no custom objects, no circular references)",
+    "save() must be atomic — partial writes must not corrupt existing state",
+    "load() must return null (not raise) for unknown workflow_ids",
+    "delete() must be idempotent — deleting non-existent state must not raise",
+    "Concurrent save/load for the same workflow_id must be safe (last-write-wins acceptable)",
+    "State size is implementation-bounded — implementations may reject oversized state dicts"
+  ]
+}

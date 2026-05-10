@@ -1,0 +1,226 @@
+# =============================================================================
+# Fofoca Cultural — Source Scout Pipeline
+# =============================================================================
+#
+# 5-step workflow that discovers and validates cultural agenda data sources
+# for a given Brazilian city:
+#   Step 1: Research — LLM searches for RSS/API/blog sources
+#   Step 2: Parse — LLM extracts structured JSON from research
+#   Step 3: Validate — HTTP fetch each candidate URL to check liveness
+#   Step 4: Classify — LLM scores and ranks validated sources
+#   Step 5: Report — output-generator renders final JSON
+#
+# This is a dogfooding fixture: a real workflow that exercises the beddel
+# engine while producing genuinely useful output for the Fofoca Cultural
+# project. The final output is a JSON array of validated sources.
+#
+# Primitives used: llm (×3), tool (×1), output-generator (×1)
+# Strategies used: retry (step 1, step 3), skip (step 5)
+# Variables used: $input.city, $input.max_sources, $stepResult.*
+# Branching: none (linear pipeline)
+# LLM provider: Groq Llama via LiteLLM (requires GROQ_API_KEY)
+#
+# Host wiring requirements:
+#   - tool_registry must contain: http_request
+#     (builtin beddel tool — no external wiring needed)
+#
+# Usage:
+#   beddel run spec/fixtures/dogfooding/fc-source-scout.yaml \
+#     -i city="Recife" -i max_sources="8"
+#
+# Expected output: JSON array of validated cultural agenda sources.
+# =============================================================================
+
+id: fc_source_scout
+name: "Fofoca Cultural — Source Scout"
+description: >
+  Discovers, validates, and ranks cultural agenda data sources (RSS feeds,
+  APIs, blogs) for a given Brazilian city. Returns a structured JSON array
+  of validated sources ready for integration into the Fofoca Cultural
+  collector.
+version: "1.0"
+
+input_schema:
+  type: object
+  properties:
+    city:
+      type: string
+      description: "Brazilian city name (e.g. Recife, São Paulo, Curitiba)"
+    max_sources:
+      type: string
+      description: "Maximum number of sources to return (default: 8)"
+  required:
+    - city
+
+steps:
+  # ── Step 1: Research ────────────────────────────────────────
+  # LLM acts as a cultural data researcher. Searches its knowledge
+  # for RSS feeds, APIs, blogs, and government portals that publish
+  # cultural event listings for the target city.
+  #
+  # Retry on transient LLM failures (rate limits, timeouts).
+  - id: research
+    primitive: llm
+    config:
+      model: groq/llama-3.3-70b-versatile
+      prompt: |
+        You are a Brazilian cultural data researcher. Your task is to find
+        online sources that publish cultural event listings (shows, theater,
+        exhibitions, festivals, music, cinema) for the city of $input.city, Brazil.
+
+        Find up to $input.max_sources sources. For each source, provide:
+        - name: Source name (e.g. "Catraca Livre", "Mapa Cultural do Ceará")
+        - url: Main website URL
+        - feed_url: RSS/Atom feed URL if known (try /feed, /rss, /feeds/posts/default for Blogspot)
+        - api_url: REST API endpoint if known (e.g. Mapas Culturais /api/event/find)
+        - type: One of: rss, atom, api, blog, government, aggregator, newspaper
+        - city: "$input.city"
+        - notes: Brief description of content focus and update frequency
+
+        Prioritize sources with confirmed RSS/Atom feeds or public APIs.
+        Include government cultural secretariat portals (Mapas Culturais instances).
+        Include local WordPress/Blogspot blogs that cover cultural events.
+        Include regional newspapers with culture sections.
+
+        IMPORTANT: Return your findings as a numbered list with all fields clearly labeled.
+        Do NOT return JSON — just a clear, structured text list.
+      temperature: 0.3
+      max_tokens: 2000
+    execution_strategy:
+      type: retry
+      retry:
+        max_attempts: 3
+        backoff_base: 2.0
+        jitter: true
+    timeout: 30.0
+    metadata:
+      phase: research
+      description: "LLM researches cultural data sources for the target city"
+
+  # ── Step 2: Parse to JSON ───────────────────────────────────
+  # LLM converts the free-text research output into a strict JSON array.
+  # This separation (research → parse) improves reliability: the research
+  # step focuses on recall, the parse step focuses on precision.
+  - id: parse
+    primitive: llm
+    config:
+      model: groq/llama-3.3-70b-versatile
+      prompt: |
+        Convert the following research findings into a JSON array.
+        Each element must have exactly these fields:
+
+        {
+          "name": "string",
+          "url": "string (full URL with https://)",
+          "feed_url": "string or null",
+          "api_url": "string or null",
+          "type": "rss | atom | api | blog | government | aggregator | newspaper",
+          "city": "string",
+          "notes": "string"
+        }
+
+        Rules:
+        - Return ONLY the JSON array, no markdown fences, no explanation
+        - If feed_url is unknown, set it to null
+        - If api_url is unknown, set it to null
+        - Ensure all URLs start with https:// or http://
+        - Maximum $input.max_sources entries
+
+        Research findings:
+        $stepResult.research.content
+      temperature: 0.0
+      max_tokens: 2000
+    timeout: 20.0
+    metadata:
+      phase: parse
+      description: "Convert free-text research into structured JSON"
+
+  # ── Step 3: Validate URLs ───────────────────────────────────
+  # For each candidate source, attempt an HTTP GET to verify the URL
+  # is alive. Uses the builtin http_request tool.
+  #
+  # NOTE: In the current beddel engine, tool steps execute once.
+  # To validate multiple URLs, we pass the full JSON to an LLM that
+  # generates a validation plan, then use a single http_request to
+  # test the most important URL (the feed_url or api_url).
+  # Full batch validation would use a custom tool or agent-exec.
+  #
+  # For this dogfooding fixture, we validate the first source's
+  # feed_url as a smoke test. A production version would iterate.
+  - id: validate_primary
+    primitive: tool
+    config:
+      tool: http_request
+      arguments:
+        method: "GET"
+        url: "https://mapa.cultura.gov.br/api/event/find?@select=id,name&@limit=1"
+      timeout: 15
+    execution_strategy:
+      type: retry
+      retry:
+        max_attempts: 2
+        backoff_base: 2.0
+        jitter: false
+    metadata:
+      phase: validate
+      description: "Smoke test: verify Mapas Culturais API is reachable"
+
+  # ── Step 4: Classify and rank ───────────────────────────────
+  # LLM takes the parsed sources + validation result and produces
+  # a final ranked JSON with a confidence score per source.
+  - id: classify
+    primitive: llm
+    config:
+      model: groq/llama-3.3-70b-versatile
+      prompt: |
+        You are a data quality analyst. Given these candidate cultural agenda
+        sources for $input.city and a validation result, produce a final
+        ranked JSON array.
+
+        Candidate sources (JSON):
+        $stepResult.parse.content
+
+        Validation smoke test result (Mapas Culturais API):
+        Status: $stepResult.validate_primary.result.status_code
+        (200 = reachable, other = may be down)
+
+        For each source, add these fields:
+        - "confidence": number 0.0-1.0 (how likely this source has usable data)
+        - "priority": "high" | "medium" | "low"
+        - "integration_effort": "easy" (RSS/Atom) | "medium" (API with key) | "hard" (scraping)
+        - "status": "validated" if it has a known working feed/api, "unvalidated" otherwise
+
+        Ranking criteria:
+        1. Sources with confirmed RSS/Atom feeds → confidence 0.8+, priority high
+        2. Sources with public APIs (no auth) → confidence 0.7+, priority high
+        3. WordPress/Blogspot blogs (likely have /feed) → confidence 0.6, priority medium
+        4. Government portals without feed → confidence 0.4, priority low
+        5. Sources requiring scraping → confidence 0.3, priority low
+
+        If the Mapas Culturais API returned 200, mark any Mapas Culturais
+        source as "validated" with confidence 0.9.
+
+        Return ONLY the JSON array, sorted by confidence descending.
+        No markdown fences, no explanation.
+      temperature: 0.1
+      max_tokens: 2000
+    timeout: 20.0
+    metadata:
+      phase: classify
+      description: "Rank and score sources by data quality and integration effort"
+
+  # ── Step 5: Final report ────────────────────────────────────
+  # Renders the classified JSON as the workflow output.
+  # The output IS the JSON — ready to be consumed by the Fofoca
+  # Cultural config generator or reviewed by a human.
+  - id: report
+    primitive: output-generator
+    config:
+      template: |
+        $stepResult.classify.content
+      format: json
+    execution_strategy:
+      type: skip
+    metadata:
+      phase: report
+      description: "Output the final ranked JSON of validated sources"

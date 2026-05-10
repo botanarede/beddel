@@ -1,0 +1,48 @@
+name: full-featured-kit
+version: "1.2.3"
+description: "Full kit manifest with all fields populated"
+author: "Beddel Team"
+dependencies:
+  - "httpx>=0.27"
+  - "pydantic>=2.0"
+tools:
+  - name: my-tool
+    target: "full_kit.tools:my_tool"
+    description: "A sample tool"
+    category: "utility"
+  - name: another-tool
+    target: "full_kit.tools:another_tool"
+workflows:
+  - name: main-workflow
+    path: "workflows/main.yaml"
+    description: "Primary workflow"
+  - name: fallback-workflow
+    path: "workflows/fallback.yaml"
+adapters:
+  - port: ILLMProvider
+    implementation: MockLLMProvider
+    description: "Mock LLM provider adapter"
+  - name: explicit-adapter
+    target: "full_kit.adapters:ExplicitAdapter"
+    port: IAgentAdapter
+    description: "Adapter using explicit name+target format"
+contracts:
+  - name: input-schema
+    schema_path: "contracts/input.json"
+    description: "Input validation schema"
+  - name: output-schema
+    schema_path: "contracts/output.json"
+targets:
+  python:
+    module: "full_kit"
+    dependencies:
+      - "httpx>=0.27"
+    tools:
+      - name: my-tool
+        target: "full_kit.tools:my_tool"
+    adapters:
+      - port: ILLMProvider
+        target: "full_kit.adapters:MockLLMProvider"
+  typescript:
+    package: "@beddel/full-kit"
+    entry: "src/index.ts"

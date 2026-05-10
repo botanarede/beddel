@@ -1,0 +1,22 @@
+name: provider-vercelai-kit
+version: 0.1.0
+description: Vercel AI SDK multi-provider LLM adapter for TypeScript
+author: Beddel Team
+adapters:
+- port: ILLMProvider
+  implementation: VercelAIAdapter
+  description: Multi-provider LLM calls via Vercel AI SDK
+targets:
+  python:
+    status: unavailable
+    unavailable_reason: Vercel AI SDK is a JavaScript/TypeScript-only multi-provider router. See peer kit provider-litellm-kit
+      for the Python multi-provider equivalent.
+  typescript:
+    status: implemented
+    package: '@beddel/provider-vercelai'
+    dependencies:
+    - 'ai: ^4.0'
+    - '@ai-sdk/openai: ^1.0'
+    adapters:
+    - port: ILLMProvider
+      target: ./src/adapter.ts:VercelAIAdapter

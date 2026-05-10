@@ -1,0 +1,33 @@
+name: validate-kits
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  schema-validate:
+    name: Schema validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install validator deps
+        run: pip install pyyaml jsonschema
+      - name: Validate every kit.yaml against schema
+        run: python3 .github/workflows/scripts/validate.py --schema
+
+  parity-check:
+    name: Cross-language parity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install validator deps
+        run: pip install pyyaml jsonschema
+      - name: Verify every kit declares both language targets with valid status
+        run: python3 .github/workflows/scripts/validate.py --parity

@@ -1,0 +1,21 @@
+name: serve-express-kit
+version: 0.1.0
+description: Express.js HTTP server adapter for Beddel workflows
+author: Beddel Team
+tools:
+- name: serve-express
+  target: ./src/server.ts:createBeddelServer
+  description: Express server exposing workflow execution via REST API
+targets:
+  python:
+    status: unavailable
+    unavailable_reason: Express is a JavaScript/TypeScript-only HTTP framework. See peer kit serve-fastapi-kit for the Python
+      HTTP serving equivalent.
+  typescript:
+    status: implemented
+    package: '@beddel/serve-express'
+    dependencies:
+    - 'express: ^4.21'
+    tools:
+    - name: serve-express
+      target: ./src/server.ts:createBeddelServer
