@@ -1,7 +1,7 @@
 # dashboard-adapters-kit — Python target (planned)
 
 **Status:** planned
-**Planned entry point:** `./python/src/beddel_dashboard_adapters/__init__.py`
+**Planned entry point:** `./python/beddel_dashboard_adapters/__init__.py`
 
 ## Expected ports / tools
 

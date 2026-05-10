@@ -6,7 +6,7 @@ Backboard content-based memory adapter for Beddel.
 
 | Language    | Status | Notes |
 | ----------- | ------ | ----- |
-| Python      | `planned` | Planned — implementation_path: `./python/src/beddel_memory_backboard/__init__.py` |
+| Python      | `planned` | Planned — implementation_path: `./python/beddel_memory_backboard/__init__.py` |
 | TypeScript  | `implemented` | Package: `@beddel/memory-backboard` |
 
 ## Layout

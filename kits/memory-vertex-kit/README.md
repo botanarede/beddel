@@ -6,7 +6,7 @@ Google Vertex AI Memory Bank adapter for Beddel.
 
 | Language    | Status | Notes |
 | ----------- | ------ | ----- |
-| Python      | `planned` | Planned — implementation_path: `./python/src/beddel_memory_vertex/__init__.py` |
+| Python      | `planned` | Planned — implementation_path: `./python/beddel_memory_vertex/__init__.py` |
 | TypeScript  | `implemented` | Package: `@beddel/memory-vertex` |
 
 ## Layout

@@ -6,7 +6,7 @@ Budget enforcement adapters with Langfuse integration.
 
 | Language    | Status | Notes |
 | ----------- | ------ | ----- |
-| Python      | `planned` | Planned — implementation_path: `./python/src/beddel_observability_budget/__init__.py` |
+| Python      | `planned` | Planned — implementation_path: `./python/beddel_observability_budget/__init__.py` |
 | TypeScript  | `implemented` | Package: `@beddel/observability-budget` |
 
 ## Layout

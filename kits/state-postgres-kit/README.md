@@ -6,7 +6,7 @@ PostgreSQL state persistence adapter for Beddel.
 
 | Language    | Status | Notes |
 | ----------- | ------ | ----- |
-| Python      | `planned` | Planned — implementation_path: `./python/src/beddel_state_postgres/__init__.py` |
+| Python      | `planned` | Planned — implementation_path: `./python/beddel_state_postgres/__init__.py` |
 | TypeScript  | `implemented` | Package: `@beddel/state-postgres` |
 
 ## Layout

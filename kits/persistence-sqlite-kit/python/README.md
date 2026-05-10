@@ -1,7 +1,7 @@
 # persistence-sqlite-kit — Python target (planned)
 
 **Status:** planned
-**Planned entry point:** `./python/src/beddel_persistence_sqlite/__init__.py`
+**Planned entry point:** `./python/beddel_persistence_sqlite/__init__.py`
 
 ## Expected ports / tools
 

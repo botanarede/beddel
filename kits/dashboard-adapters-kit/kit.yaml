@@ -15,7 +15,7 @@ adapters:
 targets:
   python:
     status: planned
-    implementation_path: ./python/src/beddel_dashboard_adapters/__init__.py
+    implementation_path: ./python/beddel_dashboard_adapters/__init__.py
   typescript:
     status: implemented
     package: '@beddel/dashboard-adapters'

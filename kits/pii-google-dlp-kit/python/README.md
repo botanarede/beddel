@@ -1,7 +1,7 @@
 # pii-google-dlp-kit — Python target (planned)
 
 **Status:** planned
-**Planned entry point:** `./python/src/beddel_pii_google_dlp/__init__.py`
+**Planned entry point:** `./python/beddel_pii_google_dlp/__init__.py`
 
 ## Expected ports / tools
 

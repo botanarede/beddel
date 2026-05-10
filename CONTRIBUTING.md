@@ -36,7 +36,7 @@ flowchart LR
   K1 --> TS[typescript/]
   K1 --> README[README.md]
 
-  PY --> PYSRC[src/<module>/]
+  PY --> PYSRC[beddel_<module>/]
   PY --> PYTESTS[tests/]
   TS --> TSSRC[src/]
   TS --> TSTESTS[tests/]
@@ -145,7 +145,7 @@ flowchart LR
    `author`, top-level contract fields (`tools`, `adapters`, etc. as needed),
    and **both** `targets.python` and `targets.typescript` blocks.
 4. **Create `kits/<name>/python/`** — either with the actual Python source under
-   `src/<module>/` (status `implemented`) or with a placeholder `README.md`
+   `beddel_<module>/` (status `implemented`) or with a placeholder `README.md`
    (status `planned` or `unavailable`).
 5. **Create `kits/<name>/typescript/`** — same convention, either real TS source
    under `src/` plus `package.json` and `tsconfig.json`, or placeholder README.
@@ -167,7 +167,7 @@ flowchart LR
 Use this when promoting a kit from Group B/C to Group A.
 
 1. **Locate the kit** at `kits/<name>/`.
-2. **Implement the missing language** under `python/` (with `src/<module>/`) or
+2. **Implement the missing language** under `python/` (with `beddel_<module>/`) or
    `typescript/` (with `src/` and `package.json`).
 3. **Update `kit.yaml`** — change the language target's `status` from `planned`
    to `implemented`, fill in `module` / `package`, `dependencies`, and any

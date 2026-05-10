@@ -9,7 +9,7 @@ adapters:
 targets:
   python:
     status: planned
-    implementation_path: ./python/src/beddel_persistence_sqlite/__init__.py
+    implementation_path: ./python/beddel_persistence_sqlite/__init__.py
   typescript:
     status: implemented
     package: '@beddel/persistence-sqlite'
