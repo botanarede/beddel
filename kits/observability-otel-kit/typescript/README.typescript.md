@@ -34,7 +34,7 @@ targets:
       - "@opentelemetry/api: ^1.9"
     adapters:
       - port: ITracer
-        target: "./ts/tracer.ts:OTelTracer"
+        target: "./src/tracer.ts:OTelTracer"
 ```
 
 ## Configuration
