@@ -6,6 +6,33 @@
   Agent-Native Workflow Engine — Solution Kits
 </p>
 
+---
+
+## Unified Kit and Spec Central
+
+This repository is the **single source of truth** for kits and the cross-SDK
+specification consumed by the two Beddel SDKs:
+
+- [`beddel-py`](https://github.com/botanarede/beddel-py) — Python SDK
+- [`beddel-ts`](https://github.com/botanarede/beddel-ts) — TypeScript SDK
+
+Every kit under [`kits/`](./kits/) declares **both** `targets.python` and
+`targets.typescript` in its `kit.yaml` manifest. Each language target carries
+a `status` (`implemented`, `planned`, or `unavailable`) so the catalog is
+self-describing — there is no implicit "unknown" state.
+
+| Reference                                                                     | Purpose                                                              |
+| ----------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| [`spec/PROTOCOL.md`](./spec/PROTOCOL.md)                                      | Kit protocol version, schema extensions, capabilities matrix.        |
+| [`CONTRIBUTING.md`](./CONTRIBUTING.md)                                        | How to add kits, parity rules, lifecycle states, remote-agent roadmap. |
+| [`spec/kits/kit-manifest.schema.json`](./spec/kits/kit-manifest.schema.json) | Authoritative manifest schema (JSON Schema 2020-12).                 |
+| [`.github/workflows/validate-kits.yml`](./.github/workflows/validate-kits.yml) | CI gate — runs on every PR (schema + parity).                       |
+
+Current protocol version: `2026-05-09`. See [`spec/PROTOCOL.md`](./spec/PROTOCOL.md)
+for compatibility table.
+
+---
+
 <p align="center">
   <a href="https://pypi.org/project/beddel/"><img src="https://img.shields.io/pypi/v/beddel.svg" alt="PyPI version"></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python 3.11+"></a>

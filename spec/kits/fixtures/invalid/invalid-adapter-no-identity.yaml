@@ -1,0 +1,6 @@
+# Invalid: adapter has 'port' but neither (name + target) nor 'implementation'
+name: "my-kit"
+version: "1.0.0"
+description: "A kit with an adapter missing identity"
+adapters:
+  - port: "ILLMPort"

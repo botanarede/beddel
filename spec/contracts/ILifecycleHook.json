@@ -1,0 +1,115 @@
+{
+  "name": "ILifecycleHook",
+  "description": "Contract for workflow lifecycle hooks. Hooks receive notifications at key points during workflow execution. All methods have default no-op implementations — subclasses override only the callbacks they need.",
+  "methods": [
+    {
+      "name": "on_workflow_start",
+      "params": [
+        { "name": "workflow_id", "type": "string", "required": true },
+        { "name": "inputs", "type": "dict", "required": true }
+      ],
+      "return_type": "void",
+      "async": true,
+      "description": "Called when a workflow execution begins."
+    },
+    {
+      "name": "on_workflow_end",
+      "params": [
+        { "name": "workflow_id", "type": "string", "required": true },
+        { "name": "result", "type": "dict", "required": true }
+      ],
+      "return_type": "void",
+      "async": true,
+      "description": "Called when a workflow execution completes successfully."
+    },
+    {
+      "name": "on_step_start",
+      "params": [
+        { "name": "step_id", "type": "string", "required": true },
+        { "name": "primitive", "type": "string", "required": true }
+      ],
+      "return_type": "void",
+      "async": true,
+      "description": "Called before a step begins execution."
+    },
+    {
+      "name": "on_step_end",
+      "params": [
+        { "name": "step_id", "type": "string", "required": true },
+        { "name": "result", "type": "any", "required": true }
+      ],
+      "return_type": "void",
+      "async": true,
+      "description": "Called after a step completes successfully."
+    },
+    {
+      "name": "on_error",
+      "params": [
+        { "name": "step_id", "type": "string", "required": true },
+        { "name": "error", "type": "any", "required": true }
+      ],
+      "return_type": "void",
+      "async": true,
+      "description": "Called when a step encounters an error."
+    },
+    {
+      "name": "on_retry",
+      "params": [
+        { "name": "step_id", "type": "string", "required": true },
+        { "name": "attempt", "type": "integer", "required": true },
+        { "name": "error", "type": "any", "required": true }
+      ],
+      "return_type": "void",
+      "async": true,
+      "description": "Called when a step retry is attempted."
+    },
+    {
+      "name": "on_decision",
+      "params": [
+        { "name": "decision", "type": "Decision", "required": true }
+      ],
+      "return_type": "void",
+      "async": true,
+      "description": "Called when the executor records a decision. Receives a Decision dataclass capturing intent, options, chosen option, and reasoning."
+    },
+    {
+      "name": "on_budget_threshold",
+      "params": [
+        { "name": "workflow_id", "type": "string", "required": true },
+        { "name": "cumulative_cost", "type": "float", "required": true },
+        { "name": "threshold", "type": "float", "required": true }
+      ],
+      "return_type": "void",
+      "async": true,
+      "description": "Called when cumulative cost reaches the degradation threshold."
+    },
+    {
+      "name": "on_approval_requested",
+      "params": [
+        { "name": "step_id", "type": "string", "required": true },
+        { "name": "action", "type": "string", "required": true },
+        { "name": "risk_level", "type": "RiskLevel", "required": true }
+      ],
+      "return_type": "void",
+      "async": true,
+      "description": "Called when an approval request is submitted for a workflow step. Fires when the executor determines that a step requires human approval based on the configured risk policy."
+    },
+    {
+      "name": "on_approval_received",
+      "params": [
+        { "name": "step_id", "type": "string", "required": true },
+        { "name": "result", "type": "ApprovalResult", "required": true }
+      ],
+      "return_type": "void",
+      "async": true,
+      "description": "Called when an approval decision is received for a workflow step. Fires after the approval gate returns a result."
+    }
+  ],
+  "behavioral_expectations": [
+    "All methods have default no-op implementations — subclasses override only the callbacks they need",
+    "ILifecycleHook() is a valid null-object instance (all methods are no-ops by default)",
+    "Implementations must not raise exceptions from lifecycle callbacks — errors should be logged internally",
+    "Lifecycle callbacks are async and must be non-blocking",
+    "ApprovalResult contains: request_id (str), status (ApprovalStatus), approver (str | None), timestamp (float), metadata (dict)"
+  ]
+}

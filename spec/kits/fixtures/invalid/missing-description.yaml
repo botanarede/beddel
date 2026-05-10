@@ -1,0 +1,3 @@
+# Invalid: missing required 'description' field
+name: "my-kit"
+version: "1.0.0"

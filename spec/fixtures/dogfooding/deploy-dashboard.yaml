@@ -1,0 +1,232 @@
+# =============================================================================
+# Beddel Dashboard Deploy Pipeline
+# =============================================================================
+#
+# Orchestrates the full deploy cycle for the Beddel Dashboard:
+#   Step 1: Build Next.js standalone artifact locally
+#   Step 2: Sync standalone bundle to VPS via rsync
+#   Step 3: Sync static assets to VPS
+#   Step 4: Sync public directory to VPS
+#   Step 5: Restart systemd service on VPS
+#   Step 6: Health check — verify service is running
+#   Step 7: Generate deploy report
+#
+# Exercises tool primitive with fail-fast chaining, SSH-based remote
+# execution, and multi-step rsync deployment pattern.
+#
+# Primitives used: tool (×6), guardrail (×1), output-generator (×1)
+# Strategies used: fail (default), retry (health check)
+# Variables used: $input.*, $stepResult.*
+#
+# Architecture:
+#   Local build → rsync (SSH+IPv6) → VPS restart → health check
+#   Users → Cloudflare HTTPS → cloudflared tunnel → localhost:3000
+#
+# Tool categories (aligned with ToolDescriptor taxonomy):
+#   - beddel_tools.build:   Local build commands (pnpm, npm)
+#   - beddel_tools.deploy:  File sync to remote hosts (rsync over SSH)
+#   - beddel_tools.remote:  Remote command execution (SSH)
+#
+# Host wiring requirements:
+#   - tool_registry must contain: nextjs_build, rsync_sync, ssh_exec
+#   - Each tool wraps SafeSubprocessRunner with appropriate defaults
+#   - SSH key and VPS connectivity must be pre-configured
+#
+# Usage:
+#   beddel run spec/fixtures/dogfooding/deploy-dashboard.yaml \
+#     -i dashboard_dir="src/beddel-dashboard" \
+#     -i vps_host="admin@2600:1f18:12bf:4700:4775:6068:f99e:6c0" \
+#     -i vps_key="~/.ssh/lightsail-ralecab.pem" \
+#     -i remote_dir="/opt/beddel/current" \
+#     -t nextjs_build=beddel_tools.build:nextjs_build \
+#     -t rsync_sync=beddel_tools.deploy:rsync_sync \
+#     -t ssh_exec=beddel_tools.remote:ssh_exec
+#
+# Expected output: Deploy report with pass/fail per phase.
+# =============================================================================
+
+id: deploy_dashboard
+name: Beddel Dashboard Deploy Pipeline
+description: >
+  Builds the Next.js standalone artifact locally, syncs it to the
+  Lightsail VPS via rsync over SSH (IPv6), restarts the systemd
+  service, and verifies the deployment with a health check.
+version: "1.0"
+
+input_schema:
+  type: object
+  properties:
+    dashboard_dir:
+      type: string
+      description: "Path to the Next.js dashboard source (e.g. src/beddel-dashboard)"
+    vps_host:
+      type: string
+      description: "SSH user@host for the VPS (e.g. admin@2600:1f18:...)"
+    vps_key:
+      type: string
+      description: "Path to SSH private key (e.g. ~/.ssh/lightsail-ralecab.pem)"
+    remote_dir:
+      type: string
+      description: "Remote directory for the deployed app (e.g. /opt/beddel/current)"
+  required:
+    - dashboard_dir
+    - vps_host
+    - vps_key
+    - remote_dir
+
+allowed_tools:
+  - nextjs_build
+  - rsync_sync
+  - ssh_exec
+
+steps:
+  # ── Phase 1: Build ──────────────────────────────────────────
+  # Runs `pnpm build` in the dashboard directory.
+  # Next.js standalone output lands in .next/standalone/
+  - id: build
+    primitive: tool
+    config:
+      tool: nextjs_build
+      arguments:
+        cmd: "pnpm build"
+        cwd: "$input.dashboard_dir"
+      timeout: 120
+    metadata:
+      phase: build
+      description: "Build Next.js standalone artifact"
+
+  # ── Phase 2: Sync artifacts to VPS ──────────────────────────
+  # Three rsync operations: standalone bundle, static assets, public dir.
+  # Each uses --delete to ensure clean state on the remote.
+
+  - id: sync_standalone
+    primitive: tool
+    config:
+      tool: rsync_sync
+      arguments:
+        source: "$input.dashboard_dir/.next/standalone/"
+        destination: "$input.vps_host:$input.remote_dir/"
+        ssh_key: "$input.vps_key"
+        delete: true
+        ipv6: true
+      timeout: 120
+    condition: "$stepResult.build.result.exit_code == 0"
+    metadata:
+      phase: sync
+      description: "Sync standalone bundle (server.js + node_modules)"
+
+  - id: sync_static
+    primitive: tool
+    config:
+      tool: rsync_sync
+      arguments:
+        source: "$input.dashboard_dir/.next/static/"
+        destination: "$input.vps_host:$input.remote_dir/.next/static/"
+        ssh_key: "$input.vps_key"
+        delete: true
+        ipv6: true
+      timeout: 60
+    condition: "$stepResult.sync_standalone.result.exit_code == 0"
+    metadata:
+      phase: sync
+      description: "Sync static assets (CSS, JS chunks)"
+
+  - id: sync_public
+    primitive: tool
+    config:
+      tool: rsync_sync
+      arguments:
+        source: "$input.dashboard_dir/public/"
+        destination: "$input.vps_host:$input.remote_dir/public/"
+        ssh_key: "$input.vps_key"
+        delete: true
+        ipv6: true
+      timeout: 60
+    condition: "$stepResult.sync_static.result.exit_code == 0"
+    metadata:
+      phase: sync
+      description: "Sync public directory (favicon, images)"
+
+  # ── Phase 3: Restart service ────────────────────────────────
+  - id: restart_service
+    primitive: tool
+    config:
+      tool: ssh_exec
+      arguments:
+        host: "$input.vps_host"
+        ssh_key: "$input.vps_key"
+        command: "sudo systemctl restart beddel-dashboard"
+        ipv6: true
+      timeout: 30
+    condition: "$stepResult.sync_public.result.exit_code == 0"
+    metadata:
+      phase: restart
+      description: "Restart beddel-dashboard systemd service"
+
+  # ── Phase 4: Health check ───────────────────────────────────
+  # Wait a few seconds for the service to start, then check status.
+  # Retry up to 3 times with backoff (service may need time to bind).
+  - id: health_check
+    primitive: tool
+    config:
+      tool: ssh_exec
+      arguments:
+        host: "$input.vps_host"
+        ssh_key: "$input.vps_key"
+        command: "systemctl is-active beddel-dashboard"
+        ipv6: true
+      timeout: 15
+    condition: "$stepResult.restart_service.result.exit_code == 0"
+    execution_strategy:
+      type: retry
+      retry:
+        max_attempts: 3
+        backoff_base: 3.0
+        jitter: false
+    metadata:
+      phase: verify
+      description: "Verify service is active after restart"
+
+  # ── Phase 5: Validate all phases passed ─────────────────────
+  - id: validate_deploy
+    primitive: guardrail
+    config:
+      strategy: rule
+      rules:
+        - condition: "$stepResult.build.result.exit_code == 0"
+          message: "Build failed"
+        - condition: "$stepResult.sync_standalone.result.exit_code == 0"
+          message: "Standalone sync failed"
+        - condition: "$stepResult.sync_static.result.exit_code == 0"
+          message: "Static assets sync failed"
+        - condition: "$stepResult.sync_public.result.exit_code == 0"
+          message: "Public directory sync failed"
+        - condition: "$stepResult.restart_service.result.exit_code == 0"
+          message: "Service restart failed"
+        - condition: "$stepResult.health_check.result.exit_code == 0"
+          message: "Health check failed — service not active"
+
+  # ── Phase 6: Deploy report ─────────────────────────────────
+  - id: report
+    primitive: output-generator
+    config:
+      template: |
+        # Deploy Report — Beddel Dashboard
+
+        **Target:** $input.vps_host:$input.remote_dir
+        **Source:** $input.dashboard_dir
+
+        | Phase | Step | Duration |
+        |-------|------|----------|
+        | Build | nextjs_build | $stepResult.build.duration_ms ms |
+        | Sync  | standalone | $stepResult.sync_standalone.duration_ms ms |
+        | Sync  | static | $stepResult.sync_static.duration_ms ms |
+        | Sync  | public | $stepResult.sync_public.duration_ms ms |
+        | Restart | systemd | $stepResult.restart_service.duration_ms ms |
+        | Verify | health_check | $stepResult.health_check.duration_ms ms |
+
+        **Status:** DEPLOYED ✓
+
+        ---
+        _Generated by Beddel Deploy Pipeline v1.0_
+      format: markdown

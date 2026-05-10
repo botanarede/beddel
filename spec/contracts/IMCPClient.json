@@ -1,0 +1,49 @@
+{
+  "name": "IMCPClient",
+  "description": "Port interface for Model Context Protocol (MCP) server clients. Implementations bridge the tool primitive to external MCP servers, enabling access to the MCP tool ecosystem without custom adapters. Transport-agnostic — concrete clients handle stdio, SSE, or HTTP communication.",
+  "methods": [
+    {
+      "name": "connect",
+      "params": [
+        { "name": "server_uri", "type": "string", "required": true, "description": "Server URI (e.g. 'stdio://mcp-server' or 'sse://localhost:8080/mcp')" }
+      ],
+      "return_type": "void",
+      "async": true,
+      "description": "Establish connection to an MCP server."
+    },
+    {
+      "name": "list_tools",
+      "params": [],
+      "return_type": "list<dict>",
+      "async": true,
+      "description": "Discover available tools on the connected server. Returns a list of tool descriptors with name, description, and input schema for each available tool."
+    },
+    {
+      "name": "call_tool",
+      "params": [
+        { "name": "name", "type": "string", "required": true, "description": "Tool name as returned by list_tools()" },
+        { "name": "arguments", "type": "dict", "required": true, "description": "Tool arguments matching the tool's input schema" }
+      ],
+      "return_type": "any",
+      "async": true,
+      "description": "Invoke a tool on the connected server. Returns the tool execution result."
+    },
+    {
+      "name": "disconnect",
+      "params": [],
+      "return_type": "void",
+      "async": true,
+      "description": "Close the connection to the MCP server."
+    }
+  ],
+  "behavioral_expectations": [
+    "Must implement structural subtyping (Protocol) — no explicit inheritance required",
+    "connect() must support multiple transport schemes: stdio://, sse://, http://",
+    "list_tools() must only be called after a successful connect(); behavior is undefined otherwise",
+    "call_tool() must validate that the tool name exists on the connected server",
+    "disconnect() must not raise if not currently connected (idempotent close)",
+    "All methods are async — MCP communication involves network I/O",
+    "Tool descriptors returned by list_tools() must include at minimum: name, description, and input_schema fields",
+    "Implementations must handle connection failures and timeouts gracefully"
+  ]
+}

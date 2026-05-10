@@ -1,0 +1,4 @@
+# Invalid: name contains uppercase letters (violates kebab-case)
+name: "My Kit"
+version: "1.0.0"
+description: "A kit with an invalid name format"

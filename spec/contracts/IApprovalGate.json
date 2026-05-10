@@ -1,0 +1,46 @@
+{
+  "name": "IApprovalGate",
+  "description": "Contract for human-on-the-loop (HOTL) approval gate implementations. Manages approval requests for high-risk workflow actions, supporting both synchronous (blocking) and asynchronous (polling) approval patterns. Risk levels determine whether approval is required.",
+  "methods": [
+    {
+      "name": "request_approval",
+      "params": [
+        { "name": "action", "type": "string", "required": true, "description": "Description of the action requiring approval" },
+        { "name": "risk_level", "type": "RiskLevel", "required": true, "description": "Risk level of the action (low, medium, high, critical)" }
+      ],
+      "return_type": "ApprovalResult",
+      "async": true,
+      "description": "Request approval for an action and wait for a decision. Blocks until the approval is granted, denied, or times out. Returns an ApprovalResult with the decision and metadata."
+    },
+    {
+      "name": "check_status",
+      "params": [
+        { "name": "request_id", "type": "string", "required": true, "description": "Unique identifier of a previously submitted approval request" }
+      ],
+      "return_type": "ApprovalStatus",
+      "async": true,
+      "description": "Check the current status of a previously submitted approval request. Returns the approval status (pending, approved, denied, timeout, escalated)."
+    },
+    {
+      "name": "request_approval_async",
+      "params": [
+        { "name": "action", "type": "string", "required": true, "description": "Description of the action requiring approval" },
+        { "name": "risk_level", "type": "RiskLevel", "required": true, "description": "Risk level of the action (low, medium, high, critical)" }
+      ],
+      "return_type": "string",
+      "async": true,
+      "description": "Submit an approval request without waiting for a decision. Returns a request_id that can be used with check_status() for polling. Useful for non-blocking approval workflows."
+    }
+  ],
+  "behavioral_expectations": [
+    "Must implement structural subtyping (Protocol) — no explicit inheritance required",
+    "RiskLevel is an enum with values: low, medium, high, critical",
+    "ApprovalResult contains: request_id (str), status (ApprovalStatus), approver (str | None), timestamp (float), metadata (dict)",
+    "ApprovalStatus is an enum with values: pending, approved, denied, timeout, escalated",
+    "request_approval() must block until a decision is made or timeout occurs",
+    "request_approval_async() must return immediately with a request_id for polling",
+    "Low-risk actions may be auto-approved based on policy configuration",
+    "Critical-risk actions must always require explicit human approval",
+    "Timeout behavior is implementation-defined but must return a clear timeout result"
+  ]
+}

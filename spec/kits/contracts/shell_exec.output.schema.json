@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "shell_exec output",
+  "description": "Output structure for the shell_exec builtin tool.",
+  "type": "object",
+  "properties": {
+    "exit_code": {
+      "type": "integer",
+      "description": "Process exit code."
+    },
+    "stdout": {
+      "type": "string",
+      "description": "Standard output."
+    },
+    "stderr": {
+      "type": "string",
+      "description": "Standard error."
+    },
+    "timed_out": {
+      "type": "boolean",
+      "description": "Whether the process timed out."
+    },
+    "truncated": {
+      "type": "boolean",
+      "description": "Whether output was truncated."
+    }
+  },
+  "required": [
+    "exit_code",
+    "stdout",
+    "stderr",
+    "timed_out",
+    "truncated"
+  ],
+  "additionalProperties": false
+}

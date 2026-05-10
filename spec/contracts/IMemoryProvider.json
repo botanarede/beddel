@@ -1,0 +1,56 @@
+{
+  "name": "IMemoryProvider",
+  "description": "Contract for episodic memory provider implementations. Provides key-value storage with semantic search capability and episode tracking. Used for workflow memory persistence, context recall, and experience-based learning patterns.",
+  "methods": [
+    {
+      "name": "get",
+      "params": [
+        { "name": "key", "type": "string", "required": true, "description": "Unique key identifying the memory entry" }
+      ],
+      "return_type": "Any | null",
+      "async": true,
+      "description": "Retrieve a memory entry by key. Returns null if the key does not exist. The value type depends on what was stored."
+    },
+    {
+      "name": "set",
+      "params": [
+        { "name": "key", "type": "string", "required": true, "description": "Unique key for the memory entry" },
+        { "name": "value", "type": "Any", "required": true, "description": "Value to store. Must be serializable." }
+      ],
+      "return_type": "void",
+      "async": true,
+      "description": "Store or update a memory entry. Overwrites any existing value for the same key."
+    },
+    {
+      "name": "search",
+      "params": [
+        { "name": "query", "type": "string", "required": true, "description": "Natural language search query for semantic similarity matching" },
+        { "name": "top_k", "type": "integer", "required": false, "description": "Maximum number of results to return. Defaults to 5." }
+      ],
+      "return_type": "list[MemoryEntry]",
+      "async": true,
+      "description": "Search memory entries by semantic similarity to the query. Returns up to top_k results ordered by relevance score (highest first)."
+    },
+    {
+      "name": "list_episodes",
+      "params": [
+        { "name": "workflow_id", "type": "string", "required": true, "description": "Unique identifier of the workflow to list episodes for" }
+      ],
+      "return_type": "list[Episode]",
+      "async": true,
+      "description": "List all episodes (execution memory snapshots) for a workflow. Episodes capture the memory state at key execution points for replay and learning."
+    }
+  ],
+  "behavioral_expectations": [
+    "Must implement structural subtyping (Protocol) — no explicit inheritance required",
+    "All methods are async — storage and search backends may involve I/O",
+    "MemoryEntry contains: key (str), value (Any), score (float), metadata (dict)",
+    "Episode contains: workflow_id (str), episode_id (str), inputs (dict), outputs (dict), duration_ms (float), created_at (float), metadata (dict)",
+    "get() must return null (not raise) for unknown keys",
+    "set() must be idempotent — storing the same key twice overwrites the previous value",
+    "search() must return results ordered by relevance score (highest first)",
+    "search() with no matches must return an empty list (not raise)",
+    "top_k defaults to 5 if not specified",
+    "Values stored via set() must be retrievable via get() with the same key"
+  ]
+}

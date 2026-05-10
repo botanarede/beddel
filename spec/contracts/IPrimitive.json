@@ -1,0 +1,23 @@
+{
+  "name": "IPrimitive",
+  "description": "Contract for all workflow primitives. Every primitive registered in the Beddel registry must implement this interface. The executor calls execute() with the step's config dict and the current ExecutionContext.",
+  "methods": [
+    {
+      "name": "execute",
+      "params": [
+        { "name": "config", "type": "dict", "required": true },
+        { "name": "context", "type": "ExecutionContext", "required": true }
+      ],
+      "return_type": "any",
+      "async": true,
+      "description": "Execute the primitive with the given configuration and context. The result will be stored in context.step_results[step_id]."
+    }
+  ],
+  "behavioral_expectations": [
+    "Must implement nominal subtyping (ABC) — explicit subclassing required",
+    "execute() is abstract and must be implemented by all subclasses",
+    "execute() must raise PrimitiveError when the primitive encounters an execution failure",
+    "The config dict is primitive-specific — each primitive defines its own expected keys",
+    "Primitives access dependencies exclusively via context.deps (never via constructor injection of external services)"
+  ]
+}

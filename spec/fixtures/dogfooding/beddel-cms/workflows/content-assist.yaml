@@ -1,0 +1,117 @@
+# =============================================================================
+# Beddel CMS — AI Content Assistant Workflow
+# =============================================================================
+#
+# AI-assisted content creation for tenant sites.
+# Generates content, moderates it, and publishes via the existing API.
+#
+# Phase 2 feature: adds AI layer on top of existing content management.
+#
+# Primitives: llm, guardrail, decide, tool
+# Adapters: knowledge-provider (brand guidelines), tier-router (model selection)
+#
+# Usage:
+#   beddel run workflows/content-assist.yaml \
+#     -i tenant_token="YOUR_MEASUREMENT_ID" \
+#     -i table="agenda" \
+#     -i content_type="event" \
+#     -i prompt="Create an event for a samba night next Friday at 8pm"
+# =============================================================================
+
+id: content_assist
+name: AI Content Assistant
+description: >
+  Generate, moderate, and publish content for a tenant site using
+  AI with brand-aware context and content moderation guardrails.
+version: "1.0"
+
+input_schema:
+  type: object
+  properties:
+    tenant_token:
+      type: string
+      description: Firestore customer token
+    table:
+      type: string
+      description: Target table (e.g., agenda, metadata)
+    content_type:
+      type: string
+      enum: ["event", "menu_item", "announcement", "page_content"]
+    prompt:
+      type: string
+      description: Natural language description of the content to create
+  required:
+    - tenant_token
+    - table
+    - content_type
+    - prompt
+
+steps:
+  - id: generate_content
+    primitive: llm
+    config:
+      # tier-router selects model based on tenant plan:
+      # free → gemini-flash, pro → gemini-pro, enterprise → claude-sonnet
+      model: "${TIER_ROUTED_MODEL}"
+      prompt: >
+        You are a content creator for a Brazilian business website.
+        Generate structured JSON content for a $input.content_type.
+
+        Business context: loaded from knowledge provider for tenant $input.tenant_token.
+
+        User request: $input.prompt
+
+        For content_type "event", return JSON with fields:
+        { title, description, date (ISO), time (HH:MM), location, image_prompt, link, slug }
+
+        For content_type "menu_item", return JSON with:
+        { title, description, price, category, image_prompt }
+
+        For content_type "announcement", return JSON with:
+        { title, body, priority, expires_at }
+
+        Return ONLY valid JSON.
+      temperature: 0.6
+      max_tokens: 800
+
+  - id: moderate_content
+    primitive: guardrail
+    config:
+      rules:
+        - type: pii_check
+          action: redact
+          message: "PII detected and redacted"
+        - type: content_policy
+          categories: ["hate_speech", "violence", "adult"]
+          action: block
+          message: "Content violates policy"
+        - type: brand_compliance
+          knowledge_key: "brand_guidelines_$input.tenant_token"
+          action: warn
+
+  - id: approve_or_review
+    primitive: decide
+    config:
+      conditions:
+        - if: "$stepResult.moderate_content.passed == true"
+          then: auto_publish
+        - if: "$stepResult.moderate_content.warnings > 0"
+          then: human_review
+        - if: "$stepResult.moderate_content.blocked == true"
+          then: reject
+      default: human_review
+
+  - id: publish
+    primitive: tool
+    config:
+      tool: http_request
+      method: POST
+      url: "${BONAR_CMS_API_URL}/api/tables/setItem"
+      headers:
+        Content-Type: application/json
+        Authorization: "$input.tenant_token"
+      body:
+        table: "$input.table"
+        data: "$stepResult.generate_content.content"
+        events: "NONE"
+    condition: "$stepResult.approve_or_review.decision == 'auto_publish'"
