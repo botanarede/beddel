@@ -25,4 +25,4 @@ targets:
     - '@opentelemetry/sdk-trace-base: ^1.30'
     adapters:
     - port: ITracer
-      target: ./ts/tracer.ts:OTelTracer
+      target: ./src/tracer.ts:OTelTracer
