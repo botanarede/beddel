@@ -1,7 +1,7 @@
 # provider-gemini-adk-kit — Python target (planned)
 
 **Status:** planned
-**Planned entry point:** `./python/src/beddel_provider_gemini_adk/__init__.py`
+**Planned entry point:** `./python/beddel_provider_gemini_adk/__init__.py`
 
 ## Expected ports / tools
 

@@ -163,7 +163,7 @@ targets:
       - "some-package>=1.0"
 ```
 
-Place your Python module under `src/` in the kit directory, then install:
+Place your Python module under `python/beddel_<module>/` in the kit directory, then install:
 
 ```bash
 beddel kit install ./my-custom-kit/

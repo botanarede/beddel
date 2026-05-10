@@ -6,7 +6,7 @@ Dashboard pipeline adapters normalizing agent events to Pipeline Protocol.
 
 | Language    | Status | Notes |
 | ----------- | ------ | ----- |
-| Python      | `planned` | Planned — implementation_path: `./python/src/beddel_dashboard_adapters/__init__.py` |
+| Python      | `planned` | Planned — implementation_path: `./python/beddel_dashboard_adapters/__init__.py` |
 | TypeScript  | `implemented` | Package: `@beddel/dashboard-adapters` |
 
 ## Layout

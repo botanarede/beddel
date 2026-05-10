@@ -9,7 +9,7 @@ adapters:
 targets:
   python:
     status: planned
-    implementation_path: ./python/src/beddel_pii_google_dlp/__init__.py
+    implementation_path: ./python/beddel_pii_google_dlp/__init__.py
   typescript:
     status: implemented
     package: '@beddel/pii-google-dlp'

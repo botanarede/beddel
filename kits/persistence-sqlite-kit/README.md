@@ -6,7 +6,7 @@ SQLite-backed IEventStore adapter for durable execution.
 
 | Language    | Status | Notes |
 | ----------- | ------ | ----- |
-| Python      | `planned` | Planned — implementation_path: `./python/src/beddel_persistence_sqlite/__init__.py` |
+| Python      | `planned` | Planned — implementation_path: `./python/beddel_persistence_sqlite/__init__.py` |
 | TypeScript  | `implemented` | Package: `@beddel/persistence-sqlite` |
 
 ## Layout

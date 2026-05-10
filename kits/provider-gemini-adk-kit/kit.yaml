@@ -9,7 +9,7 @@ adapters:
 targets:
   python:
     status: planned
-    implementation_path: ./python/src/beddel_provider_gemini_adk/__init__.py
+    implementation_path: ./python/beddel_provider_gemini_adk/__init__.py
     dev_note: See peer kit provider-gemini-kit for prior art using google-generativeai. Python implementation should use the
       google-adk package for symmetry with the TS @google/adk dependency.
   typescript:

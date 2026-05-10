@@ -12,7 +12,7 @@ adapters:
 targets:
   python:
     status: planned
-    implementation_path: ./python/src/beddel_observability_budget/__init__.py
+    implementation_path: ./python/beddel_observability_budget/__init__.py
   typescript:
     status: implemented
     package: '@beddel/observability-budget'

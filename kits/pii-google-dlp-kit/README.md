@@ -6,7 +6,7 @@ Google Cloud DLP PII tokenizer adapter for Beddel.
 
 | Language    | Status | Notes |
 | ----------- | ------ | ----- |
-| Python      | `planned` | Planned — implementation_path: `./python/src/beddel_pii_google_dlp/__init__.py` |
+| Python      | `planned` | Planned — implementation_path: `./python/beddel_pii_google_dlp/__init__.py` |
 | TypeScript  | `implemented` | Package: `@beddel/pii-google-dlp` |
 
 ## Layout

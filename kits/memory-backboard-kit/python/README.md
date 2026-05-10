@@ -1,7 +1,7 @@
 # memory-backboard-kit — Python target (planned)
 
 **Status:** planned
-**Planned entry point:** `./python/src/beddel_memory_backboard/__init__.py`
+**Planned entry point:** `./python/beddel_memory_backboard/__init__.py`
 
 ## Expected ports / tools
 

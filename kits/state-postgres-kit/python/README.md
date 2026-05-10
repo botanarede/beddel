@@ -1,7 +1,7 @@
 # state-postgres-kit — Python target (planned)
 
 **Status:** planned
-**Planned entry point:** `./python/src/beddel_state_postgres/__init__.py`
+**Planned entry point:** `./python/beddel_state_postgres/__init__.py`
 
 ## Expected ports / tools
 

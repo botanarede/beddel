@@ -6,7 +6,7 @@ Google Gemini ADK direct LLM adapter for TypeScript.
 
 | Language    | Status | Notes |
 | ----------- | ------ | ----- |
-| Python      | `planned` | Planned — implementation_path: `./python/src/beddel_provider_gemini_adk/__init__.py` |
+| Python      | `planned` | Planned — implementation_path: `./python/beddel_provider_gemini_adk/__init__.py` |
 | TypeScript  | `implemented` | Package: `@beddel/provider-gemini-adk` |
 
 ## Layout
