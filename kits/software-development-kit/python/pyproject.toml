@@ -1,0 +1,14 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "beddel-software-development"
+version = "0.1.0"
+description = "Development workflow tools — validation gates and epic creation"
+authors = [{ name = "Beddel Team" }]
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.hatch.build.targets.wheel]
+packages = ["beddel_software_development"]
