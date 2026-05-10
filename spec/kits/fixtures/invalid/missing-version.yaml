@@ -1,0 +1,3 @@
+# Invalid: missing required 'version' field
+name: "my-kit"
+description: "A kit that is missing the version field"

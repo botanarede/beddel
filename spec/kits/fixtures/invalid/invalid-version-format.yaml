@@ -1,0 +1,4 @@
+# Invalid: version is not semver (missing patch segment)
+name: "my-kit"
+version: "1.0"
+description: "A kit with an invalid version format"

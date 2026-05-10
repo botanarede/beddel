@@ -1,0 +1,92 @@
+# Validate generated epic structure against sprint-status and required sections
+id: validate_epic_structure
+name: Validate Epic Structure
+description: >
+  Compares epic markdown against sprint-status story keys and required headings.
+  Returns a JSON report with counts and missing elements.
+version: "1.0"
+
+input_schema:
+  type: object
+  properties:
+    project_root: { type: string }
+    epic_file: { type: string }
+    sprint_status: { type: string }
+    epic_num: { type: integer }
+  required: [project_root, epic_file, sprint_status, epic_num]
+
+steps:
+  - id: check
+    primitive: tool
+    config:
+      tool: shell_exec
+      arguments:
+        cmd: >
+          python - <<'PY'
+          import json, yaml, pathlib, re, sys
+
+          epic_file = pathlib.Path("$input.epic_file").resolve()
+          sprint_file = pathlib.Path("$input.sprint_status").resolve()
+          epic_num = int("$input.epic_num")
+
+          def out(status, **kwargs):
+              print(json.dumps({"status": status, **kwargs}))
+              sys.exit(0)
+
+          if not epic_file.exists():
+              out("ERROR", message=f"epic file missing: {epic_file}")
+          if not sprint_file.exists():
+              out("ERROR", message=f"sprint-status missing: {sprint_file}")
+
+          sprint = yaml.safe_load(sprint_file.read_text())
+          dev = sprint.get("development_status", {}) or {}
+          expected = sorted([k for k in dev if re.match(fr"{epic_num}-\\d+-", k)])
+
+          text = epic_file.read_text()
+
+          # Extract story keys from markdown headings
+          md_keys = sorted(set(re.findall(fr"\\*\\*Story Key:\\*\\* `({epic_num}-\\d+-[^`]+)`", text)))
+
+          missing = [k for k in expected if k not in md_keys]
+          extra = [k for k in md_keys if k not in expected]
+
+          required_headings = [
+              "# Epic",
+              "## Goal",
+              "## Scope",
+              "### In Scope",
+              "### Out of Scope",
+              "## Requirements Addressed",
+              "### Functional Requirements",
+              "### Non-Functional Requirements",
+              "### Architecture Requirements",
+              "## Stories",
+              "## Dependencies",
+              "## Wave Context",
+          ]
+          missing_headings = [h for h in required_headings if h not in text]
+
+          out("OK",
+              expected_story_keys=expected,
+              found_story_keys=md_keys,
+              missing_story_keys=missing,
+              extra_story_keys=extra,
+              missing_headings=missing_headings)
+          PY
+
+  - id: guard
+    primitive: guardrail
+    config:
+      data: "$stepResult.check.result.stdout"
+      schema:
+        fields:
+          status: { type: str, required: true }
+          missing_story_keys: { type: list, required: false }
+          missing_headings: { type: list, required: false }
+      strategy: correct
+
+  - id: report
+    primitive: output-generator
+    config:
+      template: "$stepResult.guard.data"
+      format: json

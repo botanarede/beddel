@@ -1,0 +1,331 @@
+# =============================================================================
+# Casa Savana — Blog Source Scout Pipeline
+# =============================================================================
+#
+# Discovers, validates, and ranks content sources for the Casa Savana blog.
+# Casa Savana is a cultural house in Rio de Janeiro (Rua Camerino, 162 - Centro)
+# that celebrates Black culture, African/Afro-Brazilian gastronomy, samba,
+# pagode, and the African diaspora. Their menu features dishes from Nigeria,
+# Angola, Senegal, Mozambique, and São Tomé e Príncipe.
+#
+# The blog needs sources covering:
+#   - Cultura preta / Black culture (BR + international)
+#   - Gastronomia africana e afro-brasileira
+#   - Música negra (samba, pagode, MPB, afrobeats, jazz, soul)
+#   - Diáspora africana (história, arte, moda, lifestyle)
+#   - Eventos culturais negros no Rio de Janeiro
+#
+# 6-step pipeline:
+#   Step 1: Research BR sources — LLM finds Brazilian Black culture sources
+#   Step 2: Research INT sources — LLM finds international diaspora sources
+#   Step 3: Parse — LLM merges and structures all findings as JSON
+#   Step 4: Validate — HTTP smoke test on a known working feed
+#   Step 5: Classify — LLM ranks by relevance to Casa Savana's identity
+#   Step 6: Report — output final JSON
+#
+# Primitives used: llm (×4), tool (×1), output-generator (×1)
+# Strategies used: retry (step 1, 2), skip (step 6)
+# Variables used: $input.focus_areas, $input.max_sources, $stepResult.*
+# LLM provider: Groq Llama via LiteLLM (requires GROQ_API_KEY)
+#
+# Pre-validated sources (confirmed RSS feeds from research 2026-04-13):
+#   BR: geledes.org.br, noticiapreta.com.br, mundonegro.inf.br,
+#       portalraizes.com, revistaforum.com.br
+#   INT: essence.com, afropunk.com, theroot.com, afroculinaria.com,
+#        saveur.com
+#   Blocked: almapreta.com.br (auth), thegrio.com (cloudflare),
+#            okayafrica.com (no feed)
+#
+# Usage:
+#   beddel run spec/fixtures/dogfooding/savana-source-scout.yaml \
+#     -i focus_areas="gastronomia africana, samba, cultura preta, diáspora" \
+#     -i max_sources="20"
+#
+# Expected output: JSON array of ranked sources for the Casa Savana blog.
+# =============================================================================
+
+id: savana_source_scout
+name: "Casa Savana — Blog Source Scout"
+description: >
+  Discovers and ranks content sources for the Casa Savana blog — a cultural
+  house in Rio de Janeiro celebrating Black culture, African gastronomy,
+  samba, and the African diaspora. Returns a JSON array of validated sources
+  organized by category (gastronomia, música, cultura, diáspora, eventos).
+version: "1.0"
+
+input_schema:
+  type: object
+  properties:
+    focus_areas:
+      type: string
+      description: >
+        Comma-separated focus areas for the blog
+        (e.g. "gastronomia africana, samba, cultura preta, diáspora africana")
+    max_sources:
+      type: string
+      description: "Maximum total sources to return (default: 20)"
+  required:
+    - focus_areas
+
+steps:
+  # ── Step 1: Research Brazilian Sources ──────────────────────
+  # LLM finds Brazilian portals, blogs, and news sites focused on
+  # Black culture, Afro-Brazilian gastronomy, samba, and events.
+  - id: research_br
+    primitive: llm
+    config:
+      model: groq/llama-3.3-70b-versatile
+      prompt: |
+        You are a Brazilian cultural content researcher specializing in
+        cultura preta (Black culture) and the African diaspora in Brazil.
+
+        CONTEXT: Casa Savana is a cultural house and restaurant in Rio de
+        Janeiro (Centro) that celebrates Black culture through:
+        - Afro-Brazilian and African gastronomy (dishes from Nigeria, Angola,
+          Senegal, Mozambique, São Tomé e Príncipe)
+        - Samba, pagode, and Black music events
+        - Cultural events celebrating the African diaspora
+
+        They need sources for a blog covering: $input.focus_areas
+
+        Find 10-12 BRAZILIAN sources. For each, provide:
+        - name: Source name
+        - url: Main website URL
+        - feed_url: RSS/Atom feed URL if known (WordPress sites use /feed/)
+        - type: blog, news, magazine, government, aggregator, podcast
+        - category: gastronomia, música, cultura, diáspora, eventos, lifestyle
+        - language: pt-br
+        - notes: What they cover, update frequency, why relevant to Casa Savana
+
+        KNOWN WORKING FEEDS (confirmed 2026-04-13, prioritize these):
+        - Geledés (geledes.org.br/feed/) — Black women's institute, culture+politics
+        - Notícia Preta (noticiapreta.com.br/feed/) — Black journalism
+        - Mundo Negro (mundonegro.inf.br/feed/) — Black culture magazine
+        - Portal Raízes (portalraizes.com/feed/) — African roots, culture, history
+        - Revista Fórum (revistaforum.com.br/feed/) — progressive journalism, racial justice
+
+        ALSO SEARCH FOR sources covering:
+        - Gastronomia africana e afro-brasileira (receitas, chefs, restaurantes)
+        - Samba, pagode, MPB, forró (blogs de música, crítica, agenda)
+        - Eventos culturais negros no Rio de Janeiro
+        - Religiões de matriz africana (candomblé, umbanda — cultural perspective)
+        - Moda afro, arte negra, literatura negra
+        - Empreendedorismo negro, afroempreendedorismo
+
+        Return as a numbered list with all fields clearly labeled.
+      temperature: 0.3
+      max_tokens: 2500
+    execution_strategy:
+      type: retry
+      retry:
+        max_attempts: 3
+        backoff_base: 2.0
+        jitter: true
+    timeout: 30.0
+    metadata:
+      phase: research
+      description: "Research Brazilian Black culture sources"
+
+  # ── Step 2: Research International Sources ──────────────────
+  # LLM finds international sources on the African diaspora,
+  # Black food culture, afrobeats, and global Black lifestyle.
+  - id: research_int
+    primitive: llm
+    config:
+      model: groq/llama-3.3-70b-versatile
+      prompt: |
+        You are an international cultural content researcher specializing in
+        the African diaspora, Black food culture, and global Black lifestyle.
+
+        CONTEXT: Casa Savana is a Brazilian cultural house that needs
+        international sources for their blog. Focus areas: $input.focus_areas
+
+        Find 8-10 INTERNATIONAL sources (English, French, or Portuguese from
+        Africa). For each, provide:
+        - name: Source name
+        - url: Main website URL
+        - feed_url: RSS/Atom feed URL if known
+        - type: blog, magazine, news, podcast, video
+        - category: gastronomia, música, cultura, diáspora, lifestyle, arte
+        - language: en, fr, or pt
+        - notes: What they cover, why relevant to Casa Savana's identity
+
+        KNOWN WORKING FEEDS (confirmed 2026-04-13, prioritize these):
+        - Essence (essence.com/feed/) — Black women's lifestyle, culture, food
+        - AFROPUNK (afropunk.com/feed/) — Black alternative culture, music, art
+        - The Root (theroot.com/rss) — Black news, culture, politics
+        - Afroculinaria (afroculinaria.com/feed/) — African diaspora food history
+          by Michael W. Twitty (James Beard Award winner)
+        - Saveur (saveur.com/feed/) — food magazine with strong African diaspora coverage
+
+        ALSO SEARCH FOR sources covering:
+        - African gastronomy (West African, East African, Southern African cuisine)
+        - Afrobeats, amapiano, jazz, soul, R&B music blogs
+        - African fashion and design (Afrofuturism, African textiles)
+        - Pan-African news and culture (from Africa, Caribbean, Europe)
+        - Black food bloggers and chefs (especially African/Caribbean cuisine)
+        - African diaspora history and heritage
+
+        Return as a numbered list with all fields clearly labeled.
+      temperature: 0.3
+      max_tokens: 2000
+    execution_strategy:
+      type: retry
+      retry:
+        max_attempts: 3
+        backoff_base: 2.0
+        jitter: true
+    timeout: 30.0
+    metadata:
+      phase: research
+      description: "Research international African diaspora sources"
+
+  # ── Step 3: Parse and Merge to JSON ─────────────────────────
+  # Combines both research outputs into a single structured JSON array.
+  - id: parse
+    primitive: llm
+    config:
+      model: groq/llama-3.3-70b-versatile
+      prompt: |
+        Merge the following Brazilian and international research findings
+        into a single JSON array. Each element must have exactly these fields:
+
+        {
+          "name": "string",
+          "url": "string (full URL with https://)",
+          "feed_url": "string or null",
+          "type": "blog | news | magazine | government | aggregator | podcast | video",
+          "category": "gastronomia | música | cultura | diáspora | eventos | lifestyle | arte",
+          "language": "pt-br | en | fr | pt",
+          "region": "brasil | international",
+          "notes": "string (brief, max 100 chars)"
+        }
+
+        Rules:
+        - Return ONLY the JSON array, no markdown fences, no explanation
+        - If feed_url is unknown, set it to null
+        - Ensure all URLs start with https:// or http://
+        - Remove duplicates (same URL appearing in both lists)
+        - Maximum $input.max_sources entries total
+
+        BRAZILIAN SOURCES:
+        $stepResult.research_br.content
+
+        INTERNATIONAL SOURCES:
+        $stepResult.research_int.content
+      temperature: 0.0
+      max_tokens: 3000
+    timeout: 25.0
+    execution_strategy:
+      type: retry
+      retry:
+        max_attempts: 3
+        backoff_base: 5.0
+        jitter: true
+    metadata:
+      phase: parse
+      description: "Merge BR + INT sources into structured JSON"
+
+  # ── Step 4: Validate a Known Feed ───────────────────────────
+  # Smoke test: verify that Notícia Preta (a confirmed Brazilian
+  # Black culture feed) is reachable. This validates our HTTP
+  # tooling works and gives the classifier a real data point.
+  - id: validate_feed
+    primitive: tool
+    config:
+      tool: http_request
+      arguments:
+        method: "GET"
+        url: "https://noticiapreta.com.br/feed/"
+      timeout: 15
+    execution_strategy:
+      type: retry
+      retry:
+        max_attempts: 2
+        backoff_base: 3.0
+        jitter: false
+    metadata:
+      phase: validate
+      description: "Smoke test: verify Notícia Preta RSS feed is reachable"
+
+  # ── Step 5: Classify and Rank ───────────────────────────────
+  # LLM scores each source by relevance to Casa Savana's identity:
+  # African gastronomy, samba/pagode, Black culture, diaspora.
+  - id: classify
+    primitive: llm
+    config:
+      model: groq/llama-3.3-70b-versatile
+      prompt: |
+        You are a content strategist for Casa Savana, a cultural house in
+        Rio de Janeiro that celebrates Black culture, African gastronomy,
+        samba, and the African diaspora.
+
+        Given these candidate blog sources and a feed validation result,
+        produce a final ranked JSON array.
+
+        Candidate sources (JSON):
+        $stepResult.parse.content
+
+        Feed validation (Notícia Preta):
+        Status: $stepResult.validate_feed.result.status_code
+        (200 = feed confirmed working)
+
+        For each source, ADD these fields:
+        - "relevance": number 0.0-1.0 (how relevant to Casa Savana's identity)
+        - "priority": "essential" | "high" | "medium" | "low"
+        - "content_type": "curadoria" (curated articles) | "receitas" (recipes) |
+          "agenda" (events) | "opinião" (opinion/editorial) | "referência" (reference)
+        - "blog_use": string describing how Casa Savana's blog could use this source
+          (e.g. "Repost African recipes with credit", "Curate weekly diaspora news digest")
+        - "feed_status": "confirmed" if feed_url matches a known working feed,
+          "likely" if WordPress/Blogspot, "unknown" otherwise
+
+        Ranking criteria (Casa Savana identity alignment):
+        1. African/Afro-Brazilian gastronomy sources → relevance 0.9+, essential
+        2. Samba, pagode, Black music sources → relevance 0.85+, essential
+        3. Black culture portals (BR) with confirmed feeds → relevance 0.8+, high
+        4. African diaspora international sources → relevance 0.7+, high
+        5. General Black lifestyle/fashion → relevance 0.6, medium
+        6. Sources without feeds or requiring scraping → relevance -0.1 penalty
+
+        CONFIRMED WORKING FEEDS (mark as feed_status "confirmed"):
+        - geledes.org.br/feed/
+        - noticiapreta.com.br/feed/
+        - mundonegro.inf.br/feed/
+        - portalraizes.com/feed/
+        - revistaforum.com.br/feed/
+        - essence.com/feed/
+        - afropunk.com/feed/
+        - theroot.com/rss
+        - afroculinaria.com/feed/
+        - saveur.com/feed/
+
+        If Notícia Preta returned 200, mark it as "confirmed" with relevance 0.85.
+
+        Return ONLY the JSON array, sorted by relevance descending.
+        No markdown fences, no explanation.
+      temperature: 0.1
+      max_tokens: 3500
+    timeout: 25.0
+    execution_strategy:
+      type: retry
+      retry:
+        max_attempts: 3
+        backoff_base: 5.0
+        jitter: true
+    metadata:
+      phase: classify
+      description: "Rank sources by relevance to Casa Savana's identity"
+
+  # ── Step 6: Final Report ────────────────────────────────────
+  - id: report
+    primitive: output-generator
+    config:
+      template: |
+        $stepResult.classify.content
+      format: json
+    execution_strategy:
+      type: skip
+    metadata:
+      phase: report
+      description: "Output the final ranked JSON of blog sources"

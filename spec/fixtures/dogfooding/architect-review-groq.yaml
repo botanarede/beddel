@@ -1,0 +1,214 @@
+# =============================================================================
+# Adversarial Code Review via LLM Primitive (Kimi K2 / Groq)
+# =============================================================================
+#
+# 5-step workflow that mirrors the beddel-code-review Power's 5 phases
+# using the llm primitive with Kimi K2 via Groq (through LiteLLM).
+# No agent adapters needed — pure LLM calls, in-process.
+#
+# Architecture:
+#   workflow YAML → llm primitive → LiteLLMAdapter → litellm SDK → Groq API
+#
+# Pipeline (mirrors beddel-code-review phases):
+#   1. Context Gathering  — collect git diff + story file (tool primitive)
+#   2. Risk Tier Detection — classify changed files into risk tier (llm)
+#   3. Adversarial Review  — 4-pillar attack, find 3-10 issues (llm)
+#   4. Architect Review    — validate architecture compliance (llm)
+#   5. Gate Verification   — consolidate verdict + generate report (llm)
+#
+# Primitives used: tool (×2), llm (×4)
+# Provider: LiteLLMAdapter → groq/moonshotai/kimi-k2-instruct (adversarial)
+#                          → gemini/gemini-2.0-flash (tier, architect, gates)
+# Fallback: Any LiteLLM-supported model (change model field)
+#
+# Host wiring requirements:
+#   - GROQ_API_KEY set in environment (for Kimi K2 — adversarial review)
+#   - GEMINI_API_KEY set in environment (for Gemini Flash — tier, architect, gates)
+#   - provider-litellm-kit installed (LiteLLMAdapter)
+#   - tools-shell-kit installed (shell_exec tool)
+#   - Git repository with commits to review
+#
+# Usage:
+#   beddel run spec/fixtures/dogfooding/architect-review-groq.yaml \
+#     -i diff_range="f1b3753..HEAD" \
+#     -i story_id="7A.4" \
+#     -i story_path="docs/stories/epic-7a/story-7A.4.md"
+#
+# Cost: ~$0 (Groq free tier for Kimi K2, rate-limited)
+#
+# NOTE: Step IDs use underscores (not hyphens) because the Beddel
+# variable resolver regex [a-zA-Z0-9_.] does not match hyphens.
+# $stepResult.collect_diff.content works; $stepResult.collect-diff does not.
+# =============================================================================
+
+id: code_review_llm
+name: Code Review (LLM — Kimi K2)
+description: >
+  Adversarial code review using Kimi K2 via Groq/LiteLLM.
+  Mirrors the 5 phases of the beddel-code-review Power
+  using pure LLM calls instead of agent adapters.
+version: "1.0"
+
+input_schema:
+  type: object
+  properties:
+    diff_range:
+      type: string
+      description: "Git diff range (e.g., f1b3753..HEAD)"
+    story_id:
+      type: string
+      description: "Story identifier (e.g., 7A.4)"
+    story_path:
+      type: string
+      description: "Path to the story markdown file"
+  required:
+    - diff_range
+    - story_id
+    - story_path
+
+steps:
+  # Phase 1: Context Gathering
+  - id: collect_diff
+    primitive: tool
+    config:
+      tool: shell_exec
+      arguments:
+        cmd: "git diff $input.diff_range --name-only"
+        timeout: 30
+
+  - id: collect_story
+    primitive: tool
+    config:
+      tool: file_read
+      arguments:
+        path: "$input.story_path"
+
+  # Phase 2: Risk Tier Detection
+  - id: detect_tier
+    primitive: llm
+    config:
+      model: gemini/gemini-2.0-flash
+      temperature: 0.1
+      max_tokens: 500
+      prompt: |
+        Classify the risk tier of these changed files.
+
+        Changed files:
+        $stepResult.collect_diff.result.stdout
+
+        Rules:
+        - HIGH: domain core (domain/*.py, ports.py, executor.py, primitives/*.py)
+        - MEDIUM: adapters, integrations, tests, CLI
+        - LOW: docs, spec contracts (JSON), configs, markdown only
+
+        Respond with EXACTLY this JSON (no markdown, no explanation):
+        {"tier": "low|medium|high", "reason": "one sentence", "file_count": N}
+
+  # Phase 3: Adversarial Review
+  - id: adversarial_review
+    primitive: llm
+    config:
+      model: groq/moonshotai/kimi-k2-instruct
+      temperature: 0.3
+      max_tokens: 4000
+      prompt: |
+        You are an adversarial code reviewer. Review Story: $input.story_id
+
+        ## Story Content (truncated)
+        $stepResult.collect_story.result
+
+        ## Changed Files
+        $stepResult.collect_diff.result.stdout
+
+        ## Risk Tier
+        $stepResult.detect_tier.content
+
+        ## Review Protocol (4 Pillars)
+
+        1. BLIND HUNTER: Are any tasks marked [x] but NOT actually implemented?
+        2. EDGE CASE HUNTER: Missing edge cases or error handling gaps?
+        3. ACCEPTANCE AUDITOR: Does each AC have evidence in the diff?
+        4. CONSISTENCY CHECKER: Do changes follow project conventions?
+
+        Rules: Find 3-10 issues MINIMUM. CRITICAL = task [x] not done. HIGH = AC not implemented.
+
+        Respond with EXACTLY this JSON (no markdown):
+        {
+          "findings": [
+            {"id": 1, "severity": "LOW|MEDIUM|HIGH|CRITICAL", "pillar": "blind_hunter|edge_case|acceptance|consistency", "description": "...", "file": "...", "suggestion": "..."}
+          ],
+          "summary": "one paragraph",
+          "critical_count": 0, "high_count": 0, "medium_count": 0, "low_count": 0
+        }
+
+  # Phase 4: Architect Review
+  - id: architect_review
+    primitive: llm
+    config:
+      model: gemini/gemini-2.0-flash
+      temperature: 0.2
+      max_tokens: 2000
+      prompt: |
+        You are a software architect reviewing Story: $input.story_id
+
+        ## Adversarial Findings
+        $stepResult.adversarial_review.content
+
+        ## Questions
+        Q1: Do changes respect hexagonal architecture boundaries?
+        Q2: Are spec contracts consistent with port definitions in ports.py?
+        Q3: Any architectural concerns not caught by adversarial review?
+        Q4: Is the change set coherent and complete for the stated ACs?
+        Q5: Overall verdict — PASS or FAIL?
+
+        Respond with EXACTLY this JSON (no markdown):
+        {
+          "questions": [
+            {"id": "Q1", "answer": "YES|NO", "rationale": "..."},
+            {"id": "Q2", "answer": "YES|NO", "rationale": "..."},
+            {"id": "Q3", "answer": "YES|NO", "rationale": "..."},
+            {"id": "Q4", "answer": "YES|NO", "rationale": "..."},
+            {"id": "Q5", "answer": "PASS|FAIL", "rationale": "..."}
+          ],
+          "concerns": [],
+          "verdict": "PASS|FAIL"
+        }
+
+  # Phase 5: Gate Verification
+  - id: gate_verification
+    primitive: llm
+    config:
+      model: gemini/gemini-2.0-flash
+      temperature: 0.1
+      max_tokens: 2000
+      prompt: |
+        Consolidate the code review for Story: $input.story_id
+
+        ## Adversarial Review
+        $stepResult.adversarial_review.content
+
+        ## Architect Review
+        $stepResult.architect_review.content
+
+        ## 5 DoD Gates
+        Gate 1: QA Results section exists and is not "N/A"
+        Gate 2: At least one AC verified against actual source code
+        Gate 3: No CRITICAL findings remain unresolved
+        Gate 4: Architect review verdict is PASS
+        Gate 5: All 4 validation gates pass (pytest, ruff, mypy)
+
+        Respond with EXACTLY this JSON (no markdown):
+        {
+          "story_id": "$input.story_id",
+          "verdict": "PASS|FAIL",
+          "gates": {
+            "qa_results_present": true,
+            "ac_verified_against_source": true,
+            "no_critical_unresolved": true,
+            "architect_pass": true,
+            "validation_gates_pass": true
+          },
+          "findings_summary": {"critical": 0, "high": 0, "medium": 0, "low": 0},
+          "consolidated_summary": "final assessment paragraph",
+          "action_items": []
+        }

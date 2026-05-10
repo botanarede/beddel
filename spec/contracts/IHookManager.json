@@ -1,0 +1,134 @@
+{
+  "name": "IHookManager",
+  "description": "Contract for hook management, extending lifecycle hook notifications. Adds hook registration and removal on top of the lifecycle callbacks defined by ILifecycleHook. Implementations manage a collection of hooks and fan-out lifecycle notifications to all registered hooks.",
+  "methods": [
+    {
+      "name": "add_hook",
+      "params": [
+        { "name": "hook", "type": "ILifecycleHook", "required": true }
+      ],
+      "return_type": "void",
+      "async": true,
+      "description": "Register a lifecycle hook."
+    },
+    {
+      "name": "remove_hook",
+      "params": [
+        { "name": "hook", "type": "ILifecycleHook", "required": true }
+      ],
+      "return_type": "void",
+      "async": true,
+      "description": "Remove a previously registered lifecycle hook."
+    },
+    {
+      "name": "on_workflow_start",
+      "params": [
+        { "name": "workflow_id", "type": "string", "required": true },
+        { "name": "inputs", "type": "dict", "required": true }
+      ],
+      "return_type": "void",
+      "async": true,
+      "description": "Called when a workflow execution begins."
+    },
+    {
+      "name": "on_workflow_end",
+      "params": [
+        { "name": "workflow_id", "type": "string", "required": true },
+        { "name": "result", "type": "dict", "required": true }
+      ],
+      "return_type": "void",
+      "async": true,
+      "description": "Called when a workflow execution completes successfully."
+    },
+    {
+      "name": "on_step_start",
+      "params": [
+        { "name": "step_id", "type": "string", "required": true },
+        { "name": "primitive", "type": "string", "required": true }
+      ],
+      "return_type": "void",
+      "async": true,
+      "description": "Called before a step begins execution."
+    },
+    {
+      "name": "on_step_end",
+      "params": [
+        { "name": "step_id", "type": "string", "required": true },
+        { "name": "result", "type": "any", "required": true }
+      ],
+      "return_type": "void",
+      "async": true,
+      "description": "Called after a step completes successfully."
+    },
+    {
+      "name": "on_error",
+      "params": [
+        { "name": "step_id", "type": "string", "required": true },
+        { "name": "error", "type": "any", "required": true }
+      ],
+      "return_type": "void",
+      "async": true,
+      "description": "Called when a step encounters an error."
+    },
+    {
+      "name": "on_retry",
+      "params": [
+        { "name": "step_id", "type": "string", "required": true },
+        { "name": "attempt", "type": "integer", "required": true },
+        { "name": "error", "type": "any", "required": true }
+      ],
+      "return_type": "void",
+      "async": true,
+      "description": "Called when a step retry is attempted."
+    },
+    {
+      "name": "on_decision",
+      "params": [
+        { "name": "decision", "type": "Decision", "required": true }
+      ],
+      "return_type": "void",
+      "async": true,
+      "description": "Called when the executor records a decision. Receives a Decision dataclass capturing intent, options, chosen option, and reasoning."
+    },
+    {
+      "name": "on_budget_threshold",
+      "params": [
+        { "name": "workflow_id", "type": "string", "required": true },
+        { "name": "cumulative_cost", "type": "float", "required": true },
+        { "name": "threshold", "type": "float", "required": true }
+      ],
+      "return_type": "void",
+      "async": true,
+      "description": "Called when cumulative cost reaches the degradation threshold."
+    },
+    {
+      "name": "on_approval_requested",
+      "params": [
+        { "name": "step_id", "type": "string", "required": true },
+        { "name": "action", "type": "string", "required": true },
+        { "name": "risk_level", "type": "RiskLevel", "required": true }
+      ],
+      "return_type": "void",
+      "async": true,
+      "description": "Called when an approval request is submitted for a workflow step."
+    },
+    {
+      "name": "on_approval_received",
+      "params": [
+        { "name": "step_id", "type": "string", "required": true },
+        { "name": "result", "type": "ApprovalResult", "required": true }
+      ],
+      "return_type": "void",
+      "async": true,
+      "description": "Called when an approval decision is received for a workflow step."
+    }
+  ],
+  "behavioral_expectations": [
+    "Extends ILifecycleHook — must implement all lifecycle callbacks in addition to add_hook/remove_hook",
+    "All methods have default no-op implementations — IHookManager() is a valid null-object instance",
+    "Registration methods (add_hook/remove_hook) must be non-blocking",
+    "Implementations must fan-out lifecycle notifications to all registered hooks",
+    "Hook registration is async for uniformity with lifecycle callbacks and future concurrency-safe implementations",
+    "ApprovalResult contains: request_id (str), status (ApprovalStatus), approver (str | None), timestamp (float), metadata (dict)"
+  ]
+}

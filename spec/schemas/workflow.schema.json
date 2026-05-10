@@ -1,0 +1,283 @@
+{
+  "$defs": {
+    "ExecutionStrategy": {
+      "description": "Strategy applied when a step encounters an error.\n\nAttributes:\n    type: The strategy variant to use (default ``FAIL``).\n    retry: Optional retry configuration (used when ``type`` is ``RETRY``).\n    fallback_step: Optional fallback step (used when ``type`` is ``FALLBACK``).",
+      "properties": {
+        "type": {
+          "$ref": "#/$defs/StrategyType",
+          "default": "fail"
+        },
+        "retry": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RetryConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "fallback_step": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Step"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "ExecutionStrategy",
+      "type": "object"
+    },
+    "RetryConfig": {
+      "description": "Configuration for step retry behaviour.\n\nControls exponential back-off with optional jitter when a step is\nconfigured with ``StrategyType.RETRY``.\n\nAttributes:\n    max_attempts: Maximum number of retry attempts (including the first).\n    backoff_base: Base multiplier for exponential back-off in seconds.\n    backoff_max: Upper bound for the back-off delay in seconds.\n    jitter: Whether to add random jitter to the delay.",
+      "properties": {
+        "max_attempts": {
+          "default": 3,
+          "title": "Max Attempts",
+          "type": "integer"
+        },
+        "backoff_base": {
+          "default": 2.0,
+          "title": "Backoff Base",
+          "type": "number"
+        },
+        "backoff_max": {
+          "default": 60.0,
+          "title": "Backoff Max",
+          "type": "number"
+        },
+        "jitter": {
+          "default": true,
+          "title": "Jitter",
+          "type": "boolean"
+        }
+      },
+      "title": "RetryConfig",
+      "type": "object"
+    },
+    "Step": {
+      "description": "A single executable step within a workflow.\n\nSteps reference a primitive by name and carry an arbitrary config dict\nthat is forwarded to the primitive at execution time.  Conditional\nbranching is supported via ``if``/``then``/``else`` fields.\n\nAttributes:\n    id: Unique identifier for this step within the workflow.\n    primitive: Name of the primitive to execute (e.g. ``\"llm\"``).\n    config: Primitive-specific configuration dict.\n    if_condition: Optional expression evaluated at runtime for branching.\n    then_steps: Steps executed when ``if_condition`` is truthy.\n    else_steps: Steps executed when ``if_condition`` is falsy.\n    execution_strategy: Error-handling strategy for this step.\n    timeout: Optional timeout in seconds for step execution.\n    stream: Whether to stream output from this step.\n    parallel: Flag for parallel execution grouping by ParallelExecutionStrategy.\n    metadata: Arbitrary metadata attached to the step.\n    tags: Optional tags for step-level filtering by execution strategies.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "primitive": {
+          "title": "Primitive",
+          "type": "string"
+        },
+        "config": {
+          "additionalProperties": true,
+          "title": "Config",
+          "type": "object"
+        },
+        "if": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "If"
+        },
+        "then": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Step"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Then"
+        },
+        "else": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Step"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Else"
+        },
+        "execution_strategy": {
+          "$ref": "#/$defs/ExecutionStrategy"
+        },
+        "timeout": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timeout"
+        },
+        "stream": {
+          "default": false,
+          "title": "Stream",
+          "type": "boolean"
+        },
+        "parallel": {
+          "default": false,
+          "title": "Parallel",
+          "type": "boolean"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "title": "Metadata",
+          "type": "object"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tags",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "primitive"
+      ],
+      "title": "Step",
+      "type": "object"
+    },
+    "StrategyType": {
+      "description": "Execution strategy types for step error handling.\n\nEach value maps to a different failure-recovery behaviour:\n\n- ``FAIL``: Abort the workflow immediately (default).\n- ``SKIP``: Ignore the error and continue to the next step.\n- ``RETRY``: Re-execute the step according to ``RetryConfig``.\n- ``FALLBACK``: Execute an alternative fallback step.\n- ``DELEGATE``: Agent-judged recovery \u2014 LLM decides retry, skip, or fallback (see \u00a714.3).",
+      "enum": [
+        "fail",
+        "skip",
+        "retry",
+        "fallback",
+        "delegate"
+      ],
+      "title": "StrategyType",
+      "type": "string"
+    },
+    "ToolDeclaration": {
+      "description": "Declaration of a tool available to a workflow.\n\nEach declaration maps a logical tool name to a Python callable target\nusing ``module:function`` format.  The parser resolves targets at parse\ntime via ``importlib``.\n\nNote: ``allowed_tools`` (security allowlist) and ``tools`` (registration)\nare orthogonal concerns.  ``allowed_tools`` restricts which tools can\nexecute; ``tools`` declares where tool code lives.  A tool can be\nregistered via ``tools`` but blocked by ``allowed_tools``.\n\nAttributes:\n    name: Logical name used to reference this tool in the workflow.\n    target: Import path in ``module:function`` format.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "target": {
+          "title": "Target",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "target"
+      ],
+      "title": "ToolDeclaration",
+      "type": "object"
+    }
+  },
+  "description": "JSON Schema for Beddel YAML workflow definition files",
+  "properties": {
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "description": {
+      "default": "",
+      "title": "Description",
+      "type": "string"
+    },
+    "version": {
+      "default": "1.0",
+      "title": "Version",
+      "type": "string"
+    },
+    "input_schema": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Input Schema"
+    },
+    "steps": {
+      "items": {
+        "$ref": "#/$defs/Step"
+      },
+      "title": "Steps",
+      "type": "array"
+    },
+    "metadata": {
+      "additionalProperties": true,
+      "title": "Metadata",
+      "type": "object"
+    },
+    "allowed_tools": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Allowed Tools"
+    },
+    "tools": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/ToolDeclaration"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Tools"
+    }
+  },
+  "required": [
+    "id",
+    "name",
+    "steps"
+  ],
+  "title": "Beddel Workflow",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beddel.dev/schemas/workflow.schema.json"
+}

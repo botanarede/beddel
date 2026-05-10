@@ -1,0 +1,53 @@
+{
+  "name": "ICircuitBreaker",
+  "description": "Contract for per-provider circuit breaker implementations. Tracks failure/success rates per provider and controls whether requests should be short-circuited to a fallback. The circuit transitions through three states: CLOSED → OPEN → HALF_OPEN → CLOSED.",
+  "methods": [
+    {
+      "name": "record_failure",
+      "params": [
+        { "name": "provider", "type": "string", "required": true, "description": "Identifier of the provider that failed" }
+      ],
+      "return_type": "void",
+      "async": false,
+      "description": "Record a failed request for the given provider. Increments the failure counter. When the failure threshold is reached, the circuit transitions to OPEN."
+    },
+    {
+      "name": "record_success",
+      "params": [
+        { "name": "provider", "type": "string", "required": true, "description": "Identifier of the provider that succeeded" }
+      ],
+      "return_type": "void",
+      "async": false,
+      "description": "Record a successful request for the given provider. Resets the failure counter. In HALF_OPEN state, increments the success counter and transitions to CLOSED when the success threshold is reached."
+    },
+    {
+      "name": "is_open",
+      "params": [
+        { "name": "provider", "type": "string", "required": true, "description": "Identifier of the provider to check" }
+      ],
+      "return_type": "boolean",
+      "async": false,
+      "description": "Check whether the circuit is open for the given provider. Returns true when requests should be short-circuited (OPEN state within the recovery window). Returns false for CLOSED, HALF_OPEN, or OPEN-past-recovery-window."
+    },
+    {
+      "name": "state",
+      "params": [
+        { "name": "provider", "type": "string", "required": true, "description": "Identifier of the provider to query" }
+      ],
+      "return_type": "string",
+      "async": false,
+      "description": "Return the current circuit state for the given provider. Unknown providers return 'closed' (default state). Returns one of: 'closed', 'open', or 'half-open'."
+    }
+  ],
+  "behavioral_expectations": [
+    "Must implement structural subtyping (Protocol) — no explicit inheritance required",
+    "Must be thread-safe — the circuit breaker may be shared across concurrent async tasks",
+    "All methods are synchronous — state transitions are in-memory operations",
+    "State transitions follow: CLOSED → OPEN (on failure threshold) → HALF_OPEN (after recovery window) → CLOSED (on success threshold)",
+    "Unknown/new providers must default to 'closed' state",
+    "record_success() in CLOSED state must reset the failure counter",
+    "record_success() in HALF_OPEN state must increment success counter toward CLOSED transition",
+    "is_open() must return false for HALF_OPEN state (allows probe requests)",
+    "state() must return one of exactly three values: 'closed', 'open', 'half-open'"
+  ]
+}

@@ -1,0 +1,184 @@
+# poc-dev-pipeline.yaml
+# Beddel SDK workflow that orchestrates story implementation
+# via Kiro CLI agent delegation — one task per session.
+#
+# Run: beddel run poc-dev-pipeline.yaml --input '{"story_key": "auto"}'
+#      --tool read-file=beddel_tools.io:read_file
+#      --tool write-file=beddel_tools.io:write_file
+#      --tool parse-sprint=beddel_tools.sprint:parse_status
+#      --tool parse-story=beddel_tools.sprint:parse_story
+#      --tool update-sprint=beddel_tools.sprint:update_status
+#      --tool execute-task-loop=beddel_tools.executor:execute_task_loop
+
+id: poc-dev-pipeline
+name: PoC Dev Task Pipeline
+description: >
+  Reads sprint-status.yaml, finds the next ready-for-dev story,
+  parses its tasks, and delegates each task to a Kiro CLI session
+  with full access. Each task runs in an isolated non-interactive
+  session with the complete story context as prompt.
+version: "1.0"
+
+input_schema:
+  type: object
+  properties:
+    story_key:
+      type: string
+      description: "Story key (e.g. '2-2') or 'auto' for first ready-for-dev"
+    project_root:
+      type: string
+      description: "Absolute path to poc/ project root"
+    model:
+      type: string
+      description: "LLM model for task delegation"
+  required:
+    - story_key
+    - project_root
+
+steps:
+  # ── Phase 1: Discover target story ──────────────────────────
+  - id: find_story
+    primitive: tool
+    config:
+      tool: parse-sprint
+      arguments:
+        sprint_file: "$input.project_root/_bmad-output/implementation-artifacts/sprint-status.yaml"
+        requested_key: "$input.story_key"
+      timeout: 10
+    # Returns: { story_key, status, story_file_path }
+
+  - id: check_status
+    primitive: guardrail
+    config:
+      data: "$stepResult.find_story.result"
+      schema:
+        fields:
+          story_key:
+            type: str
+            required: true
+          status:
+            type: str
+            required: true
+      strategy: return_errors
+
+  # ── Phase 2: Load and parse story tasks ─────────────────────
+  - id: load_story
+    primitive: tool
+    config:
+      tool: parse-story
+      arguments:
+        story_file: "$stepResult.find_story.result.story_file_path"
+      timeout: 10
+    # Returns: { tasks: [{id, title, subtasks, files, deps, checked}],
+    #            dev_notes, ac_list, story_text }
+
+  # ── Phase 3: Mark in-progress ───────────────────────────────
+  - id: mark_in_progress
+    primitive: tool
+    config:
+      tool: update-sprint
+      arguments:
+        sprint_file: "$input.project_root/_bmad-output/implementation-artifacts/sprint-status.yaml"
+        story_key: "$stepResult.find_story.result.story_key"
+        new_status: "in-progress"
+      timeout: 10
+
+  # ── Phase 4: Plan task execution via LLM ────────────────────
+  # The LLM analyzes tasks, classifies them, builds dependency DAG,
+  # and returns an ordered execution plan as structured JSON.
+  - id: plan_tasks
+    primitive: llm
+    config:
+      model: "$input.model"
+      prompt: |
+        You are a task planner for a TypeScript monorepo project.
+
+        Given these unchecked tasks from story $stepResult.find_story.result.story_key:
+
+        $stepResult.load_story.result.tasks
+
+        Dev Notes (architecture constraints):
+        $stepResult.load_story.result.dev_notes
+
+        Analyze each task and return a JSON array of execution batches.
+        Each batch is an array of task objects that can run sequentially
+        (no file conflicts between tasks in different batches).
+
+        Rules:
+        - Skip already-checked tasks
+        - Status-update tasks (sprint-status) go in batch 0 (already handled)
+        - Verification/test-run tasks go in the LAST batch
+        - Tasks that create files needed by other tasks go in earlier batches
+        - Each task object: {"id": "N", "title": "...", "files": [...], "prompt_context": "..."}
+
+        Return ONLY valid JSON: [[ {task}, {task} ], [ {task} ], ...]
+      temperature: 0.1
+      max_tokens: 4000
+
+  # ── Phase 5: Execute tasks sequentially via agent-exec ──────
+  # Each task is delegated to a fresh Kiro CLI session.
+  # The executor iterates over the planned batches.
+  #
+  # NOTE: Beddel SDK currently executes steps linearly.
+  # For the loop-over-tasks pattern, we use a tool that
+  # iterates internally and calls KiroCLIAgentAdapter per task.
+  - id: execute_tasks
+    primitive: tool
+    config:
+      tool: execute-task-loop
+      arguments:
+        plan: "$stepResult.plan_tasks.content"
+        story_key: "$stepResult.find_story.result.story_key"
+        story_file: "$stepResult.find_story.result.story_file_path"
+        story_text: "$stepResult.load_story.result.story_text"
+        project_root: "$input.project_root"
+        model: "$input.model"
+      timeout: 3600
+    # This tool internally:
+    # 1. Parses the plan JSON
+    # 2. For each task in each batch:
+    #    a. Builds a self-contained prompt with story context + task scope
+    #    b. Calls KiroCLIAgentAdapter.execute(prompt, sandbox="danger-full-access")
+    #    c. Checks exit code
+    #    d. Marks task checkbox [x] in story file
+    # 3. Returns { completed: N, failed: N, results: [...] }
+
+  # ── Phase 6: Run verification gates ─────────────────────────
+  - id: verify
+    primitive: agent-exec
+    config:
+      adapter: kiro-cli
+      prompt: |
+        You are in project $input.project_root.
+        Run the full verification pipeline for @botanarede/schema:
+
+        cd $input.project_root
+        pnpm --filter @botanarede/schema typecheck
+        pnpm --filter @botanarede/schema test
+        pnpm --filter @botanarede/schema build
+
+        Report PASS or FAIL for each gate. If any fails, show the error.
+      model: "claude-sonnet-4.6"
+      sandbox: "danger-full-access"
+
+  # ── Phase 7: Finalize ──────────────────────────────────────
+  - id: mark_review
+    primitive: tool
+    config:
+      tool: update-sprint
+      arguments:
+        sprint_file: "$input.project_root/_bmad-output/implementation-artifacts/sprint-status.yaml"
+        story_key: "$stepResult.find_story.result.story_key"
+        new_status: "review"
+      timeout: 10
+
+  - id: report
+    primitive: output-generator
+    config:
+      template: |
+        STORY IMPLEMENTATION COMPLETE
+        Story: $stepResult.find_story.result.story_key
+        Tasks: $stepResult.execute_tasks.result.completed completed, $stepResult.execute_tasks.result.failed failed
+        Verification: $stepResult.verify.output
+        Status: review
+      format: text

@@ -1,0 +1,45 @@
+{
+  "name": "IEventStore",
+  "description": "Contract for durable event store implementations. Provides append-only event logging per workflow, with load and truncate operations for checkpoint-based replay.",
+  "methods": [
+    {
+      "name": "append",
+      "params": [
+        { "name": "workflow_id", "type": "string", "required": true, "description": "Identifier of the workflow execution" },
+        { "name": "step_id", "type": "string", "required": true, "description": "Identifier of the step that produced the event" },
+        { "name": "event", "type": "dict", "required": true, "description": "Arbitrary event payload to store" }
+      ],
+      "return_type": "void",
+      "async": true,
+      "description": "Append an event for a workflow step. Events are stored in insertion order."
+    },
+    {
+      "name": "load",
+      "params": [
+        { "name": "workflow_id", "type": "string", "required": true, "description": "Identifier of the workflow execution" }
+      ],
+      "return_type": "list<dict>",
+      "async": true,
+      "description": "Load all events for a workflow in insertion order. Returns an empty list if no events exist for the given workflow_id."
+    },
+    {
+      "name": "truncate",
+      "params": [
+        { "name": "workflow_id", "type": "string", "required": true, "description": "Identifier of the workflow execution to clear" }
+      ],
+      "return_type": "void",
+      "async": true,
+      "description": "Remove all events for a workflow."
+    }
+  ],
+  "behavioral_expectations": [
+    "Must implement structural subtyping (Protocol) — no explicit inheritance required",
+    "Must be thread-safe — the event store may be shared across concurrent async tasks",
+    "All methods are async — storage operations may involve I/O",
+    "append() must preserve insertion order — load() returns events in the order they were appended",
+    "load() must return an empty list for unknown workflow_ids, never raise",
+    "truncate() must be idempotent — calling on an already-empty or unknown workflow_id must not raise",
+    "Event dicts must be stored as-is without modification (no schema enforcement on event payloads)",
+    "Implementations must support concurrent appends to different workflow_ids without data corruption"
+  ]
+}

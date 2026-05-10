@@ -1,0 +1,40 @@
+{
+  "name": "IAgentAdapter",
+  "description": "Generic port for external agent backend adapters. Defines the structural contract for integrating external agent backends (e.g. Codex, Claude Agent SDK, OpenClaw, A2A) into the workflow engine. Provides a mid-level abstraction for agent-style interactions that may involve tool use, sandboxed execution, and structured output.",
+  "methods": [
+    {
+      "name": "execute",
+      "params": [
+        { "name": "prompt", "type": "string", "required": true },
+        { "name": "model", "type": "Optional<string>", "required": false },
+        { "name": "sandbox", "type": "string", "required": false, "default": "read-only" },
+        { "name": "tools", "type": "Optional<list<string>>", "required": false },
+        { "name": "output_schema", "type": "Optional<dict>", "required": false }
+      ],
+      "return_type": "AgentResult",
+      "async": true,
+      "description": "Execute a prompt against the agent backend. Sends a prompt to the external agent and waits for a complete result. The agent may use tools, modify files in a sandbox, and return structured output."
+    },
+    {
+      "name": "stream",
+      "params": [
+        { "name": "prompt", "type": "string", "required": true },
+        { "name": "model", "type": "Optional<string>", "required": false },
+        { "name": "sandbox", "type": "string", "required": false, "default": "read-only" },
+        { "name": "tools", "type": "Optional<list<string>>", "required": false }
+      ],
+      "return_type": "AsyncGenerator<dict, null>",
+      "async": true,
+      "description": "Stream events from the agent backend. Sends a prompt to the external agent and yields structured event dicts as they arrive. Each event is a dict with at minimum a 'type' key. Useful for real-time progress monitoring and incremental output display."
+    }
+  ],
+  "behavioral_expectations": [
+    "Must implement structural subtyping (Protocol) — no explicit inheritance required",
+    "execute() must return a complete AgentResult with exit_code (integer), output (string), events (list of dicts), files_changed (list of strings), usage (dict), and agent_id (string)",
+    "stream() must yield structured event dicts, not raw text chunks",
+    "sandbox parameter must accept one of: 'read-only', 'workspace-write', 'danger-full-access'",
+    "When model is null/None, the adapter must fall back to its configured default model",
+    "When tools is null/None, the adapter must fall back to its configured default tool set",
+    "Implementations must handle agent backend failures gracefully and surface them in AgentResult"
+  ]
+}

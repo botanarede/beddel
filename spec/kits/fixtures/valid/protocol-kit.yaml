@@ -1,0 +1,16 @@
+name: protocol-mock-kit
+version: "0.1.0"
+description: "Protocol category kit with IMCPClient"
+author: "Beddel Team"
+adapters:
+  - port: IMCPClient
+    implementation: MockMCPClient
+    description: "Mock MCP client adapter for testing"
+targets:
+  python:
+    module: "beddel_protocol_mock"
+    dependencies:
+      - "mcp>=1.0"
+    adapters:
+      - port: IMCPClient
+        target: "beddel_protocol_mock.client:MockMCPClient"

@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "file_write input",
+  "description": "Input parameters for the file_write builtin tool.",
+  "type": "object",
+  "properties": {
+    "path": {
+      "type": "string",
+      "description": "Relative file path to write."
+    },
+    "content": {
+      "type": "string",
+      "description": "String content to write."
+    }
+  },
+  "required": [
+    "path",
+    "content"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,25 @@
+name: serve-mock-kit
+version: "0.1.0"
+description: "Serve category kit with tools and workflows"
+author: "Beddel Team"
+tools:
+  - name: create-handler
+    target: "serve_mock.tools:create_handler"
+    description: "Factory for workflow-to-endpoint handlers"
+    category: "serving"
+  - name: sse-adapter
+    target: "serve_mock.tools:sse_adapter"
+    description: "SSE streaming adapter"
+    category: "serving"
+workflows:
+  - name: serve-workflow
+    path: "workflows/serve.yaml"
+    description: "Main serving workflow"
+  - name: health-check
+    path: "workflows/health.yaml"
+targets:
+  python:
+    module: "beddel_serve_mock"
+    dependencies:
+      - "fastapi>=0.100"
+      - "sse-starlette>=1.6"

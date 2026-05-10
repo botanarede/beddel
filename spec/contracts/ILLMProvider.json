@@ -1,0 +1,36 @@
+{
+  "name": "ILLMProvider",
+  "description": "Contract for LLM provider adapters. Implementations bridge the domain core to a specific LLM backend (e.g. LiteLLM, OpenAI, Anthropic). The llm primitive reads the provider instance from context.deps.llm_provider.",
+  "methods": [
+    {
+      "name": "complete",
+      "params": [
+        { "name": "model", "type": "string", "required": true },
+        { "name": "messages", "type": "list<dict>", "required": true },
+        { "name": "kwargs", "type": "dict", "required": false, "description": "Additional provider-specific parameters (temperature, max_tokens, top_p, etc.)" }
+      ],
+      "return_type": "dict",
+      "async": true,
+      "description": "Send a single-turn completion request to the LLM. Returns a dict containing at minimum a 'content' key with the model's response text. May include 'usage', 'model', or 'finish_reason'."
+    },
+    {
+      "name": "stream",
+      "params": [
+        { "name": "model", "type": "string", "required": true },
+        { "name": "messages", "type": "list<dict>", "required": true },
+        { "name": "kwargs", "type": "dict", "required": false, "description": "Additional provider-specific parameters (temperature, max_tokens, top_p, etc.)" }
+      ],
+      "return_type": "AsyncGenerator<string, null>",
+      "async": true,
+      "description": "Stream completion tokens from the LLM. Yields string chunks of the model's response as they arrive."
+    }
+  ],
+  "behavioral_expectations": [
+    "Must use abstract base class inheritance (ABC) — concrete implementations must subclass ILLMProvider",
+    "complete() must return a dict with at least a 'content' key containing the response text",
+    "stream() must yield string chunks, not structured objects",
+    "Messages must follow chat-style format with at least 'role' and 'content' keys per message",
+    "Must raise AdapterError when the LLM provider call fails",
+    "Provider-specific parameters (temperature, max_tokens, etc.) are passed via kwargs and must not cause errors if unsupported"
+  ]
+}

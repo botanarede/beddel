@@ -1,0 +1,130 @@
+# =============================================================================
+# Beddel CMS — Discovery Assistant
+# =============================================================================
+#
+# Interactive assistant that helps iterate on the Beddel CMS design.
+# Reads memory.json for context continuity across sessions.
+# Uses Gemini Flash for cost efficiency during discovery phase.
+#
+# Primitives used: llm (×2), output-generator (×1)
+# Memory: file-based (memory.json in same directory)
+#
+# Usage:
+#   beddel run spec/fixtures/dogfooding/beddel-cms/cms-discovery-assistant.yaml \
+#     -i question="Should we keep Firebase Hosting or move to Cloudflare Pages?" \
+#     -i context="We need CDN, custom domains, and preview deploys"
+#
+# Alternative (via kiro-cli for richer models):
+#   kiro-cli chat --no-interactive -a --model claude-sonnet-4.6 \
+#     "Read spec/fixtures/dogfooding/beddel-cms/DISCOVERY.md and memory.json, \
+#      then answer: <question>"
+#
+# =============================================================================
+
+id: cms_discovery_assistant
+name: Beddel CMS Discovery Assistant
+description: >
+  Helps iterate on the Beddel CMS architecture by loading prior decisions
+  from memory.json, analyzing the question in context of the existing
+  bonar-cms codebase, and producing actionable recommendations.
+version: "1.0"
+
+input_schema:
+  type: object
+  properties:
+    question:
+      type: string
+      description: The design question or decision to analyze
+    context:
+      type: string
+      description: Additional context or constraints for the question
+  required:
+    - question
+
+steps:
+  # Step 1 — Analyze the question with full project context
+  - id: analyze
+    primitive: llm
+    config:
+      model: gemini/gemini-2.0-flash
+      prompt: >
+        You are a senior architect helping design "Beddel CMS" — a multi-tenant
+        static site CMS platform built on top of the Beddel workflow engine.
+
+        PRIOR DECISIONS AND CONTEXT:
+        The existing system (Bonar CMS) uses:
+        - Next.js monorepo with SSG export per tenant
+        - Firebase Hosting for static serving
+        - Firestore for multi-tenant data (customers/{token}/tables/{token}/{table})
+        - bonarjs-sdk with Clean Architecture (core/interfaces/infrastructure/presentation)
+        - Firebase Auth + AppCheck for security
+        - Postmark for email dispatch
+
+        Beddel provides:
+        - Workflow engine with primitives (llm, tool, guardrail, decide, call-agent, output-generator)
+        - Adapters (tier-router, budget-enforcer, approval-gate, state-store, memory, knowledge, pii)
+        - Kits (tools-http, tools-shell, tools-file, serve-fastapi, observability-otel)
+
+        The migration strategy is phased:
+        Phase 1: Wrap existing system with Beddel workflows (no breaking changes)
+        Phase 2: Add AI layer (content generation, moderation, brand compliance)
+        Phase 3: Monetize (Stripe billing, self-service onboarding)
+        Phase 4: Decouple SDK (standalone npm package, multi-backend support)
+
+        QUESTION: $input.question
+
+        ADDITIONAL CONTEXT: $input.context
+
+        Provide:
+        1. A clear recommendation with rationale
+        2. Trade-offs and alternatives considered
+        3. Impact on the phased migration plan
+        4. Concrete next steps
+      temperature: 0.4
+      max_tokens: 1500
+
+  # Step 2 — Generate a memory entry for this decision
+  - id: memory_entry
+    primitive: llm
+    config:
+      model: gemini/gemini-2.0-flash
+      prompt: >
+        Based on this analysis, generate a JSON object for appending to memory.json.
+        Format:
+        {
+          "timestamp": "<ISO 8601>",
+          "phase": "discovery",
+          "topic": "<short topic>",
+          "decisions": ["<decision 1>", ...],
+          "findings": ["<finding 1>", ...],
+          "open_questions": ["<question 1>", ...]
+        }
+
+        Analysis: $stepResult.analyze.content
+        Original question: $input.question
+
+        Return ONLY the JSON object, no markdown fences.
+      temperature: 0.1
+      max_tokens: 500
+
+  # Step 3 — Render the final output
+  - id: report
+    primitive: output-generator
+    config:
+      template: |
+        # Beddel CMS — Discovery Session
+
+        ## Question
+        $input.question
+
+        ## Analysis
+        $stepResult.analyze.content
+
+        ## Memory Entry (append to memory.json)
+        ```json
+        $stepResult.memory_entry.content
+        ```
+
+        ---
+        _Beddel CMS Discovery Assistant v1.0_
+      format: markdown

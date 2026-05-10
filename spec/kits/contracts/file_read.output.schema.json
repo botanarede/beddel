@@ -1,0 +1,6 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "file_read output",
+  "description": "Output for the file_read builtin tool. Returns file content as a string.",
+  "type": "string"
+}

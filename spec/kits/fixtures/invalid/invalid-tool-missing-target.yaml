@@ -1,0 +1,6 @@
+# Invalid: tool declaration has 'name' but no 'target' field
+name: "my-kit"
+version: "1.0.0"
+description: "A kit with a tool missing its target"
+tools:
+  - name: "my-tool"
