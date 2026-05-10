@@ -1,0 +1,11 @@
+{
+  "name": "@beddel/pii-google-dlp",
+  "version": "0.1.0",
+  "description": "Google Cloud DLP PII tokenizer adapter for Beddel",
+  "type": "module",
+  "main": "src/index.ts",
+  "peerDependencies": {
+    "@google-cloud/dlp": "^5.0"
+  },
+  "license": "MIT"
+}

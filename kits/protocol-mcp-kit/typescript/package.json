@@ -1,0 +1,16 @@
+{
+  "name": "@beddel/protocol-mcp",
+  "version": "0.1.0",
+  "description": "MCP client adapter for Beddel (stdio + SSE/HTTP transport)",
+  "type": "module",
+  "exports": {
+    ".": "./src/mcp-stdio-client.ts",
+    "./sse": "./src/mcp-sse-client.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0"
+  },
+  "peerDependencies": {
+    "@beddel/core": ">=0.1.0"
+  }
+}

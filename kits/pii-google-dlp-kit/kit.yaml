@@ -1,0 +1,20 @@
+name: pii-google-dlp-kit
+version: 0.1.0
+description: Google Cloud DLP PII tokenizer adapter for Beddel
+author: Beddel Team
+adapters:
+- port: IPIITokenizer
+  implementation: GoogleDLPTokenizer
+  description: PII detection and tokenization via Google Cloud DLP API
+targets:
+  python:
+    status: planned
+    implementation_path: ./python/src/beddel_pii_google_dlp/__init__.py
+  typescript:
+    status: implemented
+    package: '@beddel/pii-google-dlp'
+    dependencies:
+    - '@google-cloud/dlp: ^5.0'
+    adapters:
+    - port: IPIITokenizer
+      target: ./src/tokenizer.ts:GoogleDLPTokenizer

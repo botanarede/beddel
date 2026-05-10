@@ -1,0 +1,11 @@
+{
+  "name": "@beddel/memory-vertex",
+  "version": "0.1.0",
+  "description": "Google Vertex AI Memory Bank adapter for Beddel",
+  "type": "module",
+  "main": "src/index.ts",
+  "peerDependencies": {
+    "@google-cloud/vertexai": "^1.0"
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,20 @@
+name: persistence-sqlite-kit
+version: 0.1.0
+description: SQLite-backed IEventStore adapter for durable execution
+author: Beddel Team
+adapters:
+- port: IEventStore
+  implementation: SQLiteEventStore
+  description: SQLite-backed event store with exactly-once semantics
+targets:
+  python:
+    status: planned
+    implementation_path: ./python/src/beddel_persistence_sqlite/__init__.py
+  typescript:
+    status: implemented
+    package: '@beddel/persistence-sqlite'
+    dependencies:
+    - 'better-sqlite3: ^11.0'
+    adapters:
+    - port: IEventStore
+      target: ./src/sqlite-event-store.ts:SQLiteEventStore

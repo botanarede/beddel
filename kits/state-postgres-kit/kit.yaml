@@ -1,0 +1,20 @@
+name: state-postgres-kit
+version: 0.1.0
+description: PostgreSQL state persistence adapter for Beddel
+author: Beddel Team
+adapters:
+- port: IStateStore
+  implementation: PostgresStateStore
+  description: Workflow state persistence via PostgreSQL
+targets:
+  python:
+    status: planned
+    implementation_path: ./python/src/beddel_state_postgres/__init__.py
+  typescript:
+    status: implemented
+    package: '@beddel/state-postgres'
+    dependencies:
+    - 'pg: ^8.0'
+    adapters:
+    - port: IStateStore
+      target: ./src/state-store.ts:PostgresStateStore

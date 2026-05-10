@@ -1,0 +1,13 @@
+{
+  "name": "@beddel/serve-express",
+  "version": "0.1.0",
+  "description": "Express.js HTTP server adapter for Beddel TypeScript SDK workflows",
+  "type": "module",
+  "main": "./src/index.ts",
+  "dependencies": {
+    "express": "^4.21.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0"
+  }
+}

@@ -1,0 +1,22 @@
+name: provider-gemini-adk-kit
+version: 0.1.0
+description: Google Gemini ADK direct LLM adapter for TypeScript
+author: Beddel Team
+adapters:
+- port: ILLMProvider
+  implementation: GeminiADKAdapter
+  description: Direct Google Gemini API calls via @google/generative-ai
+targets:
+  python:
+    status: planned
+    implementation_path: ./python/src/beddel_provider_gemini_adk/__init__.py
+    dev_note: See peer kit provider-gemini-kit for prior art using google-generativeai. Python implementation should use the
+      google-adk package for symmetry with the TS @google/adk dependency.
+  typescript:
+    status: implemented
+    package: '@beddel/provider-gemini-adk'
+    dependencies:
+    - '@google/generative-ai: ^0.24'
+    adapters:
+    - port: ILLMProvider
+      target: ./src/adapter.ts:GeminiADKAdapter

@@ -1,0 +1,10 @@
+{
+  "name": "@beddel/provider-gemini-adk",
+  "version": "0.1.0",
+  "description": "Google Gemini ADK direct LLM adapter for Beddel TypeScript SDK",
+  "type": "module",
+  "main": "./src/index.ts",
+  "dependencies": {
+    "@google/generative-ai": "^0.24.0"
+  }
+}
