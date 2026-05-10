@@ -99,7 +99,7 @@ export class CodexAgentAdapter implements IAgentAdapter {
 			}
 
 			child.stderr?.on("data", (chunk: Buffer) => {
-				stderr += chunk.toString();
+				stderr = (stderr + chunk.toString()).slice(-1000);
 			});
 
 			const exitCode = await new Promise<number>((resolve) => {

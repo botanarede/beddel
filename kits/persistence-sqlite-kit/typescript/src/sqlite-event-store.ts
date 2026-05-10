@@ -64,7 +64,7 @@ export class SQLiteEventStore {
 		return rows.map((row) => ({
 			event_type: row.event_type as string,
 			step_id: row.step_id as string,
-			data: JSON.parse(row.data_json as string),
+			data: (() => { try { return JSON.parse(row.data_json as string); } catch { return null; } })(),
 			timestamp: row.timestamp as number,
 		})) as BeddelEvent[];
 	}

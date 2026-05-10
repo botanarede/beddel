@@ -55,16 +55,22 @@ def validate_schema(manifests: list[tuple[str, dict, Path]]) -> int:
     schema = json.loads(SCHEMA_PATH.read_text())
     validator = Draft202012Validator(schema)
     errors = 0
+    failed_kits: list[str] = []
     for name, data, path in manifests:
         kit_errors = list(validator.iter_errors(data))
         if kit_errors:
             errors += len(kit_errors)
+            failed_kits.append(name)
             for err in kit_errors:
                 loc = "/".join(str(x) for x in err.absolute_path) or "<root>"
                 print(f"::error file={path}::[{name}] {loc}: {err.message}", file=sys.stderr)
         else:
             print(f"  ✓ {name}")
-    print(f"\nSchema validation: {len(manifests) - errors // max(1, errors)} kits ok, {errors} errors")
+    passed = len(manifests) - len(failed_kits)
+    if errors == 0:
+        print(f"\nAll {len(manifests)} kits passed schema validation.")
+    else:
+        print(f"\nFAILED: {len(failed_kits)} kit(s) failed schema validation ({errors} total errors).", file=sys.stderr)
     return 0 if errors == 0 else 1
 
 
@@ -73,16 +79,19 @@ def validate_parity(manifests: list[tuple[str, dict, Path]]) -> int:
     print("Phase 2: parity-check")
     print("=" * 60)
     errors = 0
+    failed_kits: list[str] = []
     kit_names = {name for name, _, _ in manifests}
 
     for name, data, path in manifests:
         targets = data.get("targets") or {}
+        kit_errors = 0
 
         # Rule 1: both blocks present
         for lang in ("python", "typescript"):
             if lang not in targets:
                 print(f"::error file={path}::[{name}] missing targets.{lang} block", file=sys.stderr)
                 errors += 1
+                kit_errors += 1
                 continue
 
             block = targets[lang] or {}
@@ -92,6 +101,7 @@ def validate_parity(manifests: list[tuple[str, dict, Path]]) -> int:
             if status is not None and status not in VALID_STATUSES:
                 print(f"::error file={path}::[{name}] invalid targets.{lang}.status={status!r}; must be one of {sorted(VALID_STATUSES)}", file=sys.stderr)
                 errors += 1
+                kit_errors += 1
 
             # Rule 3: peer-kit reference resolution (when status=unavailable)
             if status == "unavailable":
@@ -101,11 +111,17 @@ def validate_parity(manifests: list[tuple[str, dict, Path]]) -> int:
                     if peer not in kit_names:
                         print(f"::error file={path}::[{name}] targets.{lang}.unavailable_reason references peer kit {peer!r} which does not exist in kits/", file=sys.stderr)
                         errors += 1
+                        kit_errors += 1
 
-        if errors == 0 or all(name not in str(e) for e in []):
+        if kit_errors == 0:
             print(f"  ✓ {name}")
+        else:
+            failed_kits.append(name)
 
-    print(f"\nParity check: {len(manifests)} kits inspected, {errors} errors")
+    if errors == 0:
+        print(f"\nAll {len(manifests)} kits passed parity checks.")
+    else:
+        print(f"\nFAILED: {len(failed_kits)} kit(s) failed parity checks ({errors} total errors).", file=sys.stderr)
     return 0 if errors == 0 else 1
 
 
@@ -130,7 +146,9 @@ def main() -> int:
         rc |= validate_parity(manifests)
 
     if rc == 0:
-        print(f"\n✓ all checks passed across {len(manifests)} kits")
+        print(f"\nAll {len(manifests)} kits passed schema + parity checks.")
+    else:
+        print(f"\nFAILED: validation completed with errors across {len(manifests)} kits.", file=sys.stderr)
     return rc
 
 

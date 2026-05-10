@@ -93,7 +93,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
 	private async getClient(): Promise<AnthropicClient> {
 		if (this.client) return this.client;
 		const { default: Anthropic } = await import("@anthropic-ai/sdk");
-		this.client = new Anthropic({ apiKey: this.apiKey }) as unknown as AnthropicClient;
+		this.client = new Anthropic({ apiKey: this.apiKey }) as AnthropicClient;
 		return this.client;
 	}
 
