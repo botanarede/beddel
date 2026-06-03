@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Beddel</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0a0a0f;color:#e0e0e0;min-height:100vh;display:flex;align-items:flex-start;justify-content:center;padding:2rem}
+#app{max-width:640px;width:100%}
+.card{background:#13131c;border:1px solid #23233a;border-radius:12px;padding:2rem;margin-bottom:1rem;box-shadow:0 8px 32px rgba(0,0,0,.4)}
+h1{font-size:2rem;margin-bottom:.75rem;color:#fff}
+h2{font-size:1.6rem;margin-bottom:.6rem;color:#fff}
+h3{font-size:1.25rem;margin-bottom:.5rem;color:#fff}
+p{margin-bottom:.9rem;color:#b0b0c0;line-height:1.5}
+pre{background:#07070d;border:1px solid #23233a;border-radius:8px;padding:1rem;overflow-x:auto;margin-bottom:1rem}
+code{font-family:"Fira Code",ui-monospace,monospace;font-size:.85rem;color:#8be9c0;white-space:pre-wrap;word-break:break-word}
+label{display:block;font-size:.85rem;color:#9090b0;margin:1rem 0 .35rem}
+input[type=text],select{width:100%;padding:.6rem .8rem;border:1px solid #2a2a44;border-radius:6px;background:#07070d;color:#e0e0e0;font-size:.95rem;outline:none}
+input[type=text]:focus,select:focus{border-color:#6366f1}
+select{appearance:none;-webkit-appearance:none;cursor:pointer}
+button{margin-top:1.25rem;width:100%;padding:.75rem;border:none;border-radius:6px;font-size:1rem;font-weight:600;cursor:pointer;transition:opacity .15s}
+button:hover{opacity:.9}
+button:disabled{opacity:.5;cursor:not-allowed}
+.btn-primary{background:#6366f1;color:#fff}
+.btn-secondary{background:#2a2a44;color:#e0e0e0}
+.launch-item{display:flex;justify-content:space-between;align-items:center;padding:.85rem 1rem;border:1px solid #23233a;border-radius:8px;margin-bottom:.6rem;cursor:pointer;transition:border-color .15s}
+.launch-item:hover{border-color:#6366f1}
+.launch-item .meta{font-size:.8rem;color:#7070a0}
+.muted{color:#7070a0;font-size:.85rem}
+.error{color:#ff7a7a}
+#stream{font-family:"Fira Code",ui-monospace,monospace;font-size:.8rem;color:#8be9c0;white-space:pre-wrap;margin-top:.5rem}
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid #2a2a44;border-top-color:#6366f1;border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:.5rem}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+(function () {
+  "use strict";
+  var app = document.getElementById("app");
+  var state = { workflowId: null, inputs: {}, lastConfig: "", abort: null };
+
+  function el(tag, attrs, children) {
+    var e = document.createElement(tag);
+    attrs = attrs || {};
+    for (var k in attrs) {
+      if (k === "class") e.className = attrs[k];
+      else if (k === "text") e.textContent = attrs[k];
+      else e.setAttribute(k, attrs[k]);
+    }
+    (children || []).forEach(function (c) { if (c) e.appendChild(c); });
+    return e;
+  }
+
+  function clear() { app.innerHTML = ""; }
+
+  function inputKey(id) {
+    return String(id || "").replace(/-(input|select|textinput)$/i, "").replace(/-/g, "_");
+  }
+
+  // --- Component rendering -------------------------------------------------
+  function renderText(c) {
+    var p = c.props || {}, v = (p.variant || "body1").toLowerCase();
+    if (v === "h1" || v === "h2" || v === "h3") return el(v, { text: p.content || "" });
+    if (v === "code") return el("pre", {}, [el("code", { text: p.content || "" })]);
+    return el("p", { text: p.content || "" });
+  }
+
+  function renderInput(c) {
+    var p = c.props || {};
+    var inp = el("input", { type: "text", id: "f_" + c.id, placeholder: p.placeholder || "" });
+    inp.dataset.key = inputKey(c.id);
+    return el("div", {}, [el("label", { text: p.label || c.id }), inp]);
+  }
+
+  function renderSelect(c) {
+    var p = c.props || {};
+    var sel = el("select", { id: "f_" + c.id });
+    sel.dataset.key = inputKey(c.id);
+    (p.options || []).forEach(function (o) {
+      sel.appendChild(el("option", { value: o.value, text: o.label }));
+    });
+    return el("div", {}, [el("label", { text: p.label || c.id }), sel]);
+  }
+
+  function isFormSurface(components) {
+    return components.some(function (c) { return c.type === "TextInput" || c.type === "Select"; });
+  }
+
+  function collectInputs(card) {
+    var out = {};
+    card.querySelectorAll("[data-key]").forEach(function (n) { out[n.dataset.key] = n.value; });
+    return out;
+  }
+
+  function renderSurface(components) {
+    var card = el("div", { class: "card" });
+    var asForm = isFormSurface(components);
+    var hasButton = false;
+
+    components.forEach(function (c) {
+      if (c.type === "Text") card.appendChild(renderText(c));
+      else if (c.type === "TextInput") card.appendChild(renderInput(c));
+      else if (c.type === "Select") card.appendChild(renderSelect(c));
+      else if (c.type === "Button") {
+        hasButton = true;
+        var p = c.props || {};
+        var cls = (p.variant === "secondary") ? "btn-secondary" : "btn-primary";
+        var btn = el("button", { class: cls, text: p.label || "Submit" });
+        btn.onclick = function () { onAction(asForm, card); };
+        card.appendChild(btn);
+      }
+    });
+
+    if (asForm && !hasButton) {
+      var b = el("button", { class: "btn-primary", text: "Continue" });
+      b.onclick = function () { onAction(true, card); };
+      card.appendChild(b);
+    }
+
+    // Capture generated config text (code block) for the apply action.
+    if (!asForm) {
+      var codeEl = card.querySelector("code");
+      if (codeEl) state.lastConfig = codeEl.textContent;
+    }
+
+    clear();
+    app.appendChild(card);
+  }
+
+  function onAction(isForm, card) {
+    if (isForm) {
+      state.inputs = collectInputs(card);
+      runWorkflow(state.workflowId, state.inputs, false);
+    } else {
+      var inputs = Object.assign({}, state.inputs, { apply: true, config_json: state.lastConfig });
+      runWorkflow(state.workflowId, inputs, false);
+    }
+  }
+
+  function showError(msg) {
+    clear();
+    app.appendChild(el("div", { class: "card" }, [
+      el("h3", { text: "Error" }),
+      el("p", { class: "error", text: msg || "Something went wrong." }),
+      (function () { var b = el("button", { class: "btn-secondary", text: "Back" }); b.onclick = loadLauncher; return b; })(),
+    ]));
+  }
+
+  function showLoading(label) {
+    clear();
+    var card = el("div", { class: "card" });
+    card.appendChild(el("p", {}, [el("span", { class: "spinner" }), document.createTextNode(label || "Working…")]));
+    var stream = el("div", { id: "stream" });
+    card.appendChild(stream);
+    app.appendChild(card);
+  }
+
+  // --- SSE workflow execution ---------------------------------------------
+  function runWorkflow(id, inputs, stopAtForm) {
+    if (state.abort) state.abort.abort();
+    var controller = new AbortController();
+    state.abort = controller;
+    showLoading(stopAtForm ? "Loading form…" : "Generating…");
+
+    fetch("/workflows/" + encodeURIComponent(id) + "/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
+      body: JSON.stringify(inputs || {}),
+      signal: controller.signal,
+    }).then(function (resp) {
+      if (!resp.ok) throw new Error("Server returned " + resp.status);
+      var reader = resp.body.getReader();
+      var dec = new TextDecoder();
+      var buf = "";
+
+      function pump(res) {
+        if (res.done) return;
+        buf += dec.decode(res.value, { stream: true });
+        var frames = buf.split("\n\n");
+        buf = frames.pop();
+        for (var i = 0; i < frames.length; i++) {
+          if (handleFrame(frames[i], stopAtForm, controller)) return;
+        }
+        return reader.read().then(pump);
+      }
+      return reader.read().then(pump);
+    }).catch(function (err) {
+      if (err.name === "AbortError") return;
+      showError(err.message);
+    });
+  }
+
+  function handleFrame(frame, stopAtForm, controller) {
+    var event = "", data = "";
+    frame.split("\n").forEach(function (line) {
+      if (line.indexOf("event:") === 0) event = line.slice(6).trim();
+      else if (line.indexOf("data:") === 0) data += line.slice(5).trim();
+    });
+    if (!event) return false;
+
+    if (event === "error") {
+      var e = {};
+      try { e = JSON.parse(data); } catch (x) {}
+      controller.abort();
+      showError(e.message || "Workflow error");
+      return true;
+    }
+    if (event === "a2ui_surface") {
+      var payload;
+      try { payload = JSON.parse(data); } catch (x) { return false; }
+      var surf = (payload.data && payload.data.surfaceUpdate) || {};
+      var comps = surf.components || [];
+      if (isFormSurface(comps)) {
+        if (stopAtForm) { renderSurface(comps); controller.abort(); return true; }
+        return false; // skip form surfaces on the run pass
+      }
+      renderSurface(comps);
+      return false;
+    }
+    if (event === "text_chunk") {
+      var s = document.getElementById("stream");
+      var t = "";
+      try { t = (JSON.parse(data).data || {}).text || ""; } catch (x) {}
+      if (s) s.textContent += t;
+    }
+    return false;
+  }
+
+  // --- Launcher ------------------------------------------------------------
+  function loadLauncher() {
+    state = { workflowId: null, inputs: {}, lastConfig: "", abort: null };
+    clear();
+    app.appendChild(el("div", { class: "card" }, [
+      el("h1", { text: "Beddel" }),
+      el("p", { text: "Pick a workflow to get started." }),
+      el("div", { id: "list" }, [el("p", { class: "muted", text: "Loading workflows…" })]),
+    ]));
+
+    fetchWorkflows().then(function (list) {
+      var box = document.getElementById("list");
+      box.innerHTML = "";
+      if (!list.length) { box.appendChild(el("p", { class: "muted", text: "No workflows available." })); return; }
+      list.forEach(function (w) {
+        var item = el("div", { class: "launch-item" }, [
+          el("span", { text: w.name || w.id }),
+          el("span", { class: "meta", text: w.id }),
+        ]);
+        item.onclick = function () { state.workflowId = w.id; runWorkflow(w.id, {}, true); };
+        box.appendChild(item);
+      });
+    });
+  }
+
+  function fetchWorkflows() {
+    return fetch("/workflows").then(function (r) {
+      if (!r.ok) throw new Error();
+      return r.json();
+    }).catch(function () {
+      return fetch("/api/flows").then(function (r) { return r.ok ? r.json() : []; }).catch(function () { return []; });
+    }).then(function (list) {
+      return (list || []).map(function (w) { return { id: w.id, name: w.name }; });
+    });
+  }
+
+  loadLauncher();
+})();
+</script>
+</body>
+</html>
