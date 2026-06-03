@@ -133,7 +133,7 @@ button:disabled{opacity:.5;cursor:not-allowed}
   function onAction(isForm, card) {
     if (isForm) {
       state.inputs = collectInputs(card);
-      runWorkflow(state.workflowId, state.inputs, false);
+      runWorkflow(state.workflowId, Object.assign({}, state.inputs, { generate: true }), false);
     } else {
       var inputs = Object.assign({}, state.inputs, { apply: true, config_json: state.lastConfig });
       runWorkflow(state.workflowId, inputs, false);
@@ -179,7 +179,7 @@ button:disabled{opacity:.5;cursor:not-allowed}
       function pump(res) {
         if (res.done) return;
         buf += dec.decode(res.value, { stream: true });
-        var frames = buf.split("\n\n");
+        var frames = buf.split(/\r?\n\r?\n/);
         buf = frames.pop();
         for (var i = 0; i < frames.length; i++) {
           if (handleFrame(frames[i], stopAtForm, controller)) return;
@@ -195,7 +195,7 @@ button:disabled{opacity:.5;cursor:not-allowed}
 
   function handleFrame(frame, stopAtForm, controller) {
     var event = "", data = "";
-    frame.split("\n").forEach(function (line) {
+    frame.split(/\r?\n/).forEach(function (line) {
       if (line.indexOf("event:") === 0) event = line.slice(6).trim();
       else if (line.indexOf("data:") === 0) data += line.slice(5).trim();
     });
