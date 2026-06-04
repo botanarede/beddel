@@ -1,9 +1,13 @@
 import { describe, it, expect, vi } from "vitest";
 
-vi.mock("firebase-admin/firestore.js", () => ({
-  Firestore: class {},
-  FieldPath: {
-    documentId: vi.fn(() => "__id__"),
+vi.mock("firebase-admin", () => ({
+  apps: [{}],
+  app: vi.fn(() => ({})),
+  initializeApp: vi.fn(() => ({})),
+  firestore: {
+    FieldPath: {
+      documentId: vi.fn(() => "__id__"),
+    },
   },
 }));
 

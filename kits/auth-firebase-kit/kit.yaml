@@ -25,7 +25,7 @@ targets:
     - pydantic>=2.0
     - fastapi>=0.100
   typescript:
-    status: planned
+    status: implemented
     implementation_path: ./typescript/src/
     dev_note: TS implementation routes through firebase-admin/auth (verifyIdToken),
       firebase-admin/app-check (verifyToken) and @google-cloud/firestore. See peer

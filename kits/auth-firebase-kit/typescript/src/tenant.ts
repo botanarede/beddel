@@ -1,5 +1,7 @@
-import { Firestore, FieldPath } from "firebase-admin/firestore.js";
+import * as admin from "firebase-admin";
 import type { TenantMembership } from "./types.js";
+
+type Firestore = admin.firestore.Firestore;
 
 export async function resolveTenant(
   uid: string,
@@ -30,12 +32,14 @@ export async function resolveTenant(
     };
   }
 
-  // Discovery mode: collection group query
-  const query = db
+  // Discovery mode: collection group query filtered by document id
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const result = await (db as any)
     .collectionGroup("members")
-    .where(FieldPath.documentId(), "==", uid)
-    .limit(1);
-  const result = await query.get();
+    .where(admin.firestore.FieldPath.documentId(), "==", uid)
+    .limit(1)
+    .get();
+
   if (result.empty) {
     throw Object.assign(new Error(`No tenant membership found for user ${uid}`), {
       code: 404,

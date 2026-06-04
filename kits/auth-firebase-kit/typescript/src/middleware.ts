@@ -1,7 +1,9 @@
-import { Firestore } from "firebase-admin/firestore.js";
+import * as admin from "firebase-admin";
 import type { AuthContext } from "./types.js";
 import { verifyIdToken, verifyAppCheck } from "./verify.js";
 import { resolveTenant } from "./tenant.js";
+
+type Firestore = admin.firestore.Firestore;
 
 export type AuthenticatedHandler = (
   req: Request,
