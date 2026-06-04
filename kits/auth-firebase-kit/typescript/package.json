@@ -1,0 +1,20 @@
+{
+  "name": "@beddel/auth-firebase",
+  "version": "0.1.0",
+  "description": "Firebase Auth + App Check + tenant resolution for Beddel backends",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "firebase-admin": ">=6.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "vitest": "^3.0.0",
+    "@types/node": "^22.0.0",
+    "firebase-admin": "^6.5.0"
+  }
+}
