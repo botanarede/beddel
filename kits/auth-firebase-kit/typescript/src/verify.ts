@@ -1,12 +1,10 @@
-import { getApps, initializeApp } from "firebase-admin/app.js";
-import { getAuth } from "firebase-admin/auth.js";
-import { getAppCheck } from "firebase-admin/app-check.js";
+import * as admin from "firebase-admin";
 import type { AppCheckClaims, DecodedToken } from "./types.js";
 
-function ensureApp(projectId?: string) {
-  if (getApps().length > 0) return getApps()[0]!;
+function ensureApp(projectId?: string): admin.app.App {
+  if (admin.apps.length > 0) return admin.app();
   const resolved = projectId ?? process.env["GOOGLE_CLOUD_PROJECT"];
-  return initializeApp(resolved ? { projectId: resolved } : undefined);
+  return admin.initializeApp(resolved ? { projectId: resolved } : undefined);
 }
 
 export async function verifyIdToken(
@@ -15,7 +13,7 @@ export async function verifyIdToken(
 ): Promise<DecodedToken> {
   if (!token) throw new Error("ID token must not be empty");
   const app = ensureApp(projectId);
-  const claims = await getAuth(app).verifyIdToken(token);
+  const claims = await admin.auth(app).verifyIdToken(token);
   return {
     uid: claims.uid,
     email: claims.email,
@@ -37,11 +35,15 @@ export async function verifyAppCheck(
 ): Promise<AppCheckClaims> {
   if (!token) throw new Error("App Check token must not be empty");
   const app = ensureApp(projectId);
-  const claims = await getAppCheck(app).verifyToken(token);
+  const claims = await (admin as unknown as {
+    appCheck(app: admin.app.App): {
+      verifyToken(t: string): Promise<Record<string, unknown>>;
+    };
+  }).appCheck(app).verifyToken(token);
   return {
-    sub: claims.appId,
-    appId: claims.appId,
-    iss: (claims as unknown as { iss?: string }).iss ?? "",
-    exp: (claims as unknown as { exp?: number }).exp ?? 0,
+    sub: String(claims["appId"] ?? claims["sub"] ?? ""),
+    appId: String(claims["appId"] ?? ""),
+    iss: String(claims["iss"] ?? ""),
+    exp: Number(claims["exp"] ?? 0),
   };
 }

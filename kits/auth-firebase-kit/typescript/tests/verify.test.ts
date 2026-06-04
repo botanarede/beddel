@@ -1,22 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("firebase-admin/app.js", () => ({
-  getApps: vi.fn(() => [{}]),
-  initializeApp: vi.fn(() => ({})),
-}));
-
 const mockVerifyIdToken = vi.fn();
 const mockVerifyToken = vi.fn();
 
-vi.mock("firebase-admin/auth.js", () => ({
-  getAuth: vi.fn(() => ({ verifyIdToken: mockVerifyIdToken })),
-}));
+vi.mock("firebase-admin", () => {
+  const apps = [{}];
+  return {
+    apps,
+    app: vi.fn(() => ({})),
+    initializeApp: vi.fn(() => ({})),
+    auth: vi.fn(() => ({ verifyIdToken: mockVerifyIdToken })),
+    appCheck: vi.fn(() => ({ verifyToken: mockVerifyToken })),
+  };
+});
 
-vi.mock("firebase-admin/app-check.js", () => ({
-  getAppCheck: vi.fn(() => ({ verifyToken: mockVerifyToken })),
-}));
-
-// Dynamic import after mocks
 const { verifyIdToken, verifyAppCheck } = await import("../src/verify.js");
 
 describe("verifyIdToken", () => {

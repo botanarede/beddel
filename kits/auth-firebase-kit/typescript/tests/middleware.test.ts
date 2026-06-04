@@ -1,24 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("firebase-admin/app.js", () => ({
-  getApps: vi.fn(() => [{}]),
-  initializeApp: vi.fn(() => ({})),
-}));
-
 const mockVerifyIdToken = vi.fn();
 const mockVerifyToken = vi.fn();
 
-vi.mock("firebase-admin/auth.js", () => ({
-  getAuth: vi.fn(() => ({ verifyIdToken: mockVerifyIdToken })),
-}));
-
-vi.mock("firebase-admin/app-check.js", () => ({
-  getAppCheck: vi.fn(() => ({ verifyToken: mockVerifyToken })),
-}));
-
-vi.mock("firebase-admin/firestore.js", () => ({
-  Firestore: class {},
-  FieldPath: { documentId: vi.fn(() => "__id__") },
+vi.mock("firebase-admin", () => ({
+  apps: [{}],
+  app: vi.fn(() => ({})),
+  initializeApp: vi.fn(() => ({})),
+  auth: vi.fn(() => ({ verifyIdToken: mockVerifyIdToken })),
+  appCheck: vi.fn(() => ({ verifyToken: mockVerifyToken })),
+  firestore: {
+    FieldPath: { documentId: vi.fn(() => "__id__") },
+  },
 }));
 
 const { withFirebaseAuth } = await import("../src/middleware.js");
