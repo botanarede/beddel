@@ -1,0 +1,32 @@
+name: auth-firebase-kit
+version: 0.1.0
+description: Firebase Auth token verification + App Check + tenant resolution for Beddel backends
+author: Beddel Team
+integrations:
+- name: verify_id_token
+  module: verify
+  description: Verify Firebase Auth ID token (JWT)
+- name: verify_app_check
+  module: verify
+  description: Verify Firebase App Check attestation
+- name: resolve_tenant
+  module: tenant
+  description: Resolve tenant membership from Firestore
+- name: firebase_auth_dependency
+  module: middleware
+  description: FastAPI dependency for auth + tenant scoping
+targets:
+  python:
+    status: implemented
+    module: beddel_auth_firebase
+    dependencies:
+    - firebase-admin>=6.5.0
+    - google-cloud-firestore>=2.16.0
+    - pydantic>=2.0
+    - fastapi>=0.100
+  typescript:
+    status: planned
+    implementation_path: ./typescript/src/
+    dev_note: TS implementation routes through firebase-admin/auth (verifyIdToken),
+      firebase-admin/app-check (verifyToken) and @google-cloud/firestore. See peer
+      story FB1.2.
