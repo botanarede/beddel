@@ -40,7 +40,7 @@ button:disabled{opacity:.5;cursor:not-allowed}
 (function () {
   "use strict";
   var app = document.getElementById("app");
-  var state = { workflowId: null, inputs: {}, lastConfig: "", abort: null };
+  var state = { workflowId: null, inputs: {}, lastConfig: "", abort: null, inputSchema: null, isA2UIForm: false };
 
   function el(tag, attrs, children) {
     var e = document.createElement(tag);
@@ -71,6 +71,7 @@ button:disabled{opacity:.5;cursor:not-allowed}
   function renderInput(c) {
     var p = c.props || {};
     var inp = el("input", { type: "text", id: "f_" + c.id, placeholder: p.placeholder || "" });
+    if (p.value) inp.value = p.value;
     inp.dataset.key = inputKey(c.id);
     return el("div", {}, [el("label", { text: p.label || c.id }), inp]);
   }
@@ -82,6 +83,7 @@ button:disabled{opacity:.5;cursor:not-allowed}
     (p.options || []).forEach(function (o) {
       sel.appendChild(el("option", { value: o.value, text: o.label }));
     });
+    if (p.value) sel.value = p.value;
     return el("div", {}, [el("label", { text: p.label || c.id }), sel]);
   }
 
@@ -109,7 +111,8 @@ button:disabled{opacity:.5;cursor:not-allowed}
         var p = c.props || {};
         var cls = (p.variant === "secondary") ? "btn-secondary" : "btn-primary";
         var btn = el("button", { class: cls, text: p.label || "Submit" });
-        btn.onclick = function () { onAction(asForm, card); };
+        var btnId = c.id || "";
+        btn.onclick = (function (bid) { return function () { onAction(asForm, card, bid); }; })(btnId);
         card.appendChild(btn);
       }
     });
@@ -130,10 +133,15 @@ button:disabled{opacity:.5;cursor:not-allowed}
     app.appendChild(card);
   }
 
-  function onAction(isForm, card) {
+  function onAction(isForm, card, btnId) {
+    if (btnId === "back-btn") { loadLauncher(); return; }
     if (isForm) {
       state.inputs = collectInputs(card);
-      runWorkflow(state.workflowId, Object.assign({}, state.inputs, { generate: true }), false);
+      // A2UI-controlled workflows need generate:true to gate LLM execution.
+      // Simple workflows (auto-generated schema form) run directly with inputs.
+      var payload = Object.assign({}, state.inputs);
+      if (state.isA2UIForm) payload.generate = true;
+      runWorkflow(state.workflowId, payload, false);
     } else {
       var inputs = Object.assign({}, state.inputs, { apply: true, config_json: state.lastConfig });
       runWorkflow(state.workflowId, inputs, false);
@@ -158,6 +166,31 @@ button:disabled{opacity:.5;cursor:not-allowed}
     app.appendChild(card);
   }
 
+  // --- Schema-based form auto-generation -----------------------------------
+  function renderSchemaForm(schema) {
+    if (!schema || !schema.properties) { showError("Workflow has no input_schema."); return; }
+    state.isA2UIForm = false;
+    var components = [];
+    var props = schema.properties;
+    components.push({ type: "Text", id: "auto-title", props: { content: "Inputs", variant: "h3" } });
+    for (var key in props) {
+      if (!props.hasOwnProperty(key)) continue;
+      var f = props[key];
+      if (f.type === "boolean") continue; // internal flags
+      if (f.enum) {
+        components.push({ type: "Select", id: key + "-select", props: {
+          label: f.description || key, options: f.enum.map(function (v) { return { label: v, value: v }; })
+        }});
+      } else {
+        components.push({ type: "TextInput", id: key + "-input", props: {
+          label: f.description || key, placeholder: f.default != null ? String(f.default) : ""
+        }});
+      }
+    }
+    components.push({ type: "Button", id: "run-btn", props: { label: "Run", variant: "primary" } });
+    renderSurface(components);
+  }
+
   // --- SSE workflow execution ---------------------------------------------
   function runWorkflow(id, inputs, stopAtForm) {
     if (state.abort) state.abort.abort();
@@ -175,20 +208,43 @@ button:disabled{opacity:.5;cursor:not-allowed}
       var reader = resp.body.getReader();
       var dec = new TextDecoder();
       var buf = "";
+      var gotForm = false;
 
       function pump(res) {
-        if (res.done) return;
+        if (res.done) {
+          // Stream ended — if pass 1 and no form was captured, auto-generate from schema
+          if (stopAtForm && !gotForm && state.inputSchema) {
+            renderSchemaForm(state.inputSchema);
+          }
+          // Stream ended on pass 2 — show accumulated text as result card
+          if (!stopAtForm) {
+            var streamEl = document.getElementById("stream");
+            var text = streamEl ? streamEl.textContent : "";
+            if (text) {
+              renderSurface([
+                { type: "Text", id: "result-title", props: { content: "Result", variant: "h3" } },
+                { type: "Text", id: "result-body", props: { content: text, variant: "code" } },
+                { type: "Button", id: "back-btn", props: { label: "Back", variant: "secondary" } },
+              ]);
+            }
+          }
+          return;
+        }
         buf += dec.decode(res.value, { stream: true });
         var frames = buf.split(/\r?\n\r?\n/);
         buf = frames.pop();
         for (var i = 0; i < frames.length; i++) {
-          if (handleFrame(frames[i], stopAtForm, controller)) return;
+          var result = handleFrame(frames[i], stopAtForm, controller);
+          if (result === "form") { gotForm = true; return; }
+          if (result === "error") return;
         }
         return reader.read().then(pump);
       }
       return reader.read().then(pump);
     }).catch(function (err) {
       if (err.name === "AbortError") return;
+      // AbortError from form capture is expected — check if we got a form
+      if (stopAtForm && !err.message) return;
       showError(err.message);
     });
   }
@@ -206,15 +262,15 @@ button:disabled{opacity:.5;cursor:not-allowed}
       try { e = JSON.parse(data); } catch (x) {}
       controller.abort();
       showError(e.message || "Workflow error");
-      return true;
+      return "error";
     }
     if (event === "a2ui_surface") {
       var payload;
       try { payload = JSON.parse(data); } catch (x) { return false; }
-      var surf = (payload.data && payload.data.surfaceUpdate) || {};
+      var surf = (payload.data && payload.data.surfaceUpdate) || payload.surfaceUpdate || {};
       var comps = surf.components || [];
       if (isFormSurface(comps)) {
-        if (stopAtForm) { renderSurface(comps); controller.abort(); return true; }
+        if (stopAtForm) { state.isA2UIForm = true; renderSurface(comps); controller.abort(); return "form"; }
         return false; // skip form surfaces on the run pass
       }
       renderSurface(comps);
@@ -231,7 +287,7 @@ button:disabled{opacity:.5;cursor:not-allowed}
 
   // --- Launcher ------------------------------------------------------------
   function loadLauncher() {
-    state = { workflowId: null, inputs: {}, lastConfig: "", abort: null };
+    state = { workflowId: null, inputs: {}, lastConfig: "", abort: null, inputSchema: null, isA2UIForm: false };
     clear();
     app.appendChild(el("div", { class: "card" }, [
       el("h1", { text: "Beddel" }),
@@ -244,11 +300,34 @@ button:disabled{opacity:.5;cursor:not-allowed}
       box.innerHTML = "";
       if (!list.length) { box.appendChild(el("p", { class: "muted", text: "No workflows available." })); return; }
       list.forEach(function (w) {
+        var desc = w.description ? el("span", { class: "muted", text: " — " + w.description.slice(0, 60) }) : null;
         var item = el("div", { class: "launch-item" }, [
-          el("span", { text: w.name || w.id }),
+          el("span", {}, [document.createTextNode(w.name || w.id), desc].filter(Boolean)),
           el("span", { class: "meta", text: w.id }),
         ]);
-        item.onclick = function () { state.workflowId = w.id; runWorkflow(w.id, {}, true); };
+        item.onclick = function () {
+          state.workflowId = w.id;
+          state.inputSchema = w.input_schema || null;
+          // If workflow has input_schema with properties, show auto-generated form first.
+          // The user fills it, then we run the workflow with their inputs.
+          // Workflows that control their own form (A2UI) have empty/no input_schema
+          // or use internal flags (generate=true) to gate LLM execution.
+          var schema = w.input_schema;
+          if (schema && schema.properties && Object.keys(schema.properties).length > 0) {
+            // Check if it looks like an A2UI-controlled workflow (has boolean flags like generate/apply)
+            var hasFlags = schema.properties.generate || schema.properties.apply || schema.properties.save || schema.properties.submit;
+            if (hasFlags) {
+              // A2UI workflow: SSE pass 1 gets the custom form (flags gate LLM execution)
+              runWorkflow(w.id, {}, true);
+            } else {
+              // Simple workflow: auto-generate form from schema, run after submit
+              renderSchemaForm(schema);
+            }
+          } else {
+            // No schema → run directly
+            runWorkflow(w.id, {}, false);
+          }
+        };
         box.appendChild(item);
       });
     });
@@ -261,7 +340,9 @@ button:disabled{opacity:.5;cursor:not-allowed}
     }).catch(function () {
       return fetch("/api/flows").then(function (r) { return r.ok ? r.json() : []; }).catch(function () { return []; });
     }).then(function (list) {
-      return (list || []).map(function (w) { return { id: w.id, name: w.name }; });
+      return (list || []).map(function (w) {
+        return { id: w.id, name: w.name, description: w.description || "", input_schema: w.input_schema || null };
+      });
     });
   }
 

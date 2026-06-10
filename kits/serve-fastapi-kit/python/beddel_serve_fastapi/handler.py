@@ -20,6 +20,7 @@ Requires the ``default`` extra: ``pip install beddel[default]``.
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncGenerator
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -148,26 +149,103 @@ def create_beddel_handler(
 
     router = APIRouter()
 
+    # Detect if workflow has any streaming steps
+    _has_stream_steps = any(
+        getattr(s, "stream", False) for s in workflow.steps
+    )
+
     @router.post("/", response_model=None)
     async def _handle_workflow(request: Request) -> EventSourceResponse | JSONResponse:
-        """Execute the workflow and stream results as SSE events.
+        """Execute the workflow and return results.
 
-        Accepts a JSON body as workflow inputs.  On success, returns an
-        ``EventSourceResponse`` streaming BeddelEvents.  On error, returns
-        a structured JSON response with ``code``, ``message``, and
+        For workflows without ``stream: true`` steps, executes synchronously
+        and returns collected events as SSE frames (one-shot flush).
+        For streaming workflows, uses the async ``execute_stream()`` path.
+
+        Accepts a JSON body as workflow inputs.  On error, returns a
+        structured JSON response with ``code``, ``message``, and
         ``details`` fields.
         """
         try:
             body: Any = await request.json()
             inputs: dict[str, Any] = body if isinstance(body, dict) else {}
-            events = executor.execute_stream(workflow, inputs)
-            sse_stream = BeddelSSEAdapter.stream_events(events)
-            return EventSourceResponse(sse_stream)
+
+            if _has_stream_steps:
+                # True streaming path (for workflows with stream: true steps)
+                events = executor.execute_stream(workflow, inputs)
+                sse_stream = BeddelSSEAdapter.stream_events(events)
+                return EventSourceResponse(sse_stream)
+
+            # Sync path: execute() and build events from result
+            from beddel.domain.models import BeddelEvent, EventType
+
+            result = await executor.execute(workflow, inputs)
+
+            # Build events from execution result
+            collected: list[BeddelEvent] = []
+
+            collected.append(BeddelEvent(
+                event_type=EventType.WORKFLOW_START,
+                data={"workflow_id": workflow.id, "inputs": inputs},
+            ))
+
+            # Step events from results
+            for step in workflow.steps:
+                step_result = result.get("step_results", {}).get(step.id)
+                # Skip steps that were not executed (condition was false)
+                if step_result is None:
+                    continue
+                # Filter out SKIPPED sentinel (non-serializable)
+                from beddel.domain.executor import SKIPPED
+                if step_result is SKIPPED:
+                    continue
+                collected.append(BeddelEvent(
+                    event_type=EventType.STEP_START,
+                    step_id=step.id,
+                    data={"primitive": step.primitive},
+                ))
+                # Emit text_chunk for LLM string results (renderer only handles
+                # text_chunk and a2ui_surface — step_end content is ignored)
+                result_content = ""
+                if isinstance(step_result, dict) and "content" in step_result:
+                    result_content = step_result["content"]
+                elif isinstance(step_result, str):
+                    result_content = step_result
+                if result_content and result_content.strip():
+                    collected.append(BeddelEvent(
+                        event_type=EventType.TEXT_CHUNK,
+                        step_id=step.id,
+                        data={"text": result_content},
+                    ))
+                collected.append(BeddelEvent(
+                    event_type=EventType.STEP_END,
+                    step_id=step.id,
+                    data={"result": step_result},
+                ))
+
+            # A2UI surface events from metadata
+            a2ui_surfaces = result.get("metadata", {}).pop("_a2ui_surfaces", [])
+            for surface_data in a2ui_surfaces:
+                collected.append(BeddelEvent(
+                    event_type=EventType.A2UI_SURFACE,
+                    data=surface_data if isinstance(surface_data, dict) else {},
+                ))
+
+            collected.append(BeddelEvent(
+                event_type=EventType.WORKFLOW_END,
+                data={"workflow_id": workflow.id},
+            ))
+
+            # Return as SSE (one-shot flush)
+            async def _sync_sse() -> AsyncGenerator[dict[str, str], None]:
+                for event in collected:
+                    json_str = event.model_dump_json()
+                    yield {"event": event.event_type.value, "data": json_str}
+
+            return EventSourceResponse(_sync_sse())
+
         except BeddelError as exc:
             status_code = 422 if isinstance(exc, _CLIENT_ERRORS) else 500
-            # Sanitize: exclude provider_error from details and strip
-            # upstream exception text from the message to avoid leaking
-            # credentials or internal state to HTTP clients.
             safe_details = {k: v for k, v in exc.details.items() if k != "provider_error"}
             safe_message = exc.message.split(":")[0] if status_code == 500 else exc.message
             return JSONResponse(
