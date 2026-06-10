@@ -15,6 +15,7 @@ targets:
     - google-auth>=2.0
     adapters:
     - port: IMCPClient
+      name: gcp-mcp
       target: beddel_protocol_gcp_mcp.client:GCPMCPClient
   typescript:
     status: planned

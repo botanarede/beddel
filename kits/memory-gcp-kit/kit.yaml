@@ -14,6 +14,7 @@ targets:
     - google-cloud-aiplatform>=1.80.0
     adapters:
     - port: IMemoryProvider
+      name: gcp-memory
       target: beddel_memory_gcp.provider:GCPMemoryProvider
   typescript:
     status: planned
