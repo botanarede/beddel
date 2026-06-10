@@ -44,9 +44,12 @@ class LangfuseTracerAdapter(ITracer[LangfuseSpan]):
     raises exceptions or blocks workflow execution.
 
     Args:
-        public_key: Langfuse project public key.
-        secret_key: Langfuse project secret key.
-        host: Langfuse server URL.  Defaults to ``"http://localhost:3000"``
+        public_key: Langfuse project public key.  Falls back to
+            ``LANGFUSE_PUBLIC_KEY`` environment variable when ``None``.
+        secret_key: Langfuse project secret key.  Falls back to
+            ``LANGFUSE_SECRET_KEY`` environment variable when ``None``.
+        host: Langfuse server URL.  Falls back to ``LANGFUSE_HOST``
+            environment variable, defaulting to ``"http://localhost:3000"``
             for self-hosted instances.
         enabled: When ``False``, the adapter behaves as a no-op without
             attempting to connect to Langfuse.
@@ -62,12 +65,24 @@ class LangfuseTracerAdapter(ITracer[LangfuseSpan]):
 
     def __init__(
         self,
-        public_key: str,
-        secret_key: str,
-        host: str = "http://localhost:3000",
+        public_key: str | None = None,
+        secret_key: str | None = None,
+        host: str | None = None,
         *,
         enabled: bool = True,
     ) -> None:
+        import os
+
+        resolved_public = public_key or os.environ.get("LANGFUSE_PUBLIC_KEY")
+        resolved_secret = secret_key or os.environ.get("LANGFUSE_SECRET_KEY")
+        resolved_host = host or os.environ.get("LANGFUSE_HOST", "http://localhost:3000")
+
+        # Auto-disable when credentials are missing
+        if not resolved_public or not resolved_secret:
+            self._enabled = False
+            self._client = None
+            return
+
         self._enabled = enabled
         self._client: Any = None  # Langfuse | None
 
@@ -78,9 +93,9 @@ class LangfuseTracerAdapter(ITracer[LangfuseSpan]):
             from langfuse import Langfuse
 
             self._client = Langfuse(
-                public_key=public_key,
-                secret_key=secret_key,
-                host=host,
+                public_key=resolved_public,
+                secret_key=resolved_secret,
+                host=resolved_host,
             )
         except Exception:
             _logger.warning(
