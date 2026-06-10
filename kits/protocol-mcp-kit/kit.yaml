@@ -18,8 +18,10 @@ targets:
     - jsonschema>=4.0
     adapters:
     - port: IMCPClient
+      name: mcp-stdio
       target: beddel_protocol_mcp.stdio_client:StdioMCPClient
     - port: IMCPClient
+      name: mcp-sse
       target: beddel_protocol_mcp.sse_client:SSEMCPClient
   typescript:
     status: implemented
