@@ -58,7 +58,8 @@ class A2AAgentAdapter:
 
     Args:
         agent_url: Base URL of the A2A-compliant agent endpoint.
-            Trailing slashes are stripped.
+            Trailing slashes are stripped.  Falls back to the
+            ``A2A_AGENT_URL`` environment variable when ``None``.
         auth_token: Optional Bearer token for authentication.  Falls
             back to the ``A2A_AUTH_TOKEN`` environment variable when
             ``None``.
@@ -67,13 +68,15 @@ class A2AAgentAdapter:
 
     def __init__(
         self,
-        agent_url: str,
+        agent_url: str | None = None,
         auth_token: str | None = None,
         timeout: float = 120.0,
     ) -> None:
-        self._agent_url = agent_url.rstrip("/")
+        resolved_url = agent_url or os.environ.get("A2A_AGENT_URL")
+        self._agent_url = resolved_url.rstrip("/") if resolved_url else ""
         self._auth_token = auth_token or os.environ.get("A2A_AUTH_TOKEN")
         self._timeout = timeout
+        self._configured = bool(resolved_url)
 
     # ------------------------------------------------------------------
     # Internal helpers
