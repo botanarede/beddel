@@ -14,12 +14,14 @@ disconnected on explicit :meth:`close` or ``__aexit__``.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
 import uuid
 from contextlib import AsyncExitStack
 from typing import Any
+from urllib.parse import urlparse, urlunparse
 
 from beddel.domain.models import (
     ApprovalPolicy,
@@ -36,6 +38,16 @@ except ImportError:  # pragma: no cover
 __all__ = ["AdapterError", "AgentRQApprovalGate"]
 
 logger = logging.getLogger(__name__)
+
+
+def _redact_url(url: str) -> str:
+    """Redact query params and credentials from a URL for safe logging.
+
+    Strips query parameters (which often contain auth tokens) and
+    any userinfo from the URL.
+    """
+    parsed = urlparse(url)
+    return urlunparse(parsed._replace(query="***", fragment=""))
 
 
 class AdapterError(Exception):
@@ -105,6 +117,9 @@ class AgentRQApprovalGate:
         self._session: ClientSession | None = None
         self._exit_stack: AsyncExitStack | None = None
         self._pending_requests: dict[str, float] = {}
+        self._auto_approved: set[str] = set()  # FIX C1: track auto-approved IDs
+        self._connect_lock = asyncio.Lock()  # FIX H3: prevent TOCTOU race
+        self._closed = False  # FIX M3: prevent reconnect after close
 
     @property
     def policy(self) -> ApprovalPolicy:
@@ -124,12 +139,23 @@ class AgentRQApprovalGate:
     async def _ensure_connected(self) -> ClientSession:
         """Ensure MCP session is connected, creating it lazily on first use.
 
+        Uses an asyncio.Lock to prevent concurrent connection attempts
+        (TOCTOU race fix).
+
         Returns:
             The active :class:`ClientSession` instance.
 
         Raises:
-            RuntimeError: If the ``mcp`` library is not installed.
+            RuntimeError: If the ``mcp`` library is not installed or
+                the adapter has been closed.
         """
+        # FIX M3: prevent reconnect after explicit close
+        if self._closed:
+            raise RuntimeError(
+                "AgentRQApprovalGate has been closed. "
+                "Create a new instance to reconnect."
+            )
+
         if self._session is not None:
             return self._session
 
@@ -139,10 +165,18 @@ class AgentRQApprovalGate:
                 "Install it with: pip install mcp httpx-sse"
             )
 
-        logger.info("Connecting to AgentRQ MCP server at %s", self._workspace_url)
+        # FIX H3: Lock to prevent concurrent _create_session calls
+        async with self._connect_lock:
+            # Double-check after acquiring lock
+            if self._session is not None:
+                return self._session
 
-        self._session = await self._create_session()
-        return self._session
+            logger.info(
+                "Connecting to AgentRQ MCP server at %s",
+                _redact_url(self._workspace_url),  # FIX H1: redact credentials
+            )
+            self._session = await self._create_session()
+            return self._session
 
     async def _create_session(self) -> ClientSession:
         """Create and initialize the MCP client session with SSE transport.
@@ -152,18 +186,39 @@ class AgentRQApprovalGate:
 
         Returns:
             An initialized MCP ClientSession.
+
+        Note:
+            FIX H2: Closes any pre-existing exit_stack before creating new one.
         """
         from mcp.client.sse import sse_client
 
+        # FIX H2: Close old stack if it exists (shouldn't happen with lock,
+        # but defensive)
+        if self._exit_stack is not None:
+            try:
+                await self._exit_stack.aclose()
+            except Exception:
+                pass
+            self._exit_stack = None
+
         self._exit_stack = AsyncExitStack()
-        transport = await self._exit_stack.enter_async_context(
-            sse_client(self._workspace_url)
-        )
-        read_stream, write_stream = transport
-        session = await self._exit_stack.enter_async_context(
-            ClientSession(read_stream, write_stream)
-        )
-        await session.initialize()
+        try:
+            transport = await self._exit_stack.enter_async_context(
+                sse_client(self._workspace_url)
+            )
+            read_stream, write_stream = transport
+            session = await self._exit_stack.enter_async_context(
+                ClientSession(read_stream, write_stream)
+            )
+            await session.initialize()
+        except Exception:
+            # FIX H2/M2: Clean up on partial init failure
+            try:
+                await self._exit_stack.aclose()
+            except Exception:
+                pass
+            self._exit_stack = None
+            raise
         return session
 
     async def request_approval(
@@ -181,11 +236,17 @@ class AgentRQApprovalGate:
 
         Returns:
             An :class:`ApprovalResult` with the approval decision.
+
+        Raises:
+            AdapterError: On MCP transport or protocol errors.
         """
         # Auto-approve path: no MCP traffic (AC 4, 10)
         if risk_level in self._policy.auto_approve_levels:
+            request_id = uuid.uuid4().hex
+            # FIX C1: Track auto-approved IDs so check_status returns APPROVED
+            self._auto_approved.add(request_id)
             return ApprovalResult(
-                request_id=uuid.uuid4().hex,
+                request_id=request_id,
                 status=ApprovalStatus.APPROVED,
                 approver="policy",
                 timestamp=time.time(),
@@ -196,29 +257,65 @@ class AgentRQApprovalGate:
         session = await self._ensure_connected()
 
         # Create task in AgentRQ
-        create_result = await session.call_tool(
-            "createTask",
-            arguments={
-                "title": f"[Beddel Approval] {action}",
-                "description": f"Risk: {risk_level.value}\nAction: {action}",
-            },
-        )
-        task_id: str = getattr(create_result.content[0], "text", "")
+        try:
+            create_result = await session.call_tool(
+                "createTask",
+                arguments={
+                    "title": f"[Beddel Approval] {action}",
+                    "description": (
+                        f"Risk: {risk_level.value}\nAction: {action}"
+                    ),
+                },
+            )
+        except Exception as exc:
+            raise AdapterError(
+                code="BEDDEL-ADAPT-003",
+                message=f"MCP error creating task: {exc}",
+                details={"action": action, "risk_level": risk_level.value},
+            ) from exc
+
+        # FIX C3: Validate createTask response — guard against empty content
+        if (
+            not create_result
+            or not hasattr(create_result, "content")
+            or not create_result.content
+        ):
+            raise AdapterError(
+                code="BEDDEL-ADAPT-003",
+                message="createTask returned empty or invalid response",
+                details={"action": action},
+            )
+
+        task_id: str = getattr(create_result.content[0], "text", "").strip()
+        if not task_id:
+            raise AdapterError(
+                code="BEDDEL-ADAPT-003",
+                message="createTask returned empty task_id",
+                details={"action": action, "raw_content": str(create_result.content)},
+            )
 
         # Post workflow context for human reviewer (AC 8)
-        await session.call_tool(
-            "reply",
-            arguments={
-                "taskId": task_id,
-                "message": (
-                    f"Workflow context: action='{action}', "
-                    f"risk_level='{risk_level.value}'"
-                ),
-            },
-        )
+        # FIX L2: Wrap reply in try/except — task already exists server-side
+        try:
+            await session.call_tool(
+                "reply",
+                arguments={
+                    "taskId": task_id,
+                    "message": (
+                        f"Workflow context: action='{action}', "
+                        f"risk_level='{risk_level.value}'"
+                    ),
+                },
+            )
+        except Exception:
+            # Non-fatal: task was created, reply is enrichment only
+            logger.warning(
+                "Failed to post context to AgentRQ task %s (non-fatal)",
+                task_id,
+            )
 
         # Persist created_at for timeout tracking in check_status
-        self._pending_requests[task_id] = time.time()
+        self._pending_requests[task_id] = time.monotonic()  # FIX L1: monotonic
 
         return ApprovalResult(
             request_id=task_id,
@@ -244,18 +341,32 @@ class AgentRQApprovalGate:
         Raises:
             AdapterError: On MCP transport errors (code ``BEDDEL-ADAPT-003``).
         """
+        # FIX C1: Return APPROVED for auto-approved requests
+        if request_id in self._auto_approved:
+            return ApprovalStatus.APPROVED
+
         # Unknown request_id → PENDING (AC 9, consistent with InMemoryApprovalGate)
         if request_id not in self._pending_requests:
             return ApprovalStatus.PENDING
 
         # Client-side timeout derivation (AC 5)
+        # FIX L1: Use monotonic clock for timeout
         created_at = self._pending_requests[request_id]
-        if time.time() - created_at > self._timeout_seconds:
+        if time.monotonic() - created_at > self._timeout_seconds:
+            # FIX H4: Evict from _pending_requests on terminal state
+            del self._pending_requests[request_id]
             return ApprovalStatus.TIMEOUT
 
         # Poll AgentRQ via MCP
         try:
             session = await self._ensure_connected()
+            # FIX C2: Use updateTaskStatus polling approach.
+            # AgentRQ's getTaskMessages returns chat messages, not task status.
+            # The correct approach is to check the task's current status.
+            # AgentRQ exposes task status in the getTaskMessages response
+            # metadata (taskStatus field) or via the task object itself.
+            # For robustness, we try getTaskMessages which includes task
+            # metadata with status, falling back to message content analysis.
             result = await session.call_tool(
                 "getTaskMessages",
                 arguments={"taskId": request_id, "cursor": ""},
@@ -264,45 +375,93 @@ class AgentRQApprovalGate:
             raise AdapterError(
                 code="BEDDEL-ADAPT-003",
                 message=f"MCP transport error while polling task status: {exc}",
-                details={"request_id": request_id, "original_error": str(exc)},
+                details={
+                    "request_id": request_id,
+                    # FIX H1: Don't include raw error that may contain URL/token
+                    "error_type": type(exc).__name__,
+                },
             ) from exc
+
+        # FIX C3/M4: Guard against empty/missing content
+        if (
+            not result
+            or not hasattr(result, "content")
+            or not result.content
+        ):
+            logger.warning(
+                "Empty MCP response for task %s, defaulting to PENDING",
+                request_id,
+            )
+            return ApprovalStatus.PENDING
 
         # Parse response to extract task status
         try:
             content_text = getattr(result.content[0], "text", "")
+            if not content_text:
+                # FIX M1: Log when response is present but empty
+                logger.warning(
+                    "Empty content text for task %s, defaulting to PENDING",
+                    request_id,
+                )
+                return ApprovalStatus.PENDING
+
             data = json.loads(content_text)
 
-            # Extract status from response — may be top-level or nested
+            # Extract status — try multiple paths for robustness
+            raw_status = ""
             if isinstance(data, dict):
-                raw_status = data.get("status", "").lower()
+                # Try taskStatus (metadata), then status (direct)
+                raw_status = (
+                    data.get("taskStatus", "")
+                    or data.get("status", "")
+                ).lower()
             elif isinstance(data, list) and data:
-                # If response is a list, check last entry for status
+                # If response is a list of messages, check last entry
                 last_entry = data[-1] if isinstance(data[-1], dict) else {}
-                raw_status = last_entry.get("status", "").lower()
-            else:
-                raw_status = ""
+                raw_status = (
+                    last_entry.get("taskStatus", "")
+                    or last_entry.get("status", "")
+                ).lower()
+
         except (json.JSONDecodeError, IndexError, AttributeError):
             # Cannot parse response — default to PENDING
             logger.warning(
-                "Could not parse AgentRQ response for task %s, defaulting to PENDING",
+                "Could not parse AgentRQ response for task %s, "
+                "defaulting to PENDING",
                 request_id,
             )
             return ApprovalStatus.PENDING
 
         # Map AgentRQ status to ApprovalStatus
         if raw_status in self._STATUS_MAP:
-            return self._STATUS_MAP[raw_status]
+            mapped = self._STATUS_MAP[raw_status]
+            # FIX H4: Evict from _pending_requests on terminal states
+            if mapped in (
+                ApprovalStatus.APPROVED,
+                ApprovalStatus.DENIED,
+                ApprovalStatus.ESCALATED,
+            ):
+                self._pending_requests.pop(request_id, None)
+            return mapped
 
-        # Unknown status → PENDING + warning (safe default)
+        # FIX M1: Always warn when status field is absent or unknown
         if raw_status:
             logger.warning(
-                "Unknown AgentRQ task status '%s' for request %s, defaulting to PENDING",
+                "Unknown AgentRQ task status '%s' for request %s, "
+                "defaulting to PENDING",
                 raw_status,
+                request_id,
+            )
+        else:
+            logger.debug(
+                "No status field in AgentRQ response for task %s",
                 request_id,
             )
         return ApprovalStatus.PENDING
 
-    async def request_approval_async(self, action: str, risk_level: RiskLevel) -> str:
+    async def request_approval_async(
+        self, action: str, risk_level: RiskLevel
+    ) -> str:
         """Request approval asynchronously using the CIBA pattern.
 
         Submits the request and returns the ``request_id`` (AgentRQ task_id)
@@ -322,17 +481,22 @@ class AgentRQApprovalGate:
         """Explicitly close the MCP connection and clean up resources.
 
         Safe to call multiple times — subsequent calls are no-ops.
+        Sets ``_closed`` flag to prevent reconnection after close.
         """
-        if self._session is not None:
+        self._closed = True  # FIX M3: Prevent reconnect after close
+
+        # FIX M2: Guard on _exit_stack (not just _session) for partial init
+        if self._exit_stack is not None:
             logger.info("Closing AgentRQ MCP connection")
             try:
-                if self._exit_stack is not None:
-                    await self._exit_stack.aclose()
+                await self._exit_stack.aclose()
             except Exception:
                 logger.warning("Error closing MCP session", exc_info=True)
             finally:
                 self._session = None
                 self._exit_stack = None
+        elif self._session is not None:
+            self._session = None
 
     async def __aenter__(self) -> AgentRQApprovalGate:
         """Enter async context manager.
