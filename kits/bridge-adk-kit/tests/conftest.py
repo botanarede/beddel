@@ -21,7 +21,7 @@ import pytest
 # ---------------------------------------------------------------------------
 
 _KIT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_KIT_ROOT / "src"))
+sys.path.insert(0, str(_KIT_ROOT / "python"))
 
 
 # ---------------------------------------------------------------------------

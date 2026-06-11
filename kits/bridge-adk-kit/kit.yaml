@@ -14,7 +14,7 @@ targets:
     status: implemented
     module: beddel_bridge_adk
     dependencies:
-    - google-adk>=1.0.0,<2.0.0
+    - google-adk>=2.0.0,<3.0.0
   typescript:
     status: planned
     implementation_path: ./typescript/src/bridge.ts
