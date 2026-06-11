@@ -4,7 +4,7 @@ ADK Bridge — wraps Beddel workflows as ADK FunctionTools.
 
 ## Dependencies
 
-- `google-adk>=1.0.0,<2.0.0`
+- `google-adk>=2.0.0,<3.0.0` (ADK 2.x GA — May 2026)
 
 ## Integrations
 
