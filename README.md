@@ -175,12 +175,6 @@ beddel kit install ./my-custom-kit/
 - [PyPI](https://pypi.org/project/beddel/)
 - [Bug Tracker](https://github.com/botanarede/beddel/issues)
 
-## Stay in the Loop
-
-We write about agent-native patterns, workflow design, and SDK development on Substack.
-
-[![Subscribe on Substack](https://img.shields.io/badge/Subscribe-Substack-orange?style=for-the-badge&logo=substack)](https://beddelprotocol.substack.com/subscribe)
-
 ## License
 
 [MIT](LICENSE)
