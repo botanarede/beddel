@@ -1,0 +1,19 @@
+name: agentrq-approval-kit
+version: 0.1.0
+description: AgentRQ HOTL approval gate adapter for Beddel workflows
+author: Beddel Team
+adapters:
+- port: IApprovalGate
+  implementation: AgentRQApprovalGate
+  description: Human-in-the-loop approval gate via AgentRQ MCP server
+targets:
+  python:
+    status: implemented
+    module: beddel_agentrq_approval
+    dependencies:
+    - mcp>=1.0
+    - httpx-sse>=0.4
+    adapters:
+    - port: IApprovalGate
+      name: agentrq
+      target: beddel_agentrq_approval.adapter:AgentRQApprovalGate

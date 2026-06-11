@@ -22,7 +22,7 @@ targets:
     dependencies:
     - firebase-admin>=6.5.0
     - google-cloud-firestore>=2.16.0
-    - pydantic>=2.0
+    - pydantic>=2.13,<3
     - fastapi>=0.100
   typescript:
     status: implemented
