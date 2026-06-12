@@ -1,0 +1,18 @@
+name: deploy-agent-engine-kit
+version: 0.1.0
+description: Deploy Beddel flows to Vertex AI Agent Engine
+author: Beddel Team
+integrations:
+- name: deploy_flow_to_agent_engine
+  module: deploy
+  description: Deploy a Beddel flow YAML to Vertex AI Agent Engine (in-process)
+- name: check_adc
+  module: adc
+  description: Check ADC configuration and return project/error info
+targets:
+  python:
+    status: implemented
+    module: beddel_deploy_agent_engine
+    dependencies:
+    - google-adk>=2.0.0,<3.0.0
+    - google-cloud-aiplatform[adk,agent_engines]>=1.148.0
