@@ -13,6 +13,7 @@ call to ``query()`` creates a new session.
 from __future__ import annotations
 
 import asyncio
+import os
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -49,6 +50,12 @@ class ClaudeAgentAdapter:
             is aborted.
         permission_mode: Default permission mode for the CLI subprocess.
         cwd: Optional working directory for the CLI subprocess.
+        vertex_project: Optional Google Cloud project ID for Vertex AI.
+        vertex_region: Optional Google Cloud region for Vertex AI.
+        system_prompt: Optional system prompt passed in agent options.
+        thinking: Optional thinking mode (``adaptive``, ``enabled``,
+            or ``disabled``).
+        effort: Optional effort level (``low``, ``medium``, or ``high``).
     """
 
     def __init__(
@@ -58,12 +65,22 @@ class ClaudeAgentAdapter:
         timeout: int = 300,
         permission_mode: str = "bypassPermissions",
         cwd: str | None = None,
+        vertex_project: str | None = None,
+        vertex_region: str | None = None,
+        system_prompt: str | None = None,
+        thinking: str | None = None,
+        effort: str | None = None,
     ) -> None:
         self._model = model
         self._max_turns = max_turns
         self._timeout = timeout
         self._permission_mode = permission_mode
         self._cwd = cwd
+        self._vertex_project = vertex_project
+        self._vertex_region = vertex_region
+        self._system_prompt = system_prompt
+        self._thinking = thinking
+        self._effort = effort
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -122,6 +139,40 @@ class ClaudeAgentAdapter:
             opts["allowed_tools"] = tools
         if output_schema is not None:
             opts["output_format"] = {"type": "json_schema", "schema": output_schema}
+        if self._system_prompt is not None:
+            opts["system_prompt"] = self._system_prompt
+        if self._thinking is not None:
+            from claude_agent_sdk import ThinkingConfig  # type: ignore[import-not-found]
+
+            _thinking_map = {
+                "adaptive": ThinkingConfig.ADAPTIVE,
+                "enabled": ThinkingConfig.ENABLED,
+                "disabled": ThinkingConfig.DISABLED,
+            }
+            opts["thinking"] = _thinking_map[self._thinking]
+        if self._effort is not None:
+            from claude_agent_sdk import EffortLevel  # type: ignore[import-not-found]
+
+            _effort_map = {
+                "low": EffortLevel.LOW,
+                "medium": EffortLevel.MEDIUM,
+                "high": EffortLevel.HIGH,
+            }
+            opts["effort"] = _effort_map[self._effort]
+
+        # Propagate Vertex AI environment variables to the subprocess.
+        vertex_project = self._vertex_project or os.environ.get(
+            "ANTHROPIC_VERTEX_PROJECT_ID"
+        )
+        if vertex_project:
+            vertex_region = self._vertex_region or os.environ.get(
+                "CLOUD_ML_REGION", "us-east5"
+            )
+            opts["env"] = {
+                "CLAUDE_CODE_USE_VERTEX": "1",
+                "ANTHROPIC_VERTEX_PROJECT_ID": vertex_project,
+                "CLOUD_ML_REGION": vertex_region,
+            }
 
         return opts
 

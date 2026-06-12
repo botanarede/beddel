@@ -95,12 +95,30 @@ class ClaudeAgentOptions:
             setattr(self, k, v)
 
 
+class ThinkingConfig:
+    """Mock for ``claude_agent_sdk.ThinkingConfig``."""
+
+    ADAPTIVE = "adaptive"
+    ENABLED = "enabled"
+    DISABLED = "disabled"
+
+
+class EffortLevel:
+    """Mock for ``claude_agent_sdk.EffortLevel``."""
+
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
 # Build the mock module and inject into sys.modules so the adapter
 # can ``import claude_agent_sdk`` at runtime without the real package.
 _mock_sdk = MagicMock()
 _mock_sdk.ClaudeAgentOptions = ClaudeAgentOptions
 _mock_sdk.CLINotFoundError = CLINotFoundError
 _mock_sdk.ProcessError = ProcessError
+_mock_sdk.ThinkingConfig = ThinkingConfig
+_mock_sdk.EffortLevel = EffortLevel
 sys.modules["claude_agent_sdk"] = _mock_sdk
 
 from beddel_agent_claude.adapter import ClaudeAgentAdapter  # noqa: E402, I001
@@ -163,6 +181,30 @@ class TestConstructor:
         assert adapter._permission_mode == "plan"
         assert adapter._cwd == "/tmp/workspace"
 
+    def test_new_optional_params_default_to_none(self) -> None:
+        adapter = ClaudeAgentAdapter()
+
+        assert adapter._vertex_project is None
+        assert adapter._vertex_region is None
+        assert adapter._system_prompt is None
+        assert adapter._thinking is None
+        assert adapter._effort is None
+
+    def test_new_optional_params_stored(self) -> None:
+        adapter = ClaudeAgentAdapter(
+            vertex_project="my-project",
+            vertex_region="us-central1",
+            system_prompt="You are helpful.",
+            thinking="adaptive",
+            effort="high",
+        )
+
+        assert adapter._vertex_project == "my-project"
+        assert adapter._vertex_region == "us-central1"
+        assert adapter._system_prompt == "You are helpful."
+        assert adapter._thinking == "adaptive"
+        assert adapter._effort == "high"
+
 
 # ===================================================================
 # _build_options
@@ -214,6 +256,109 @@ class TestBuildOptions:
         adapter = ClaudeAgentAdapter(model="claude-sonnet-4")
         opts = adapter._build_options(_PROMPT, model="claude-opus-4")
         assert opts["model"] == "claude-opus-4"
+
+    def test_system_prompt_included_when_set(self) -> None:
+        adapter = ClaudeAgentAdapter(system_prompt="Be concise.")
+        opts = adapter._build_options(_PROMPT)
+        assert opts["system_prompt"] == "Be concise."
+
+    def test_system_prompt_excluded_when_none(self) -> None:
+        adapter = ClaudeAgentAdapter()
+        opts = adapter._build_options(_PROMPT)
+        assert "system_prompt" not in opts
+
+    def test_thinking_config_adaptive(self) -> None:
+        adapter = ClaudeAgentAdapter(thinking="adaptive")
+        opts = adapter._build_options(_PROMPT)
+        assert opts["thinking"] == ThinkingConfig.ADAPTIVE
+
+    def test_thinking_config_enabled(self) -> None:
+        adapter = ClaudeAgentAdapter(thinking="enabled")
+        opts = adapter._build_options(_PROMPT)
+        assert opts["thinking"] == ThinkingConfig.ENABLED
+
+    def test_thinking_config_disabled(self) -> None:
+        adapter = ClaudeAgentAdapter(thinking="disabled")
+        opts = adapter._build_options(_PROMPT)
+        assert opts["thinking"] == ThinkingConfig.DISABLED
+
+    def test_thinking_excluded_when_none(self) -> None:
+        adapter = ClaudeAgentAdapter()
+        opts = adapter._build_options(_PROMPT)
+        assert "thinking" not in opts
+
+    def test_effort_level_low(self) -> None:
+        adapter = ClaudeAgentAdapter(effort="low")
+        opts = adapter._build_options(_PROMPT)
+        assert opts["effort"] == EffortLevel.LOW
+
+    def test_effort_level_medium(self) -> None:
+        adapter = ClaudeAgentAdapter(effort="medium")
+        opts = adapter._build_options(_PROMPT)
+        assert opts["effort"] == EffortLevel.MEDIUM
+
+    def test_effort_level_high(self) -> None:
+        adapter = ClaudeAgentAdapter(effort="high")
+        opts = adapter._build_options(_PROMPT)
+        assert opts["effort"] == EffortLevel.HIGH
+
+    def test_effort_excluded_when_none(self) -> None:
+        adapter = ClaudeAgentAdapter()
+        opts = adapter._build_options(_PROMPT)
+        assert "effort" not in opts
+
+    def test_vertex_env_from_constructor_params(self) -> None:
+        adapter = ClaudeAgentAdapter(
+            vertex_project="my-gcp-project",
+            vertex_region="europe-west1",
+        )
+        opts = adapter._build_options(_PROMPT)
+        assert opts["env"] == {
+            "CLAUDE_CODE_USE_VERTEX": "1",
+            "ANTHROPIC_VERTEX_PROJECT_ID": "my-gcp-project",
+            "CLOUD_ML_REGION": "europe-west1",
+        }
+
+    def test_vertex_env_from_environ(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ANTHROPIC_VERTEX_PROJECT_ID", "env-project")
+        monkeypatch.setenv("CLOUD_ML_REGION", "us-central1")
+        adapter = ClaudeAgentAdapter()
+        opts = adapter._build_options(_PROMPT)
+        assert opts["env"] == {
+            "CLAUDE_CODE_USE_VERTEX": "1",
+            "ANTHROPIC_VERTEX_PROJECT_ID": "env-project",
+            "CLOUD_ML_REGION": "us-central1",
+        }
+
+    def test_vertex_env_constructor_overrides_environ(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ANTHROPIC_VERTEX_PROJECT_ID", "env-project")
+        monkeypatch.setenv("CLOUD_ML_REGION", "env-region")
+        adapter = ClaudeAgentAdapter(
+            vertex_project="ctor-project",
+            vertex_region="ctor-region",
+        )
+        opts = adapter._build_options(_PROMPT)
+        assert opts["env"]["ANTHROPIC_VERTEX_PROJECT_ID"] == "ctor-project"
+        assert opts["env"]["CLOUD_ML_REGION"] == "ctor-region"
+
+    def test_vertex_env_defaults_region_to_us_east5(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ANTHROPIC_VERTEX_PROJECT_ID", "proj")
+        monkeypatch.delenv("CLOUD_ML_REGION", raising=False)
+        adapter = ClaudeAgentAdapter()
+        opts = adapter._build_options(_PROMPT)
+        assert opts["env"]["CLOUD_ML_REGION"] == "us-east5"
+
+    def test_vertex_env_excluded_when_not_configured(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("ANTHROPIC_VERTEX_PROJECT_ID", raising=False)
+        adapter = ClaudeAgentAdapter()
+        opts = adapter._build_options(_PROMPT)
+        assert "env" not in opts
 
 
 # ===================================================================
