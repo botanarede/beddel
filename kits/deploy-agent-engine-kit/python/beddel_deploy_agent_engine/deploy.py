@@ -120,8 +120,8 @@ def _build_tool_function(flow_path: Path, metadata: dict[str, Any]) -> Callable[
         f"Execute the '{metadata['name']}' Beddel workflow.\n\n"
         f"    {metadata['description']}\n\n"
         f"    Args:\n" + "\n".join(param_docs) + "\n\n"
-        f"    Returns:\n"
-        f"        dict with step results from the workflow execution."
+        "    Returns:\n"
+        "        dict with step results from the workflow execution."
     )
 
     # Build a proper function with named parameters for ADK
