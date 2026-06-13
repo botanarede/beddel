@@ -30,3 +30,10 @@ def register_static_routes(app: Any) -> None:
     @app.get("/favicon.ico")
     async def _favicon() -> Response:
         return Response(status_code=204)
+
+    # Agent Engine sidebar routes (optional — requires deploy-agent-engine-kit)
+    try:
+        from beddel_serve_fastapi.agent_engine_routes import register_agent_engine_routes
+        register_agent_engine_routes(app)
+    except ImportError:
+        pass
