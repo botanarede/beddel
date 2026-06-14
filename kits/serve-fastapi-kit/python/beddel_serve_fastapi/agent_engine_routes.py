@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import subprocess
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -26,10 +27,57 @@ _check_adc = None
 _vertexai = None
 _agent_engines = None
 
+
+def _fallback_check_adc() -> dict[str, object]:
+    """Inline ADC check when beddel_deploy_agent_engine is not importable."""
+    try:
+        token_result = subprocess.run(
+            ["gcloud", "auth", "application-default", "print-access-token"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except FileNotFoundError:
+        return {
+            "configured": False,
+            "project_id": None,
+            "error": "gcloud CLI not found.",
+        }
+    except (subprocess.TimeoutExpired, Exception) as exc:
+        return {"configured": False, "project_id": None, "error": str(exc)}
+
+    if token_result.returncode != 0:
+        return {
+            "configured": False,
+            "project_id": None,
+            "error": "ADC not configured. Run: gcloud auth application-default login",
+        }
+
+    try:
+        project_result = subprocess.run(
+            ["gcloud", "config", "get-value", "project"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        project_id = project_result.stdout.strip() or None
+    except Exception:  # noqa: BLE001
+        project_id = None
+
+    return {"configured": True, "project_id": project_id, "error": None}
+
+
+# Try importing from the deploy-agent-engine-kit first (preferred).
+# Fall back to importing vertexai directly if the kit package is not on sys.path
+# but vertexai itself is installed in the venv.
 try:
-    from beddel_deploy_agent_engine.adc import check_adc as _check_adc  # type: ignore[import-not-found]
-    import vertexai as _vertexai  # type: ignore[import-not-found]
-    from vertexai import agent_engines as _agent_engines  # type: ignore[import-not-found]
+    from beddel_deploy_agent_engine.adc import check_adc as _check_adc  # type: ignore[import-not-found,no-redef]
+except ImportError:
+    _check_adc = _fallback_check_adc  # type: ignore[assignment]
+
+try:
+    import vertexai as _vertexai  # type: ignore[import-not-found,assignment]
+    from vertexai import agent_engines as _agent_engines  # type: ignore[import-not-found,assignment]
 
     _AVAILABLE = True
 except ImportError:
@@ -42,7 +90,7 @@ def _check_dependencies() -> JSONResponse | None:
         return JSONResponse(
             status_code=503,
             content={
-                "error": "deploy-agent-engine-kit not installed. Run: beddel init"
+                "error": "vertexai not installed. Run: pip install google-cloud-aiplatform"
             },
         )
     assert _check_adc is not None  # type narrowing
@@ -72,7 +120,10 @@ def register_agent_engine_routes(app: Any) -> None:
             project_id = adc_status.get("project_id", "your-project-id")
             _vertexai.init(project=project_id, location="us-central1")
 
-            agents_list = _agent_engines.list()
+            loop = asyncio.get_event_loop()
+            agents_list = await loop.run_in_executor(
+                None, lambda: list(_agent_engines.list())
+            )
             result = []
             for agent in agents_list:
                 result.append(
@@ -165,10 +216,37 @@ async def _stream_query_async(
                 session_id=session_id,
                 message=message,
             ):
-                if hasattr(event, "content") and event.content and event.content.parts:
-                    for part in event.content.parts:
-                        if hasattr(part, "text") and part.text:
-                            queue.put_nowait(part.text)
+                # ADK events can be dicts (google-cloud-aiplatform >=1.45) or
+                # protobuf-like objects (older SDK versions). Handle both.
+                if isinstance(event, dict):
+                    # Check for error events
+                    if "error_code" in event:
+                        error_msg = event.get("error_message", event["error_code"])
+                        queue.put_nowait(f"[Error: {error_msg}]")
+                        continue
+                    # Extract text from dict-based content
+                    content = event.get("content")
+                    if content and isinstance(content, dict):
+                        parts = content.get("parts", [])
+                        for part in parts:
+                            if isinstance(part, dict) and part.get("text"):
+                                queue.put_nowait(part["text"])
+                            elif hasattr(part, "text") and part.text:
+                                queue.put_nowait(part.text)
+                    elif content and hasattr(content, "parts"):
+                        for part in content.parts:
+                            if hasattr(part, "text") and part.text:
+                                queue.put_nowait(part.text)
+                else:
+                    # Object-based event (older SDK / protobuf)
+                    if (
+                        hasattr(event, "content")
+                        and event.content
+                        and event.content.parts
+                    ):
+                        for part in event.content.parts:
+                            if hasattr(part, "text") and part.text:
+                                queue.put_nowait(part.text)
         except Exception:
             queue.put_nowait(None)
             raise
