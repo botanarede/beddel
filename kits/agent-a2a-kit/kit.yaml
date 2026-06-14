@@ -1,11 +1,14 @@
 name: agent-a2a-kit
-version: 0.1.0
-description: A2A Protocol agent adapter implementing IAgentAdapter
+version: 0.1.1
+description: A2A Protocol kit — outbound client adapter + inbound server (bidirectional)
 author: Beddel Team
 adapters:
 - port: IAgentAdapter
   implementation: A2AAgentAdapter
-  description: Agent adapter for A2A Protocol compliant agents
+  description: Agent adapter for A2A Protocol compliant agents (outbound client)
+- port: AgentExecutor
+  implementation: BeddelA2AExecutor
+  description: A2A server exposing Beddel workflows as A2A-compliant agents (inbound server)
 targets:
   python:
     status: implemented
@@ -17,6 +20,9 @@ targets:
     - port: IAgentAdapter
       name: a2a
       target: beddel_agent_a2a.adapter:A2AAgentAdapter
+    - port: AgentExecutor
+      name: a2a-server
+      target: beddel_agent_a2a.server:BeddelA2AExecutor
   typescript:
     status: planned
     implementation_path: ./typescript/src/a2a.ts
