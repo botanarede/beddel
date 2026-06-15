@@ -26,12 +26,10 @@ from a2a.types import (
     AgentCapabilities,
     AgentCard,
     AgentSkill,
-    DataPart,
     Message,
     Part,
     Role,
     TaskState,
-    TextPart,
 )
 
 from beddel.domain.executor import WorkflowExecutor
@@ -46,10 +44,10 @@ __all__ = [
 
 
 def _agent_message(text: str) -> Message:
-    """Create an A2A :class:`Message` with a single :class:`TextPart`."""
+    """Create an A2A :class:`Message` with a single text :class:`Part`."""
     return Message(
-        role=Role.agent,
-        parts=[Part(root=TextPart(text=text))],
+        role=Role.ROLE_AGENT,
+        parts=[Part(text=text)],
         message_id=str(uuid.uuid4()),
     )
 
@@ -64,13 +62,9 @@ def _extract_workflow_params(
 ) -> tuple[str | None, dict[str, Any] | None]:
     """Extract ``workflow_id`` and ``inputs`` from A2A message parts.
 
-    Scans the message's :class:`DataPart` entries for keys ``workflow_id``
-    and ``inputs``.  Both may live in the same ``DataPart`` or in separate
-    ones.
-
-    The A2A SDK wraps concrete part types in a :class:`Part` discriminated
-    union.  We unwrap via ``part.root`` to access the underlying
-    :class:`DataPart`.
+    Scans the message's parts for structured data containing keys
+    ``workflow_id`` and ``inputs``.  In a2a-sdk 1.x, parts use a proto
+    oneof with ``text``, ``data``, ``raw``, or ``url`` fields.
 
     Returns:
         A ``(workflow_id, inputs)`` tuple.  Either value may be ``None``
@@ -83,11 +77,13 @@ def _extract_workflow_params(
         return workflow_id, inputs
 
     for part in context.message.parts:
-        # Unwrap the Part discriminated union to get the concrete type.
-        inner = part.root if hasattr(part, "root") else part
-        if not isinstance(inner, DataPart):
+        # In proto-based a2a-sdk 1.x, Part has a `data` field (google.protobuf.Value)
+        if not part.HasField("data"):
             continue
-        data = inner.data
+        # Convert proto Value to Python dict
+        from google.protobuf.json_format import MessageToDict
+
+        data = MessageToDict(part.data)
         if "workflow_id" in data and workflow_id is None:
             workflow_id = str(data["workflow_id"])
         if "inputs" in data and inputs is None:
@@ -185,21 +181,21 @@ class BeddelA2AExecutor(AgentExecutor):
         elif et == EventType.STEP_START:
             step_name = event.step_id or "unknown"
             await updater.update_status(
-                TaskState.working,
+                TaskState.TASK_STATE_WORKING,
                 message=_agent_message(f"Running step: {step_name}"),
             )
 
         elif et == EventType.TEXT_CHUNK:
             chunk = str(event.data.get("chunk", ""))
             await updater.add_artifact(
-                parts=[Part(root=TextPart(text=chunk))],
+                parts=[Part(text=chunk)],
                 append=True,
             )
 
         elif et == EventType.STEP_END:
             result_data = event.data.get("result", "")
             await updater.add_artifact(
-                parts=[Part(root=TextPart(text=str(result_data)))],
+                parts=[Part(text=str(result_data))],
                 name=event.step_id,
             )
 
@@ -231,8 +227,10 @@ def build_agent_card(
 
     Returns:
         A fully populated :class:`AgentCard` ready to be served at
-        ``/.well-known/agent.json``.
+        ``/.well-known/agent-card.json``.
     """
+    from a2a.types import AgentInterface
+
     skills: list[AgentSkill] = []
 
     for wf_id, (workflow, _executor) in workflows.items():
@@ -252,8 +250,10 @@ def build_agent_card(
     return AgentCard(
         name="Beddel Agent",
         description="A2A-compliant agent powered by Beddel workflows.",
-        url=f"http://{host}:{port}",
         version="1.0.0",
+        supported_interfaces=[
+            AgentInterface(url=f"http://{host}:{port}"),
+        ],
         skills=skills,
         capabilities=AgentCapabilities(streaming=True),
         default_input_modes=["application/json"],

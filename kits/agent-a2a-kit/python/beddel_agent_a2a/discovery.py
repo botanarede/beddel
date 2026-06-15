@@ -1,38 +1,45 @@
-"""A2A Agent Card discovery.
+"""A2A Agent Card discovery using a2a-sdk.
 
-Fetches and parses the ``.well-known/agent.json`` Agent Card from a
-remote A2A-compliant agent endpoint.
+Fetches and parses the Agent Card from a remote A2A-compliant agent
+endpoint using the official :class:`~a2a.client.A2ACardResolver`.
+
+Primary path: ``/.well-known/agent-card.json`` (current A2A spec).
+Fallback path: ``/.well-known/agent.json`` (legacy compatibility).
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from beddel.domain.errors import AgentError
+import httpx
+from a2a.client import A2ACardResolver
+from a2a.client.errors import AgentCardResolutionError
+from a2a.types import AgentCard
 
-try:
-    import httpx
-except ImportError as exc:
-    raise ImportError(
-        "httpx is required for agent-a2a-kit. Install with: pip install httpx"
-    ) from exc
+from beddel.domain.errors import AgentError
 
 # Re-use error code from adapter module
 A2A_DISCOVERY_FAILED: str = "BEDDEL-AGENT-721"
 
 __all__ = ["discover_agent"]
 
+# A2A spec primary path
+_PRIMARY_CARD_PATH = "/.well-known/agent-card.json"
+# Legacy fallback path
+_LEGACY_CARD_PATH = "/.well-known/agent.json"
+
 
 async def discover_agent(
     url: str,
     auth_token: str | None = None,
     timeout: float = 30.0,
-) -> dict[str, Any]:
+) -> AgentCard:
     """Fetch the A2A Agent Card from a remote agent.
 
-    Sends a GET request to ``{url}/.well-known/agent.json`` and returns
-    the parsed JSON as a dict containing the agent's metadata, skills,
-    capabilities, and authentication requirements.
+    Uses the a2a-sdk :class:`A2ACardResolver` to fetch and parse the
+    Agent Card.  Tries the primary path first
+    (``/.well-known/agent-card.json``), then falls back to the legacy
+    path (``/.well-known/agent.json``) for backward compatibility.
 
     Args:
         url: Base URL of the A2A agent (trailing slash stripped).
@@ -40,50 +47,60 @@ async def discover_agent(
         timeout: Request timeout in seconds.
 
     Returns:
-        Parsed Agent Card dict with keys like ``name``, ``description``,
-        ``skills``, ``capabilities``, ``url``, ``version``.
+        Typed :class:`AgentCard` proto object with the agent's metadata,
+        skills, capabilities, and authentication requirements.
 
     Raises:
         AgentError: ``BEDDEL-AGENT-721`` on HTTP errors, connection
-            failures, or invalid JSON responses.
+            failures, or invalid Agent Card responses.
     """
     base_url = url.rstrip("/")
-    card_url = f"{base_url}/.well-known/agent.json"
 
     headers: dict[str, str] = {}
     if auth_token:
         headers["Authorization"] = f"Bearer {auth_token}"
 
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                card_url,
-                headers=headers,
-                timeout=timeout,
-            )
-    except httpx.HTTPError as exc:
-        raise AgentError(
-            code=A2A_DISCOVERY_FAILED,
-            message=f"Failed to fetch Agent Card from {card_url}",
-            details={"error": str(exc), "url": card_url},
-        ) from exc
+    http_kwargs: dict[str, Any] = {}
+    if headers:
+        http_kwargs["headers"] = headers
 
-    if response.status_code >= 400:
-        raise AgentError(
-            code=A2A_DISCOVERY_FAILED,
-            message=f"Agent Card HTTP error {response.status_code}",
-            details={
-                "status_code": response.status_code,
-                "body": response.text[:500],
-                "url": card_url,
-            },
+    async with httpx.AsyncClient(timeout=timeout) as httpx_client:
+        # Try primary path first (current A2A spec)
+        resolver = A2ACardResolver(
+            httpx_client=httpx_client,
+            base_url=base_url,
+            agent_card_path=_PRIMARY_CARD_PATH.lstrip("/"),
         )
 
-    try:
-        return response.json()  # type: ignore[no-any-return]
-    except Exception as exc:
-        raise AgentError(
-            code=A2A_DISCOVERY_FAILED,
-            message="Invalid JSON in Agent Card response",
-            details={"url": card_url, "body": response.text[:500]},
-        ) from exc
+        try:
+            return await resolver.get_agent_card(http_kwargs=http_kwargs)
+        except AgentCardResolutionError:
+            # Fall back to legacy path
+            pass
+
+        # Try legacy path
+        resolver_legacy = A2ACardResolver(
+            httpx_client=httpx_client,
+            base_url=base_url,
+            agent_card_path=_LEGACY_CARD_PATH.lstrip("/"),
+        )
+
+        try:
+            return await resolver_legacy.get_agent_card(http_kwargs=http_kwargs)
+        except AgentCardResolutionError as exc:
+            raise AgentError(
+                code=A2A_DISCOVERY_FAILED,
+                message=f"Failed to fetch Agent Card from {base_url}",
+                details={
+                    "error": str(exc),
+                    "url": base_url,
+                    "primary_path": _PRIMARY_CARD_PATH,
+                    "fallback_path": _LEGACY_CARD_PATH,
+                },
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise AgentError(
+                code=A2A_DISCOVERY_FAILED,
+                message=f"Failed to fetch Agent Card from {base_url}",
+                details={"error": str(exc), "url": base_url},
+            ) from exc

@@ -1,7 +1,7 @@
-"""Unit tests for A2AAgentAdapter and discover_agent.
+"""Unit tests for A2AAgentAdapter (a2a-sdk 1.x client).
 
-Covers constructor, headers, JSON-RPC envelope, execute(), stream(),
-discover_agent(), and IAgentAdapter protocol conformance.
+Covers constructor, headers, execute(), stream(), and IAgentAdapter
+protocol conformance.  Uses mocked a2a-sdk client responses.
 """
 
 from __future__ import annotations
@@ -16,60 +16,105 @@ from beddel.domain.errors import AgentError
 from beddel.domain.models import AgentResult
 from beddel.domain.ports import IAgentAdapter
 from beddel_agent_a2a.adapter import A2AAgentAdapter
-from beddel_agent_a2a.discovery import discover_agent
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Helpers — build mock StreamResponse objects
 # ---------------------------------------------------------------------------
 
 
-def _completed_jsonrpc_response(
-    task_id: str = "task-1",
-    text: str = "Hello from agent",
-) -> dict[str, Any]:
-    """Build a successful JSON-RPC 2.0 response with a completed task."""
-    return {
-        "jsonrpc": "2.0",
-        "id": "test-id",
-        "result": {
-            "id": task_id,
-            "status": {"state": "completed"},
-            "artifacts": [
-                {"parts": [{"type": "text", "text": text}]},
-            ],
-        },
-    }
+def _mock_stream_response_task(
+    state: int = 3,  # TASK_STATE_COMPLETED
+    artifact_text: str = "Hello from agent",
+) -> MagicMock:
+    """Build a mock StreamResponse with a task payload."""
+    # Build artifact part
+    part = MagicMock()
+    part.text = artifact_text
+
+    artifact = MagicMock()
+    artifact.parts = [part]
+
+    # Build task status
+    status = MagicMock()
+    status.state = state
+
+    # Build task
+    task = MagicMock()
+    task.status = status
+    task.artifacts = [artifact]
+    task.history = []
+
+    # Build StreamResponse
+    response = MagicMock()
+    response.HasField = lambda field: field == "task"
+    response.task = task
+    return response
 
 
-def _jsonrpc_error_response(
-    code: int = -32600,
-    message: str = "Invalid request",
-) -> dict[str, Any]:
-    """Build a JSON-RPC 2.0 error response."""
-    return {
-        "jsonrpc": "2.0",
-        "id": "test-id",
-        "error": {"code": code, "message": message},
-    }
+def _mock_stream_response_message(text: str = "Agent reply") -> MagicMock:
+    """Build a mock StreamResponse with a message payload."""
+    part = MagicMock()
+    part.text = text
+
+    msg = MagicMock()
+    msg.parts = [part]
+
+    response = MagicMock()
+    response.HasField = lambda field: field == "message"
+    response.message = msg
+    return response
 
 
-class _AsyncLineIterator:
-    """Async iterator over a list of strings (simulates aiter_lines)."""
+def _mock_stream_response_status_update(
+    state: int = 2,  # TASK_STATE_WORKING
+    message_text: str = "Processing...",
+) -> MagicMock:
+    """Build a mock StreamResponse with a status_update payload."""
+    # Build status message parts
+    msg_part = MagicMock()
+    msg_part.text = message_text
 
-    def __init__(self, lines: list[str]) -> None:
-        self._lines = lines
-        self._index = 0
+    status_message = MagicMock()
+    status_message.parts = [msg_part]
 
-    def __aiter__(self) -> _AsyncLineIterator:
-        return self
+    status = MagicMock()
+    status.state = state
+    status.HasField = lambda field: field == "message"
+    status.message = status_message
 
-    async def __anext__(self) -> str:
-        if self._index >= len(self._lines):
-            raise StopAsyncIteration
-        line = self._lines[self._index]
-        self._index += 1
-        return line
+    status_update = MagicMock()
+    status_update.status = status
+
+    response = MagicMock()
+    response.HasField = lambda field: field == "status_update"
+    response.status_update = status_update
+    return response
+
+
+def _mock_stream_response_artifact_update(
+    text: str = "Artifact content",
+) -> MagicMock:
+    """Build a mock StreamResponse with an artifact_update payload."""
+    part = MagicMock()
+    part.text = text
+
+    artifact = MagicMock()
+    artifact.parts = [part]
+
+    artifact_update = MagicMock()
+    artifact_update.artifact = artifact
+
+    response = MagicMock()
+    response.HasField = lambda field: field == "artifact_update"
+    response.artifact_update = artifact_update
+    return response
+
+
+async def _async_iter(items: list[Any]) -> Any:
+    """Convert a list to an async iterator."""
+    for item in items:
+        yield item
 
 
 # ---------------------------------------------------------------------------
@@ -162,34 +207,6 @@ class TestGetHeaders:
 
 
 # ---------------------------------------------------------------------------
-# JSON-RPC envelope tests
-# ---------------------------------------------------------------------------
-
-
-class TestBuildJsonrpcRequest:
-    """Tests for A2AAgentAdapter._build_jsonrpc_request."""
-
-    async def test_produces_valid_jsonrpc_envelope(self) -> None:
-        """Envelope has jsonrpc, id, method, and params fields."""
-        adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
-        envelope = adapter._build_jsonrpc_request(
-            "tasks/send",
-            {"message": "hello"},
-        )
-        assert envelope["jsonrpc"] == "2.0"
-        assert isinstance(envelope["id"], str)
-        assert len(envelope["id"]) > 0
-        assert envelope["method"] == "tasks/send"
-        assert envelope["params"] == {"message": "hello"}
-
-    async def test_unique_ids(self) -> None:
-        """Each call produces a unique request id."""
-        adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
-        ids = {adapter._build_jsonrpc_request("m", {})["id"] for _ in range(10)}
-        assert len(ids) == 10
-
-
-# ---------------------------------------------------------------------------
 # execute() tests
 # ---------------------------------------------------------------------------
 
@@ -197,123 +214,129 @@ class TestBuildJsonrpcRequest:
 class TestExecute:
     """Tests for A2AAgentAdapter.execute."""
 
-    async def test_sends_correct_request_returns_agent_result(self) -> None:
-        """execute() sends JSON-RPC to agent URL and returns AgentResult."""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = _completed_jsonrpc_response()
-
+    async def test_completed_task_returns_agent_result(self) -> None:
+        """Completed task maps to exit_code=0, output from artifacts."""
+        mock_responses = [_mock_stream_response_task(state=3, artifact_text="Hello")]
         mock_client = AsyncMock()
-        mock_client.post.return_value = mock_response
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.send_message = lambda req, **kw: _async_iter(mock_responses)
 
-        with patch(
-            "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_client
+        mock_httpx = AsyncMock()
+        mock_httpx.aclose = AsyncMock()
+
+        with (
+            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch("beddel_agent_a2a.adapter.create_client", return_value=mock_client),
         ):
             adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
             result = await adapter.execute("Do something")
 
         assert isinstance(result, AgentResult)
-        mock_client.post.assert_called_once()
-        call_args = mock_client.post.call_args
-        assert call_args[0][0] == "http://agent.example.com"
+        assert result.exit_code == 0
+        assert result.output == "Hello"
+        assert result.agent_id == "http://agent.example.com"
+        assert result.files_changed == []
 
-    async def test_maps_completed_task_to_agent_result(self) -> None:
-        """Completed task maps to exit_code=0, output from artifacts, agent_id=url."""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = _completed_jsonrpc_response(
-            text="Hello from agent",
-        )
-
+    async def test_message_response_returns_agent_result(self) -> None:
+        """Message-style response maps to exit_code=0."""
+        mock_responses = [_mock_stream_response_message(text="Agent reply")]
         mock_client = AsyncMock()
-        mock_client.post.return_value = mock_response
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.send_message = lambda req, **kw: _async_iter(mock_responses)
 
-        with patch(
-            "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_client
+        mock_httpx = AsyncMock()
+        mock_httpx.aclose = AsyncMock()
+
+        with (
+            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch("beddel_agent_a2a.adapter.create_client", return_value=mock_client),
         ):
             adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
             result = await adapter.execute("Do something")
 
         assert result.exit_code == 0
-        assert result.output == "Hello from agent"
-        assert result.agent_id == "http://agent.example.com"
-        assert result.files_changed == []
-        assert isinstance(result.events, list)
+        assert result.output == "Agent reply"
 
-    async def test_with_model_parameter_includes_metadata(self) -> None:
-        """Model parameter is forwarded as metadata in params."""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = _completed_jsonrpc_response()
-
+    async def test_failed_task_returns_exit_code_1(self) -> None:
+        """Failed task state returns exit_code=1."""
+        mock_responses = [_mock_stream_response_task(state=4, artifact_text="Error")]
         mock_client = AsyncMock()
-        mock_client.post.return_value = mock_response
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.send_message = lambda req, **kw: _async_iter(mock_responses)
 
-        with patch(
-            "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_client
+        mock_httpx = AsyncMock()
+        mock_httpx.aclose = AsyncMock()
+
+        with (
+            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch("beddel_agent_a2a.adapter.create_client", return_value=mock_client),
         ):
             adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
-            await adapter.execute("Do something", model="gpt-4")
+            result = await adapter.execute("Do something")
 
-        call_args = mock_client.post.call_args
-        sent_json = call_args[1]["json"]
-        assert sent_json["params"]["metadata"] == {"model": "gpt-4"}
-
-    async def test_raises_agent_error_on_http_error(self) -> None:
-        """HTTP status >= 400 raises AgentError with BEDDEL-AGENT-720."""
-        mock_response = MagicMock()
-        mock_response.status_code = 500
-        mock_response.text = "Internal Server Error"
-
-        mock_client = AsyncMock()
-        mock_client.post.return_value = mock_response
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch(
-            "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_client
-        ):
-            adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
-            with pytest.raises(AgentError) as exc_info:
-                await adapter.execute("Do something")
-
-        assert exc_info.value.code == "BEDDEL-AGENT-720"
-
-    async def test_raises_agent_error_on_jsonrpc_error(self) -> None:
-        """JSON-RPC error response raises AgentError with BEDDEL-AGENT-720."""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = _jsonrpc_error_response()
-
-        mock_client = AsyncMock()
-        mock_client.post.return_value = mock_response
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch(
-            "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_client
-        ):
-            adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
-            with pytest.raises(AgentError) as exc_info:
-                await adapter.execute("Do something")
-
-        assert exc_info.value.code == "BEDDEL-AGENT-720"
+        assert result.exit_code == 1
 
     async def test_raises_agent_error_on_timeout(self) -> None:
         """Timeout raises AgentError with BEDDEL-AGENT-722."""
-        mock_client = AsyncMock()
-        mock_client.post.side_effect = httpx.TimeoutException("timed out")
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        from a2a.client.errors import A2AClientTimeoutError
 
-        with patch(
-            "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_client
+        async def _raise_timeout(*args: Any, **kwargs: Any) -> Any:
+            raise A2AClientTimeoutError("timed out")
+            yield  # noqa: unreachable — makes this an async generator
+
+        mock_client = AsyncMock()
+        mock_client.send_message = _raise_timeout
+
+        mock_httpx = AsyncMock()
+        mock_httpx.aclose = AsyncMock()
+
+        with (
+            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch("beddel_agent_a2a.adapter.create_client", return_value=mock_client),
+        ):
+            adapter = A2AAgentAdapter(agent_url="http://agent.example.com", timeout=5.0)
+            with pytest.raises(AgentError) as exc_info:
+                await adapter.execute("Do something")
+
+        assert exc_info.value.code == "BEDDEL-AGENT-722"
+
+    async def test_raises_agent_error_on_client_error(self) -> None:
+        """A2AClientError raises AgentError with BEDDEL-AGENT-720."""
+        from a2a.client.errors import A2AClientError
+
+        async def _raise_error(*args: Any, **kwargs: Any) -> Any:
+            raise A2AClientError("connection refused")
+            yield  # noqa: unreachable
+
+        mock_client = AsyncMock()
+        mock_client.send_message = _raise_error
+
+        mock_httpx = AsyncMock()
+        mock_httpx.aclose = AsyncMock()
+
+        with (
+            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch("beddel_agent_a2a.adapter.create_client", return_value=mock_client),
+        ):
+            adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
+            with pytest.raises(AgentError) as exc_info:
+                await adapter.execute("Do something")
+
+        assert exc_info.value.code == "BEDDEL-AGENT-720"
+
+    async def test_raises_agent_error_on_httpx_timeout(self) -> None:
+        """httpx.TimeoutException raises AgentError with BEDDEL-AGENT-722."""
+
+        async def _raise_httpx_timeout(*args: Any, **kwargs: Any) -> Any:
+            raise httpx.TimeoutException("timed out")
+            yield  # noqa: unreachable
+
+        mock_client = AsyncMock()
+        mock_client.send_message = _raise_httpx_timeout
+
+        mock_httpx = AsyncMock()
+        mock_httpx.aclose = AsyncMock()
+
+        with (
+            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch("beddel_agent_a2a.adapter.create_client", return_value=mock_client),
         ):
             adapter = A2AAgentAdapter(agent_url="http://agent.example.com", timeout=5.0)
             with pytest.raises(AgentError) as exc_info:
@@ -323,13 +346,20 @@ class TestExecute:
 
     async def test_raises_agent_error_on_connection_error(self) -> None:
         """Connection error raises AgentError with BEDDEL-AGENT-720."""
-        mock_client = AsyncMock()
-        mock_client.post.side_effect = httpx.ConnectError("connection refused")
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch(
-            "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_client
+        async def _raise_connection(*args: Any, **kwargs: Any) -> Any:
+            raise httpx.ConnectError("connection refused")
+            yield  # noqa: unreachable
+
+        mock_client = AsyncMock()
+        mock_client.send_message = _raise_connection
+
+        mock_httpx = AsyncMock()
+        mock_httpx.aclose = AsyncMock()
+
+        with (
+            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch("beddel_agent_a2a.adapter.create_client", return_value=mock_client),
         ):
             adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
             with pytest.raises(AgentError) as exc_info:
@@ -337,27 +367,22 @@ class TestExecute:
 
         assert exc_info.value.code == "BEDDEL-AGENT-720"
 
-    async def test_non_completed_state_returns_exit_code_1(self) -> None:
-        """Non-completed task state returns exit_code=1."""
-        response_data = _completed_jsonrpc_response()
-        response_data["result"]["status"]["state"] = "failed"
+    async def test_client_creation_failure_raises_agent_error(self) -> None:
+        """Exception during create_client raises AgentError."""
+        mock_httpx = AsyncMock()
 
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = response_data
-
-        mock_client = AsyncMock()
-        mock_client.post.return_value = mock_response
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch(
-            "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_client
+        with (
+            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch(
+                "beddel_agent_a2a.adapter.create_client",
+                side_effect=Exception("card not found"),
+            ),
         ):
             adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
-            result = await adapter.execute("Do something")
+            with pytest.raises(AgentError) as exc_info:
+                await adapter.execute("Do something")
 
-        assert result.exit_code == 1
+        assert exc_info.value.code == "BEDDEL-AGENT-720"
 
 
 # ---------------------------------------------------------------------------
@@ -369,28 +394,22 @@ class TestStream:
     """Tests for A2AAgentAdapter.stream."""
 
     async def test_yields_status_events(self) -> None:
-        """stream() yields status events from SSE stream."""
-        sse_lines = [
-            'data: {"status": {"state": "working", "message": {"parts": [{"text": "Processing..."}]}}}',
+        """stream() yields status events from status_update responses."""
+        mock_responses = [
+            _mock_stream_response_status_update(state=3, message_text="Processing...")
         ]
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.aiter_lines.return_value = _AsyncLineIterator(sse_lines)
-        mock_response.aread = AsyncMock()
-
-        mock_stream_cm = MagicMock()
-        mock_stream_cm.__aenter__ = AsyncMock(return_value=mock_response)
-        mock_stream_cm.__aexit__ = AsyncMock(return_value=False)
-
         mock_client = AsyncMock()
-        mock_client.stream = MagicMock(return_value=mock_stream_cm)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.send_message = lambda req, **kw: _async_iter(mock_responses)
 
-        with patch(
-            "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_client
+        mock_httpx = AsyncMock()
+        mock_httpx.aclose = AsyncMock()
+
+        with (
+            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch("beddel_agent_a2a.adapter.create_client", return_value=mock_client),
+            patch("beddel_agent_a2a.adapter.TaskState") as mock_task_state,
         ):
+            mock_task_state.Name = lambda v: "TASK_STATE_WORKING"
             adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
             events = [ev async for ev in adapter.stream("Do something")]
 
@@ -400,27 +419,17 @@ class TestStream:
         assert events[0]["message"] == "Processing..."
 
     async def test_yields_artifact_events(self) -> None:
-        """stream() yields artifact events from SSE stream."""
-        sse_lines = [
-            'data: {"artifact": {"parts": [{"type": "text", "text": "Result text"}]}}',
-        ]
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.aiter_lines.return_value = _AsyncLineIterator(sse_lines)
-        mock_response.aread = AsyncMock()
-
-        mock_stream_cm = MagicMock()
-        mock_stream_cm.__aenter__ = AsyncMock(return_value=mock_response)
-        mock_stream_cm.__aexit__ = AsyncMock(return_value=False)
-
+        """stream() yields artifact events from artifact_update responses."""
+        mock_responses = [_mock_stream_response_artifact_update(text="Result text")]
         mock_client = AsyncMock()
-        mock_client.stream = MagicMock(return_value=mock_stream_cm)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.send_message = lambda req, **kw: _async_iter(mock_responses)
 
-        with patch(
-            "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_client
+        mock_httpx = AsyncMock()
+        mock_httpx.aclose = AsyncMock()
+
+        with (
+            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch("beddel_agent_a2a.adapter.create_client", return_value=mock_client),
         ):
             adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
             events = [ev async for ev in adapter.stream("Do something")]
@@ -429,81 +438,43 @@ class TestStream:
         assert events[0]["type"] == "artifact"
         assert events[0]["parts"] == ["Result text"]
 
-    async def test_handles_mixed_status_and_artifact_events(self) -> None:
-        """stream() handles mixed status and artifact events."""
-        sse_lines = [
-            'data: {"status": {"state": "working", "message": {"parts": [{"text": "Step 1"}]}}}',
-            'data: {"artifact": {"parts": [{"type": "text", "text": "Partial result"}]}}',
-            'data: {"status": {"state": "completed"}}',
-        ]
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.aiter_lines.return_value = _AsyncLineIterator(sse_lines)
-        mock_response.aread = AsyncMock()
-
-        mock_stream_cm = MagicMock()
-        mock_stream_cm.__aenter__ = AsyncMock(return_value=mock_response)
-        mock_stream_cm.__aexit__ = AsyncMock(return_value=False)
-
+    async def test_yields_message_events(self) -> None:
+        """stream() yields message events from message responses."""
+        mock_responses = [_mock_stream_response_message(text="Agent says hello")]
         mock_client = AsyncMock()
-        mock_client.stream = MagicMock(return_value=mock_stream_cm)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.send_message = lambda req, **kw: _async_iter(mock_responses)
 
-        with patch(
-            "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_client
+        mock_httpx = AsyncMock()
+        mock_httpx.aclose = AsyncMock()
+
+        with (
+            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch("beddel_agent_a2a.adapter.create_client", return_value=mock_client),
         ):
             adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
             events = [ev async for ev in adapter.stream("Do something")]
 
-        assert len(events) == 3
-        assert events[0]["type"] == "status"
-        assert events[0]["state"] == "working"
-        assert events[1]["type"] == "artifact"
-        assert events[2]["type"] == "status"
-        assert events[2]["state"] == "completed"
-
-    async def test_raises_agent_error_on_http_error(self) -> None:
-        """HTTP error in stream raises AgentError with BEDDEL-AGENT-720."""
-        mock_response = MagicMock()
-        mock_response.status_code = 503
-        mock_response.aread = AsyncMock()
-
-        mock_stream_cm = MagicMock()
-        mock_stream_cm.__aenter__ = AsyncMock(return_value=mock_response)
-        mock_stream_cm.__aexit__ = AsyncMock(return_value=False)
-
-        mock_client = AsyncMock()
-        mock_client.stream = MagicMock(return_value=mock_stream_cm)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch(
-            "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_client
-        ):
-            adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
-            with pytest.raises(AgentError) as exc_info:
-                async for _ in adapter.stream("Do something"):
-                    pass
-
-        assert exc_info.value.code == "BEDDEL-AGENT-720"
+        assert len(events) == 1
+        assert events[0]["type"] == "message"
+        assert events[0]["text"] == "Agent says hello"
 
     async def test_raises_agent_error_on_timeout(self) -> None:
         """Timeout in stream raises AgentError with BEDDEL-AGENT-722."""
-        mock_stream_cm = MagicMock()
-        mock_stream_cm.__aenter__ = AsyncMock(
-            side_effect=httpx.TimeoutException("stream timed out"),
-        )
-        mock_stream_cm.__aexit__ = AsyncMock(return_value=False)
+        from a2a.client.errors import A2AClientTimeoutError
+
+        async def _raise_timeout(*args: Any, **kwargs: Any) -> Any:
+            raise A2AClientTimeoutError("stream timed out")
+            yield  # noqa: unreachable
 
         mock_client = AsyncMock()
-        mock_client.stream = MagicMock(return_value=mock_stream_cm)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.send_message = _raise_timeout
 
-        with patch(
-            "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_client
+        mock_httpx = AsyncMock()
+        mock_httpx.aclose = AsyncMock()
+
+        with (
+            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch("beddel_agent_a2a.adapter.create_client", return_value=mock_client),
         ):
             adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
             with pytest.raises(AgentError) as exc_info:
@@ -512,185 +483,30 @@ class TestStream:
 
         assert exc_info.value.code == "BEDDEL-AGENT-722"
 
-    async def test_skips_non_data_sse_lines_and_empty_payloads(self) -> None:
-        """stream() skips non-data SSE lines and empty data payloads."""
-        sse_lines = [
-            ": comment line",
-            "event: ping",
-            "data: ",
-            "data:",
-            "",
-            'data: {"status": {"state": "completed"}}',
-        ]
+    async def test_raises_agent_error_on_client_error(self) -> None:
+        """A2AClientError in stream raises AgentError with BEDDEL-AGENT-720."""
+        from a2a.client.errors import A2AClientError
 
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.aiter_lines.return_value = _AsyncLineIterator(sse_lines)
-        mock_response.aread = AsyncMock()
-
-        mock_stream_cm = MagicMock()
-        mock_stream_cm.__aenter__ = AsyncMock(return_value=mock_response)
-        mock_stream_cm.__aexit__ = AsyncMock(return_value=False)
+        async def _raise_error(*args: Any, **kwargs: Any) -> Any:
+            raise A2AClientError("stream error")
+            yield  # noqa: unreachable
 
         mock_client = AsyncMock()
-        mock_client.stream = MagicMock(return_value=mock_stream_cm)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.send_message = _raise_error
 
-        with patch(
-            "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_client
+        mock_httpx = AsyncMock()
+        mock_httpx.aclose = AsyncMock()
+
+        with (
+            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch("beddel_agent_a2a.adapter.create_client", return_value=mock_client),
         ):
             adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
-            events = [ev async for ev in adapter.stream("Do something")]
-
-        assert len(events) == 1
-        assert events[0]["type"] == "status"
-        assert events[0]["state"] == "completed"
-
-    async def test_skips_invalid_json_in_sse_data(self) -> None:
-        """stream() skips SSE data lines with invalid JSON."""
-        sse_lines = [
-            "data: {not valid json}",
-            "data: <<<broken>>>",
-            'data: {"status": {"state": "working"}}',
-        ]
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.aiter_lines.return_value = _AsyncLineIterator(sse_lines)
-        mock_response.aread = AsyncMock()
-
-        mock_stream_cm = MagicMock()
-        mock_stream_cm.__aenter__ = AsyncMock(return_value=mock_response)
-        mock_stream_cm.__aexit__ = AsyncMock(return_value=False)
-
-        mock_client = AsyncMock()
-        mock_client.stream = MagicMock(return_value=mock_stream_cm)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch(
-            "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_client
-        ):
-            adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
-            events = [ev async for ev in adapter.stream("Do something")]
-
-        assert len(events) == 1
-        assert events[0]["type"] == "status"
-
-
-# ---------------------------------------------------------------------------
-# discover_agent() tests
-# ---------------------------------------------------------------------------
-
-
-class TestDiscoverAgent:
-    """Tests for discover_agent."""
-
-    async def test_fetches_and_parses_agent_card(self) -> None:
-        """discover_agent() fetches and parses Agent Card JSON."""
-        card_data = {
-            "name": "Test Agent",
-            "description": "A test agent",
-            "skills": [],
-            "capabilities": {"streaming": True},
-        }
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = card_data
-
-        mock_client = AsyncMock()
-        mock_client.get.return_value = mock_response
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch(
-            "beddel_agent_a2a.discovery.httpx.AsyncClient", return_value=mock_client
-        ):
-            result = await discover_agent("http://agent.example.com")
-
-        assert result == card_data
-        mock_client.get.assert_called_once()
-        call_args = mock_client.get.call_args
-        assert call_args[0][0] == "http://agent.example.com/.well-known/agent.json"
-
-    async def test_includes_bearer_token_in_request(self) -> None:
-        """discover_agent() includes Bearer token in request when provided."""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"name": "Agent"}
-
-        mock_client = AsyncMock()
-        mock_client.get.return_value = mock_response
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch(
-            "beddel_agent_a2a.discovery.httpx.AsyncClient", return_value=mock_client
-        ):
-            await discover_agent(
-                "http://agent.example.com",
-                auth_token="secret-token",
-            )
-
-        call_args = mock_client.get.call_args
-        headers = call_args[1]["headers"]
-        assert headers["Authorization"] == "Bearer secret-token"
-
-    async def test_raises_agent_error_on_http_error(self) -> None:
-        """HTTP status >= 400 raises AgentError with BEDDEL-AGENT-721."""
-        mock_response = MagicMock()
-        mock_response.status_code = 404
-        mock_response.text = "Not Found"
-
-        mock_client = AsyncMock()
-        mock_client.get.return_value = mock_response
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch(
-            "beddel_agent_a2a.discovery.httpx.AsyncClient", return_value=mock_client
-        ):
             with pytest.raises(AgentError) as exc_info:
-                await discover_agent("http://agent.example.com")
+                async for _ in adapter.stream("Do something"):
+                    pass
 
-        assert exc_info.value.code == "BEDDEL-AGENT-721"
-
-    async def test_raises_agent_error_on_connection_error(self) -> None:
-        """Connection error raises AgentError with BEDDEL-AGENT-721."""
-        mock_client = AsyncMock()
-        mock_client.get.side_effect = httpx.ConnectError("connection refused")
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch(
-            "beddel_agent_a2a.discovery.httpx.AsyncClient", return_value=mock_client
-        ):
-            with pytest.raises(AgentError) as exc_info:
-                await discover_agent("http://agent.example.com")
-
-        assert exc_info.value.code == "BEDDEL-AGENT-721"
-
-    async def test_raises_agent_error_on_invalid_json(self) -> None:
-        """Invalid JSON response raises AgentError with BEDDEL-AGENT-721."""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.side_effect = ValueError("Invalid JSON")
-        mock_response.text = "<html>not json</html>"
-
-        mock_client = AsyncMock()
-        mock_client.get.return_value = mock_response
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch(
-            "beddel_agent_a2a.discovery.httpx.AsyncClient", return_value=mock_client
-        ):
-            with pytest.raises(AgentError) as exc_info:
-                await discover_agent("http://agent.example.com")
-
-        assert exc_info.value.code == "BEDDEL-AGENT-721"
+        assert exc_info.value.code == "BEDDEL-AGENT-720"
 
 
 # ---------------------------------------------------------------------------

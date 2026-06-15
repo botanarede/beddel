@@ -1,21 +1,27 @@
 # agent-a2a-kit
 
-A2A Protocol agent adapter for the Beddel SDK. Provides an `A2AAgentAdapter` that implements the `IAgentAdapter` port, enabling communication with any A2A-compliant agent via the standard Agent-to-Agent protocol. Includes agent discovery via the `.well-known/agent.json` Agent Card endpoint.
+A2A Protocol kit for the Beddel SDK — bidirectional agent communication.
+
+- **Client (outbound)**: `A2AAgentAdapter` implements the `IAgentAdapter` port, enabling communication with any A2A-compliant agent via the official `a2a-sdk` client.
+- **Server (inbound)**: `BeddelA2AExecutor` exposes Beddel workflows as A2A-compliant agents.
+- **Discovery**: `discover_agent` fetches the Agent Card with typed response.
 
 ## Dependencies
 
-- `httpx>=0.27.0` — Async HTTP client for A2A protocol communication
-- `a2a-sdk>=0.2.0` — Google A2A Protocol SDK
+- `a2a-sdk>=1.0,<2.0` — Official Google A2A Protocol SDK (includes httpx, protobuf, pydantic)
+
+Optional (for server mode):
+- `a2a-sdk[http-server]>=1.0` — A2A server framework
 
 ## Installation
 
 ```bash
-pip install httpx a2a-sdk
+pip install "a2a-sdk>=1.0,<2.0"
 ```
 
 ## Authentication Setup
 
-`A2AAgentAdapter` supports bearer token authentication for secured A2A endpoints. Configure auth using one of:
+`A2AAgentAdapter` supports bearer token authentication for secured A2A endpoints:
 
 ```python
 # Direct token
@@ -24,61 +30,85 @@ adapter = A2AAgentAdapter(
     auth_token="your-bearer-token",
 )
 
+# Environment variable fallback (A2A_AGENT_URL, A2A_AUTH_TOKEN)
+adapter = A2AAgentAdapter()
+
 # No auth (local / unsecured agents)
 adapter = A2AAgentAdapter(
     agent_url="http://localhost:8080",
 )
 ```
 
-For production deployments, store tokens in environment variables and pass them at construction time.
-
 ## Usage
 
 ```python
-from beddel_agent_a2a.adapter import A2AAgentAdapter
-from beddel_agent_a2a.discovery import discover_agent
+from beddel_agent_a2a import A2AAgentAdapter, discover_agent
 
-# Discover agent capabilities via Agent Card
+# Discover agent capabilities via Agent Card (typed response)
 card = await discover_agent("https://agent.example.com")
 print(card.name, card.skills)
 
-# Create adapter and send a task
+# Create adapter and execute a task
 adapter = A2AAgentAdapter(
     agent_url="https://agent.example.com",
 )
 
-response = await adapter.call(
+# Synchronous execution (collects full response)
+result = await adapter.execute(
     prompt="Summarize the quarterly report",
-    context={"document_id": "q4-2025"},
 )
-print(response.output)
+print(result.output)
+
+# Streaming execution (yields events as they arrive)
+async for event in adapter.stream(prompt="Analyze this data"):
+    if event["type"] == "status":
+        print(f"Status: {event['state']}")
+    elif event["type"] == "artifact":
+        print(f"Output: {event['parts']}")
+    elif event["type"] == "message":
+        print(f"Message: {event['text']}")
 ```
 
 ## Agent Discovery
 
-A2A agents expose an Agent Card at `/.well-known/agent.json` describing their capabilities, supported skills, and authentication requirements. The `discover_agent` helper fetches and parses this card:
+A2A agents expose an Agent Card describing their capabilities. The `discover_agent` helper fetches this with automatic path fallback:
+
+- Primary: `/.well-known/agent-card.json` (current A2A spec)
+- Fallback: `/.well-known/agent.json` (legacy compatibility)
 
 ```python
-from beddel_agent_a2a.discovery import discover_agent
+from beddel_agent_a2a import discover_agent
+from a2a.types import AgentCard
 
-card = await discover_agent("https://agent.example.com")
+card: AgentCard = await discover_agent("https://agent.example.com")
 
-# Inspect agent capabilities
+# Typed access to agent capabilities
 print(f"Agent: {card.name}")
-print(f"Skills: {card.skills}")
-print(f"Auth required: {card.authentication}")
+print(f"Skills: {[s.name for s in card.skills]}")
+print(f"Version: {card.version}")
 ```
 
 ## Supported Operations
 
-| Operation | Description |
-|-----------|-------------|
-| `call` | Send a task to an A2A agent and receive a response |
-| `discover_agent` | Fetch the Agent Card from an A2A endpoint |
+| Operation | Method | Description |
+|-----------|--------|-------------|
+| `execute()` | `message/send` | Send a message and collect the full response |
+| `stream()` | `message/send` (streaming) | Send a message and yield events as they arrive |
+| `discover_agent()` | GET Agent Card | Fetch typed Agent Card with path fallback |
+
+## Protocol Details
+
+This kit uses the A2A protocol `message/send` method via the official SDK client.
+The SDK handles JSON-RPC transport, SSE streaming, and response parsing internally.
+
+| Protocol Method | SDK Mechanism | Adapter Method |
+|-----------------|---------------|----------------|
+| `message/send` | `Client.send_message()` (non-streaming) | `execute()` |
+| `message/send` | `Client.send_message()` (streaming) | `stream()` |
 
 ## Testing
 
 ```bash
 cd kits/agent-a2a-kit
-python -m pytest tests/ -x
+PYTHONPATH=python:$PYTHONPATH pytest tests/ -q
 ```

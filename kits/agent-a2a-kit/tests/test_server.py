@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from a2a.server.events import EventQueue
-from a2a.types import DataPart, Message, Role, TextPart
+from a2a.types import Message, Part, Role
 
 from beddel_agent_a2a.server import (
     BeddelA2AExecutor,
@@ -68,7 +68,10 @@ def _make_request_context(
     task_id: str | None = None,
     context_id: str | None = None,
 ) -> MagicMock:
-    """Build a mock RequestContext with DataPart-based message."""
+    """Build a mock RequestContext with data Part-based message."""
+    from google.protobuf.struct_pb2 import Value
+    from google.protobuf import json_format
+
     ctx = MagicMock()
     ctx.task_id = task_id or str(uuid.uuid4())
     ctx.context_id = context_id or str(uuid.uuid4())
@@ -77,9 +80,13 @@ def _make_request_context(
     if inputs is not None:
         data["inputs"] = inputs
 
+    # In a2a-sdk 1.x, Part uses the `data` field (google.protobuf.Value)
+    value = Value()
+    json_format.ParseDict(data, value)
+
     ctx.message = Message(
-        role=Role.user,
-        parts=[DataPart(data=data)],
+        role=Role.ROLE_USER,
+        parts=[Part(data=value)],
         message_id=str(uuid.uuid4()),
     )
     return ctx
@@ -128,7 +135,9 @@ class TestBuildAgentCard:
         card = build_agent_card(registry, host="0.0.0.0", port=9000)
 
         assert len(card.skills) == 2
-        assert card.url == "http://0.0.0.0:9000"
+        # URL is now in supported_interfaces
+        assert len(card.supported_interfaces) == 1
+        assert card.supported_interfaces[0].url == "http://0.0.0.0:9000"
         ids = {s.id for s in card.skills}
         assert ids == {"wf-a", "wf-b"}
 
@@ -241,10 +250,10 @@ class TestBeddelA2AExecutor:
         ctx = MagicMock()
         ctx.task_id = str(uuid.uuid4())
         ctx.context_id = str(uuid.uuid4())
-        # Message with no DataPart containing workflow_id
+        # Message with no data Part containing workflow_id — just text
         ctx.message = Message(
-            role=Role.user,
-            parts=[TextPart(text="just text")],
+            role=Role.ROLE_USER,
+            parts=[Part(text="just text")],
             message_id=str(uuid.uuid4()),
         )
 
