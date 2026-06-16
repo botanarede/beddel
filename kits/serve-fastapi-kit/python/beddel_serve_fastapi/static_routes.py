@@ -31,9 +31,6 @@ def register_static_routes(app: Any) -> None:
     async def _favicon() -> Response:
         return Response(status_code=204)
 
-    # Agent Engine sidebar routes (optional — requires deploy-agent-engine-kit)
-    try:
-        from beddel_serve_fastapi.agent_engine_routes import register_agent_engine_routes
-        register_agent_engine_routes(app)
-    except ImportError:
-        pass
+    # Agent Engine sidebar routes are now registered by the SDK serve tier
+    # (beddel.serve.agent_engine) via _build_runtime_app() injection.
+    # This placeholder is intentionally removed — see ADR-0013 and Story K3A.4.
