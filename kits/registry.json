@@ -1,0 +1,218 @@
+[
+  {
+    "name": "ag-ui-kit",
+    "version": "0.1.0",
+    "description": "AG-UI protocol adapter for dashboard integration",
+    "category": "ag"
+  },
+  {
+    "name": "agent-a2a-kit",
+    "version": "0.2.0",
+    "description": "A2A Protocol kit \u2014 outbound client adapter + inbound server (bidirectional)",
+    "category": "agent"
+  },
+  {
+    "name": "agent-claude-kit",
+    "version": "0.1.0",
+    "description": "Claude Agent SDK subprocess-based agent adapter",
+    "category": "agent"
+  },
+  {
+    "name": "agent-codex-kit",
+    "version": "0.1.0",
+    "description": "Codex Docker-isolated agent adapter",
+    "category": "agent"
+  },
+  {
+    "name": "agent-kiro-kit",
+    "version": "0.1.0",
+    "description": "Kiro CLI subprocess-based agent adapter",
+    "category": "agent"
+  },
+  {
+    "name": "agent-openclaw-kit",
+    "version": "0.1.0",
+    "description": "OpenClaw Gateway HTTP API agent adapter",
+    "category": "agent"
+  },
+  {
+    "name": "agentrq-approval-kit",
+    "version": "0.1.0",
+    "description": "AgentRQ HOTL approval gate adapter for Beddel workflows",
+    "category": "agentrq"
+  },
+  {
+    "name": "auth-firebase-kit",
+    "version": "0.1.0",
+    "description": "Firebase Auth token verification + App Check + tenant resolution for Beddel backends",
+    "category": "auth"
+  },
+  {
+    "name": "auth-github-kit",
+    "version": "0.1.0",
+    "description": "GitHub OAuth Device Flow credential management",
+    "category": "auth"
+  },
+  {
+    "name": "bridge-adk-kit",
+    "version": "0.1.0",
+    "description": "ADK Bridge \u2014 wraps Beddel workflows as ADK FunctionTools",
+    "category": "bridge"
+  },
+  {
+    "name": "dashboard-adapters-kit",
+    "version": "0.1.0",
+    "description": "Dashboard pipeline adapters normalizing agent events to Pipeline Protocol",
+    "category": "dashboard"
+  },
+  {
+    "name": "deploy-agent-engine-kit",
+    "version": "0.1.0",
+    "description": "Deploy Beddel flows to Vertex AI Agent Engine",
+    "category": "deploy"
+  },
+  {
+    "name": "guardrail-model-armor-kit",
+    "version": "0.1.0",
+    "description": "Model Armor guardrail strategy for prompt injection defense",
+    "category": "guardrail"
+  },
+  {
+    "name": "memory-backboard-kit",
+    "version": "0.1.0",
+    "description": "Backboard content-based memory adapter for Beddel",
+    "category": "memory"
+  },
+  {
+    "name": "memory-gcp-kit",
+    "version": "0.1.0",
+    "description": "GCP Agent Engine Memory Bank adapter implementing IMemoryProvider",
+    "category": "memory"
+  },
+  {
+    "name": "memory-vertex-kit",
+    "version": "0.1.0",
+    "description": "Google Vertex AI Memory Bank adapter for Beddel",
+    "category": "memory"
+  },
+  {
+    "name": "observability-budget-kit",
+    "version": "0.1.0",
+    "description": "Budget enforcement adapters with Langfuse integration",
+    "category": "observability"
+  },
+  {
+    "name": "observability-langfuse-kit",
+    "version": "0.1.0",
+    "description": "Langfuse observability tracing adapter",
+    "category": "observability"
+  },
+  {
+    "name": "observability-otel-kit",
+    "version": "0.1.0",
+    "description": "OpenTelemetry observability tracing adapter",
+    "category": "observability"
+  },
+  {
+    "name": "persistence-sqlite-kit",
+    "version": "0.1.0",
+    "description": "SQLite-backed IEventStore adapter for durable execution",
+    "category": "persistence"
+  },
+  {
+    "name": "pii-google-dlp-kit",
+    "version": "0.1.0",
+    "description": "Google Cloud DLP PII tokenizer adapter for Beddel",
+    "category": "pii"
+  },
+  {
+    "name": "protocol-gcp-mcp-kit",
+    "version": "0.1.0",
+    "description": "Google Managed MCP Server client adapter (BigQuery, Maps, Cloud SQL, etc.)",
+    "category": "protocol"
+  },
+  {
+    "name": "protocol-mcp-kit",
+    "version": "0.1.0",
+    "description": "Model Context Protocol client adapters (stdio and SSE)",
+    "category": "protocol"
+  },
+  {
+    "name": "provider-gemini-adk-kit",
+    "version": "0.1.0",
+    "description": "Google Gemini ADK direct LLM adapter for TypeScript",
+    "category": "provider"
+  },
+  {
+    "name": "provider-gemini-kit",
+    "version": "0.1.0",
+    "description": "Google Gemini direct LLM provider adapter",
+    "category": "provider"
+  },
+  {
+    "name": "provider-litellm-kit",
+    "version": "0.1.0",
+    "description": "LiteLLM multi-provider LLM adapter",
+    "category": "provider"
+  },
+  {
+    "name": "provider-vercelai-kit",
+    "version": "0.1.0",
+    "description": "Vercel AI SDK multi-provider LLM adapter for TypeScript",
+    "category": "provider"
+  },
+  {
+    "name": "serve-express-kit",
+    "version": "0.1.0",
+    "description": "Express.js HTTP server adapter for Beddel workflows",
+    "category": "serve"
+  },
+  {
+    "name": "serve-fastapi-kit",
+    "version": "0.1.0",
+    "description": "FastAPI serving + SSE",
+    "category": "serve"
+  },
+  {
+    "name": "serve-mcp-kit",
+    "version": "0.1.0",
+    "description": "Expose Beddel YAML workflows as MCP servers \u2014 any MCP-compatible agent can discover and execute workflows",
+    "category": "serve"
+  },
+  {
+    "name": "software-development-kit",
+    "version": "0.1.0",
+    "description": "Development workflow tools \u2014 validation gates and epic creation",
+    "category": "software"
+  },
+  {
+    "name": "state-postgres-kit",
+    "version": "0.1.0",
+    "description": "PostgreSQL state persistence adapter for Beddel",
+    "category": "state"
+  },
+  {
+    "name": "tools-file-kit",
+    "version": "0.1.0",
+    "description": "File I/O tools (read, write) with path validation",
+    "category": "tools"
+  },
+  {
+    "name": "tools-gates-kit",
+    "version": "0.1.0",
+    "description": "Validation gate tools (pytest, ruff, mypy) via shell_exec",
+    "category": "tools"
+  },
+  {
+    "name": "tools-http-kit",
+    "version": "0.1.0",
+    "description": "HTTP request tool via httpx",
+    "category": "tools"
+  },
+  {
+    "name": "tools-shell-kit",
+    "version": "0.1.0",
+    "description": "Shell command execution tool via SafeSubprocessRunner",
+    "category": "tools"
+  }
+]
