@@ -39,12 +39,14 @@ def main() -> None:
         with open(kit_yaml) as f:
             data = yaml.safe_load(f) or {}
         name = data.get("name", kit_yaml.parent.name)
+        explicit_category = data.get("category", "")
+        category = explicit_category if isinstance(explicit_category, str) and explicit_category.strip() else _infer_category(name)
         entries.append(
             {
                 "name": name,
                 "version": data.get("version", "0.1.0"),
                 "description": data.get("description", ""),
-                "category": _infer_category(name),
+                "category": category,
             }
         )
 

@@ -1,6 +1,7 @@
 name: software-development-kit
 version: "0.1.0"
 description: Development workflow tools — validation gates and epic creation
+category: workflow
 author: Beddel Team
 tools:
   - name: pytest_gate

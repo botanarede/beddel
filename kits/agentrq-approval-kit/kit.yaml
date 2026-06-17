@@ -1,6 +1,7 @@
 name: agentrq-approval-kit
 version: 0.1.0
 description: AgentRQ HOTL approval gate adapter for Beddel workflows
+category: governance
 author: Beddel Team
 adapters:
 - port: IApprovalGate

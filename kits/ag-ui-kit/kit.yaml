@@ -1,6 +1,7 @@
 name: ag-ui-kit
 version: 0.1.0
 description: AG-UI protocol adapter for dashboard integration
+category: protocol
 author: Beddel Team
 integrations:
 - name: BeddelAGUIAdapter

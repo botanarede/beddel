@@ -3,7 +3,7 @@
     "name": "ag-ui-kit",
     "version": "0.1.0",
     "description": "AG-UI protocol adapter for dashboard integration",
-    "category": "ag"
+    "category": "protocol"
   },
   {
     "name": "agent-a2a-kit",
@@ -39,7 +39,7 @@
     "name": "agentrq-approval-kit",
     "version": "0.1.0",
     "description": "AgentRQ HOTL approval gate adapter for Beddel workflows",
-    "category": "agentrq"
+    "category": "governance"
   },
   {
     "name": "auth-firebase-kit",
@@ -183,7 +183,7 @@
     "name": "software-development-kit",
     "version": "0.1.0",
     "description": "Development workflow tools \u2014 validation gates and epic creation",
-    "category": "software"
+    "category": "workflow"
   },
   {
     "name": "state-postgres-kit",
