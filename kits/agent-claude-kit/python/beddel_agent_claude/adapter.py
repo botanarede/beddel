@@ -272,12 +272,22 @@ class ClaudeAgentAdapter:
                 details={"error": str(exc)},
             ) from exc
         except claude_agent_sdk.ProcessError as exc:
-            stderr = getattr(exc, "stderr", str(exc))
-            raise AgentError(
-                code=AGENT_EXECUTION_FAILED,
-                message="Claude Agent SDK process error",
-                details={"stderr": stderr},
-            ) from exc
+            # The Claude Code CLI exits non-zero after is_error=True results
+            # (e.g. read-only mode "success" exit). If we already collected
+            # output text, treat it as a successful execution with the content
+            # we gathered — the ProcessError is just a CLI exit-code artifact.
+            if text_parts:
+                logger.info(
+                    "ProcessError after collecting %d text parts — treating as success",
+                    len(text_parts),
+                )
+            else:
+                stderr = getattr(exc, "stderr", str(exc))
+                raise AgentError(
+                    code=AGENT_EXECUTION_FAILED,
+                    message="Claude Agent SDK process error",
+                    details={"stderr": stderr},
+                ) from exc
 
         usage_out: dict[str, Any] = dict(usage) if isinstance(usage, dict) else {}
         if cost_usd is not None:
