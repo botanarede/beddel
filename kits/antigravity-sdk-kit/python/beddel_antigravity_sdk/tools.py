@@ -64,6 +64,14 @@ async def antigravity_tool_exec(
 ) -> dict[str, Any]:
     """Execute a registered Antigravity custom tool by name.
 
+    Enforces the "Antigravity safety_policy (inner)" half of the
+    defense-in-depth safety model (architecture §35.6): before looking up
+    or invoking the target tool, the call is checked against the adapter's
+    current safety policy via :func:`antigravity_safety_check`. If denied,
+    the tool is never invoked. This makes the previously-advisory
+    ``antigravity_safety_check`` tool enforcing for real invocations that
+    go through this entry point.
+
     Looks up the tool in the adapter's registered tool list and invokes it.
 
     Args:
@@ -72,9 +80,31 @@ async def antigravity_tool_exec(
         args: Arguments to pass to the tool.
 
     Returns:
-        Dict with ``status`` "ok" and ``result``, or "error" with details.
+        Dict with ``status`` "ok" and ``result``, "error" with details if
+        the tool is not found or fails, or "error" with
+        ``code=ANTIGRAVITY_SAFETY_DENIED`` if the safety policy denies
+        the call.
     """
     args = args or {}
+
+    # Defense in depth (inner): check the safety policy before invoking.
+    check = await antigravity_safety_check(ctx, tool_name, args)
+
+    pre_tool_call_decide = ctx.adapter._lifecycle_hooks.get("pre_tool_call_decide")
+    if pre_tool_call_decide is not None:
+        await ctx.adapter._fire_hook(
+            "pre_tool_call_decide", tool_name, args, check["allowed"]
+        )
+
+    if not check["allowed"]:
+        return {
+            "status": "error",
+            "code": ANTIGRAVITY_SAFETY_DENIED,
+            "message": (
+                f"Tool {tool_name!r} denied by safety policy: {check['reason']}"
+            ),
+            "policy": check["policy"],
+        }
 
     # Find tool in adapter's tool registry
     registered_tools = ctx.adapter._tools

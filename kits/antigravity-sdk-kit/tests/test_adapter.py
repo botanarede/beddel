@@ -403,3 +403,265 @@ def test_get_mcp_server_config_none_servers(adapter):
     config = adapter._get_mcp_server_config("any-name")
 
     assert config is None
+
+
+# ---------------------------------------------------------------------------
+# K5.4: Observability + Safety Bridge — tracer, usage, lifecycle hooks
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_execute_emits_tracer_spans(mock_runner_with_text_events):
+    """execute() calls tracer.start_span/end_span with expected names."""
+    from beddel_antigravity_sdk.adapter import AntigravityAgentAdapter
+
+    tracer = MagicMock()
+    tracer.start_span.return_value = "span-handle"
+    adapter = AntigravityAgentAdapter(
+        model="gemini-2.5-flash", timeout=30, tracer=tracer
+    )
+    mock_runner_with_text_events(["Hello"])
+
+    await adapter.execute("Say hello")
+
+    tracer.start_span.assert_called_once()
+    assert tracer.start_span.call_args[0][0] == "antigravity.execute"
+    tracer.end_span.assert_called_once()
+    assert tracer.end_span.call_args[0][0] == "span-handle"
+
+
+@pytest.mark.asyncio()
+async def test_stream_emits_tracer_spans(mock_runner_with_mixed_events):
+    """stream() calls tracer.start_span/end_span with expected names."""
+    from beddel_antigravity_sdk.adapter import AntigravityAgentAdapter
+
+    tracer = MagicMock()
+    tracer.start_span.return_value = "stream-span"
+    adapter = AntigravityAgentAdapter(
+        model="gemini-2.5-flash", timeout=30, tracer=tracer
+    )
+    mock_runner_with_mixed_events([{"type": "text", "text": "hi"}])
+
+    async for _ in adapter.stream("Analyze"):
+        pass
+
+    tracer.start_span.assert_called_once()
+    assert tracer.start_span.call_args[0][0] == "antigravity.stream"
+    tracer.end_span.assert_called_once()
+    assert tracer.end_span.call_args[0][0] == "stream-span"
+
+
+@pytest.mark.asyncio()
+async def test_execute_span_end_called_on_error(adapter):
+    """execute() still calls tracer.end_span when execution raises."""
+    tracer = MagicMock()
+    tracer.start_span.return_value = "span-1"
+    adapter._tracer = tracer
+
+    import sys as _sys
+
+    adk_runners = _sys.modules["google.adk.runners"]
+
+    def _raise_run_async(*args: Any, **kwargs: Any):
+        raise RuntimeError("boom")
+
+    broken_runner = MagicMock()
+    broken_runner.run_async.side_effect = _raise_run_async
+    adk_runners.Runner.return_value = broken_runner
+
+    adk_sessions = _sys.modules["google.adk.sessions"]
+    mock_session = MockSession(id="err-session")
+    mock_session_service = AsyncMock()
+    mock_session_service.create_session = AsyncMock(return_value=mock_session)
+    adk_sessions.InMemorySessionService.return_value = mock_session_service
+
+    with pytest.raises(AgentError):
+        await adapter.execute("trigger error")
+
+    tracer.end_span.assert_called_once()
+    assert tracer.end_span.call_args[0][0] == "span-1"
+
+
+@pytest.mark.asyncio()
+async def test_execute_no_tracer_is_noop(mock_runner_with_text_events):
+    """execute() works normally when tracer=None (default) — no exceptions."""
+    from beddel_antigravity_sdk.adapter import AntigravityAgentAdapter
+
+    adapter = AntigravityAgentAdapter(model="gemini-2.5-flash", timeout=30)
+    assert adapter._tracer is None
+    mock_runner_with_text_events(["Fine"])
+
+    result = await adapter.execute("Say hi")
+
+    assert result.exit_code == 0
+    assert result.output == "Fine"
+
+
+@pytest.mark.asyncio()
+async def test_execute_tracer_failures_do_not_propagate(mock_runner_with_text_events):
+    """Tracer start_span/end_span raising does not break execute()."""
+    from beddel_antigravity_sdk.adapter import AntigravityAgentAdapter
+
+    tracer = MagicMock()
+    tracer.start_span.side_effect = RuntimeError("tracer down")
+    tracer.end_span.side_effect = RuntimeError("tracer down")
+    adapter = AntigravityAgentAdapter(
+        model="gemini-2.5-flash", timeout=30, tracer=tracer
+    )
+    mock_runner_with_text_events(["Still works"])
+
+    result = await adapter.execute("Say hi")
+
+    assert result.exit_code == 0
+    assert result.output == "Still works"
+
+
+@pytest.mark.asyncio()
+async def test_execute_usage_extracted_from_conversation(mock_runner_with_text_events):
+    """AgentResult.usage is populated from agent.conversation.total_usage."""
+    from beddel_antigravity_sdk.adapter import AntigravityAgentAdapter
+
+    adapter = AntigravityAgentAdapter(model="gemini-2.5-flash", timeout=30)
+    mock_runner_with_text_events(["Hi"])
+
+    usage_obj = MagicMock()
+    usage_obj.prompt_tokens = 12
+    usage_obj.completion_tokens = 7
+    usage_obj.total_tokens = 19
+    conversation = MagicMock()
+    conversation.total_usage = usage_obj
+
+    from .conftest import _mocks
+
+    _mocks["agents"].Agent.return_value.conversation = conversation
+
+    result = await adapter.execute("Say hi")
+
+    assert result.usage == {
+        "prompt_tokens": 12,
+        "completion_tokens": 7,
+        "total_tokens": 19,
+    }
+
+
+@pytest.mark.asyncio()
+async def test_execute_usage_fallback_when_no_conversation(
+    mock_runner_with_text_events,
+):
+    """AgentResult.usage falls back to {} when agent has no conversation attr."""
+    from beddel_antigravity_sdk.adapter import AntigravityAgentAdapter
+
+    adapter = AntigravityAgentAdapter(model="gemini-2.5-flash", timeout=30)
+    mock_runner_with_text_events(["Hi"])
+
+    from .conftest import _mocks
+
+    # MagicMock auto-creates attributes, so force `conversation` to None
+    # to simulate an ADK Agent object that truly lacks this attribute.
+    _mocks["agents"].Agent.return_value.conversation = None
+
+    result = await adapter.execute("Say hi")
+
+    assert result.usage == {}
+
+
+@pytest.mark.asyncio()
+async def test_execute_fires_session_start_and_end_hooks(mock_runner_with_text_events):
+    """execute() fires on_session_start and on_session_end hooks."""
+    from beddel_antigravity_sdk.adapter import AntigravityAgentAdapter
+
+    on_session_start = AsyncMock()
+    on_session_end = AsyncMock()
+    adapter = AntigravityAgentAdapter(
+        model="gemini-2.5-flash",
+        timeout=30,
+        lifecycle_hooks={
+            "on_session_start": on_session_start,
+            "on_session_end": on_session_end,
+        },
+    )
+    mock_runner_with_text_events(["Hi"])
+
+    await adapter.execute("Say hi")
+
+    on_session_start.assert_called_once()
+    assert on_session_start.call_args.kwargs["session_id"] == "test-session-123"
+    on_session_end.assert_called_once()
+    assert on_session_end.call_args.kwargs["session_id"] == "test-session-123"
+    assert "usage" in on_session_end.call_args.kwargs
+
+
+@pytest.mark.asyncio()
+async def test_execute_fires_post_tool_call_hook(mock_runner_with_mixed_events):
+    """execute() fires post_tool_call when a function_call part is seen."""
+    from beddel_antigravity_sdk.adapter import AntigravityAgentAdapter
+
+    post_tool_call = AsyncMock()
+    adapter = AntigravityAgentAdapter(
+        model="gemini-2.5-flash",
+        timeout=30,
+        lifecycle_hooks={"post_tool_call": post_tool_call},
+    )
+    mock_runner_with_mixed_events(
+        [{"type": "tool_use", "name": "read_file", "args": {"path": "/x.py"}}]
+    )
+
+    await adapter.execute("Read a file")
+
+    post_tool_call.assert_called_once()
+    assert post_tool_call.call_args.kwargs["tool_name"] == "read_file"
+    assert post_tool_call.call_args.kwargs["input"] == {"path": "/x.py"}
+
+
+@pytest.mark.asyncio()
+async def test_execute_hook_exception_does_not_propagate(mock_runner_with_text_events):
+    """A raising lifecycle hook callback does not break execute()."""
+    from beddel_antigravity_sdk.adapter import AntigravityAgentAdapter
+
+    def _broken_hook(**kwargs: Any) -> None:
+        raise RuntimeError("hook exploded")
+
+    adapter = AntigravityAgentAdapter(
+        model="gemini-2.5-flash",
+        timeout=30,
+        lifecycle_hooks={
+            "on_session_start": _broken_hook,
+            "on_session_end": _broken_hook,
+        },
+    )
+    mock_runner_with_text_events(["Hi"])
+
+    result = await adapter.execute("Say hi")
+
+    assert result.exit_code == 0
+    assert result.output == "Hi"
+
+
+@pytest.mark.asyncio()
+async def test_execute_fires_on_tool_error_hook_on_failure(adapter):
+    """execute() fires on_tool_error before raising AgentError on a generic exception."""
+    on_tool_error = AsyncMock()
+    adapter._lifecycle_hooks = {"on_tool_error": on_tool_error}
+
+    import sys as _sys
+
+    adk_runners = _sys.modules["google.adk.runners"]
+
+    def _raise_run_async(*args: Any, **kwargs: Any):
+        raise RuntimeError("kaboom")
+
+    broken_runner = MagicMock()
+    broken_runner.run_async.side_effect = _raise_run_async
+    adk_runners.Runner.return_value = broken_runner
+
+    adk_sessions = _sys.modules["google.adk.sessions"]
+    mock_session = MockSession(id="err-session-2")
+    mock_session_service = AsyncMock()
+    mock_session_service.create_session = AsyncMock(return_value=mock_session)
+    adk_sessions.InMemorySessionService.return_value = mock_session_service
+
+    with pytest.raises(AgentError):
+        await adapter.execute("trigger error")
+
+    on_tool_error.assert_called_once()
+    assert "kaboom" in on_tool_error.call_args.kwargs["error"]

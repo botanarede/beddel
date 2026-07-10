@@ -64,8 +64,16 @@ class AntigravityAgentAdapter:
             (Wired in Story K5.5 — currently stored but not passed to Runner.)
         skills_paths: Optional list of skill file paths to load.
             (Wired in Story K5.5 — currently stored but not passed to Agent.)
-        lifecycle_hooks: Optional lifecycle hook callbacks.
-            (Wired in Story K5.4 — currently stored but not invoked.)
+        lifecycle_hooks: Optional lifecycle hook callbacks. Recognized keys:
+            ``on_session_start``, ``on_session_end``, ``pre_tool_call_decide``,
+            ``post_tool_call``, ``on_tool_error``. Each value is a callable
+            (sync or async) invoked defensively by :meth:`_fire_hook` —
+            exceptions are logged and never propagate into agent execution.
+        tracer: Optional ``ITracer``-shaped instance (duck-typed, not
+            imported at module level) used to emit ``"antigravity.execute"``
+            / ``"antigravity.stream"`` spans around each run. Tracing
+            failures are logged and never propagate (mirrors the domain
+            executor's defensive tracing pattern).
     """
 
     def __init__(
@@ -79,6 +87,7 @@ class AntigravityAgentAdapter:
         save_dir: str | None = None,
         skills_paths: list[str] | None = None,
         lifecycle_hooks: dict[str, Any] | None = None,
+        tracer: Any | None = None,
     ) -> None:
         self._model = model
         self._timeout = timeout
@@ -89,6 +98,7 @@ class AntigravityAgentAdapter:
         self._save_dir = save_dir
         self._skills_paths = skills_paths or []
         self._lifecycle_hooks = lifecycle_hooks or {}
+        self._tracer = tracer
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -233,6 +243,107 @@ class AntigravityAgentAdapter:
                 return server_config
         return None
 
+    def _start_span(
+        self, name: str, attributes: dict[str, Any] | None = None
+    ) -> Any | None:
+        """Start a trace span defensively.
+
+        Mirrors the domain executor's defensive tracing pattern
+        (``src/beddel-py/src/beddel/domain/executor.py``): tracing is
+        best-effort observability and must never break agent execution.
+
+        Args:
+            name: Span name (e.g. ``"antigravity.execute"``).
+            attributes: Optional key-value attributes to attach to the span.
+
+        Returns:
+            The opaque span handle returned by the tracer, or ``None`` if
+            no tracer is configured or starting the span failed.
+        """
+        if self._tracer is None:
+            return None
+        try:
+            return self._tracer.start_span(name, attributes)
+        except Exception:
+            logger.warning("Tracing start_span failed (ignored)", exc_info=True)
+            return None
+
+    def _end_span(
+        self, span: Any | None, attributes: dict[str, Any] | None = None
+    ) -> None:
+        """End a trace span defensively.
+
+        No-op if no tracer is configured or ``span`` is ``None`` (e.g.
+        because :meth:`_start_span` failed or returned early).
+
+        Args:
+            span: The opaque span handle returned by :meth:`_start_span`.
+            attributes: Optional key-value attributes to attach before closing.
+        """
+        if self._tracer is None or span is None:
+            return
+        try:
+            self._tracer.end_span(span, attributes)
+        except Exception:
+            logger.warning("Tracing end_span failed (ignored)", exc_info=True)
+
+    def _extract_usage(self, agent: Any) -> dict[str, int]:
+        """Defensively extract token usage from ``agent.conversation.total_usage``.
+
+        The Google ADK's ``Agent``/conversation object model may not expose
+        this shape in all versions — attribute access is fully defensive
+        (``getattr`` chains) and never raises.
+
+        Args:
+            agent: The ADK ``Agent`` instance used for this run.
+
+        Returns:
+            A dict with ``prompt_tokens``, ``completion_tokens``, and
+            ``total_tokens`` keys, or an empty dict if the usage data is
+            unavailable or malformed.
+        """
+        conversation = getattr(agent, "conversation", None)
+        total_usage = (
+            getattr(conversation, "total_usage", None)
+            if conversation is not None
+            else None
+        )
+        if total_usage is None:
+            return {}
+        return {
+            "prompt_tokens": getattr(total_usage, "prompt_tokens", 0) or 0,
+            "completion_tokens": getattr(total_usage, "completion_tokens", 0) or 0,
+            "total_tokens": getattr(total_usage, "total_tokens", 0) or 0,
+        }
+
+    async def _fire_hook(self, name: str, *args: Any, **kwargs: Any) -> None:
+        """Fire a lifecycle hook callback by name, defensively.
+
+        Looks up ``self._lifecycle_hooks.get(name)``. If configured, calls
+        it — awaiting directly if it is a coroutine function, otherwise
+        running it in a thread (mirrors the sync/async dispatch pattern
+        used for tool callables in ``tools.py::antigravity_tool_exec``).
+        Exceptions are logged and swallowed: lifecycle hooks must never
+        break agent execution.
+
+        Args:
+            name: The hook key to look up (e.g. ``"on_session_start"``).
+            *args: Positional arguments forwarded to the hook callable.
+            **kwargs: Keyword arguments forwarded to the hook callable.
+        """
+        hook = self._lifecycle_hooks.get(name)
+        if hook is None:
+            return
+        try:
+            import inspect
+
+            if inspect.iscoroutinefunction(hook):
+                await hook(*args, **kwargs)
+            elif callable(hook):
+                await asyncio.to_thread(hook, *args, **kwargs)
+        except Exception:
+            logger.warning("Lifecycle hook %r failed (ignored)", name, exc_info=True)
+
     # ------------------------------------------------------------------
     # IAgentAdapter.execute
     # ------------------------------------------------------------------
@@ -324,12 +435,18 @@ class AntigravityAgentAdapter:
         events: list[dict[str, Any]] = []
         files_changed: list[str] = []
         exit_code = 0
+        session: Any = None
+        span = self._start_span(
+            "antigravity.execute",
+            {"model": config["model"], "sandbox": sandbox},
+        )
 
         try:
             session = await session_service.create_session(
                 app_name="beddel-antigravity",
                 user_id="beddel",
             )
+            await self._fire_hook("on_session_start", session_id=session.id)
             content = Content(parts=[Part(text=prompt)])
 
             async with asyncio.timeout(self._timeout):
@@ -360,6 +477,11 @@ class AntigravityAgentAdapter:
                                         "input": tool_args,
                                     }
                                 )
+                                await self._fire_hook(
+                                    "post_tool_call",
+                                    tool_name=tool_name,
+                                    input=tool_args,
+                                )
                                 # Track file changes from tool calls
                                 if tool_name in (
                                     "write_file",
@@ -381,18 +503,27 @@ class AntigravityAgentAdapter:
         except AgentError:
             raise
         except Exception as exc:
+            await self._fire_hook("on_tool_error", error=str(exc))
             raise AgentError(
                 code=AGENT_EXECUTION_FAILED,
                 message="Antigravity SDK execution error",
                 details={"error": str(exc)},
             ) from exc
+        finally:
+            usage = self._extract_usage(agent)
+            self._end_span(span, {"usage": usage, "exit_code": exit_code})
+            await self._fire_hook(
+                "on_session_end",
+                session_id=getattr(session, "id", None),
+                usage=usage,
+            )
 
         return AgentResult(
             exit_code=exit_code,
             output="\n".join(text_parts),
             events=events,
             files_changed=files_changed,
-            usage={},
+            usage=self._extract_usage(agent),
             agent_id="antigravity-sdk",
         )
 
@@ -477,12 +608,18 @@ class AntigravityAgentAdapter:
         )
 
         text_parts: list[str] = []
+        session: Any = None
+        span = self._start_span(
+            "antigravity.stream",
+            {"model": config["model"], "sandbox": sandbox},
+        )
 
         try:
             session = await session_service.create_session(
                 app_name="beddel-antigravity",
                 user_id="beddel",
             )
+            await self._fire_hook("on_session_start", session_id=session.id)
             content = Content(parts=[Part(text=prompt)])
 
             async with asyncio.timeout(self._timeout):
@@ -498,11 +635,18 @@ class AntigravityAgentAdapter:
                                 yield {"type": "text", "text": part.text}
                             elif hasattr(part, "function_call") and part.function_call:
                                 fc = part.function_call
+                                tool_name = getattr(fc, "name", "")
+                                tool_args = getattr(fc, "args", {})
                                 yield {
                                     "type": "tool_use",
-                                    "name": getattr(fc, "name", ""),
-                                    "input": getattr(fc, "args", {}),
+                                    "name": tool_name,
+                                    "input": tool_args,
                                 }
+                                await self._fire_hook(
+                                    "post_tool_call",
+                                    tool_name=tool_name,
+                                    input=tool_args,
+                                )
 
         except TimeoutError as exc:
             raise AgentError(
@@ -513,16 +657,25 @@ class AntigravityAgentAdapter:
         except AgentError:
             raise
         except Exception as exc:
+            await self._fire_hook("on_tool_error", error=str(exc))
             raise AgentError(
                 code=AGENT_STREAM_INTERRUPTED,
                 message="Antigravity SDK stream interrupted",
                 details={"error": str(exc)},
             ) from exc
+        finally:
+            usage = self._extract_usage(agent)
+            self._end_span(span, {"usage": usage})
+            await self._fire_hook(
+                "on_session_end",
+                session_id=getattr(session, "id", None),
+                usage=usage,
+            )
 
         # Emit final completion event
         yield {
             "type": "complete",
             "output": "\n".join(text_parts),
             "exit_code": 0,
-            "usage": {},
+            "usage": self._extract_usage(agent),
         }

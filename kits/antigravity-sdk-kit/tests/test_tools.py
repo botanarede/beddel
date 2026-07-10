@@ -20,6 +20,7 @@ from beddel_antigravity_sdk.session import AntigravitySession, ToolContext
 from beddel_antigravity_sdk.tools import (
     ANTIGRAVITY_EXECUTION_FAILED,
     ANTIGRAVITY_MCP_FAILED,
+    ANTIGRAVITY_SAFETY_DENIED,
     antigravity_mcp_call,
     antigravity_safety_check,
     antigravity_session_load,
@@ -43,7 +44,9 @@ def mock_adapter() -> MagicMock:
     adapter._mcp_servers = None
     adapter._enable_subagents = False
     adapter._model = "gemini-2.5-flash"
-    adapter._safety_policy = "deny_all"
+    adapter._safety_policy = "allow"
+    adapter._lifecycle_hooks = {}
+    adapter._fire_hook = AsyncMock()
     return adapter
 
 
@@ -196,6 +199,95 @@ async def test_tool_exec_not_found(ctx: ToolContext):
     assert result["status"] == "error"
     assert result["code"] == ANTIGRAVITY_EXECUTION_FAILED
     assert "missing_tool" in result["message"]
+
+
+# ---------------------------------------------------------------------------
+# K5.4: antigravity_tool_exec safety enforcement (defense in depth — inner)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_tool_exec_denied_by_safety_policy(ctx: ToolContext):
+    """tool_exec is blocked by deny_all policy — target tool never invoked."""
+    target = MagicMock(return_value="should-not-run")
+    target.__name__ = "risky_tool"
+    ctx.adapter._tools = [target]
+    ctx.adapter._safety_policy = "deny_all"
+
+    result = await antigravity_tool_exec(ctx, "risky_tool", {})
+
+    assert result["status"] == "error"
+    assert result["code"] == ANTIGRAVITY_SAFETY_DENIED
+    assert result["policy"] == "deny_all"
+    target.assert_not_called()
+
+
+@pytest.mark.asyncio()
+async def test_tool_exec_allowed_by_safety_policy_proceeds(ctx: ToolContext):
+    """tool_exec proceeds to normal invocation when safety policy allows."""
+
+    def my_tool(x: int = 0) -> str:
+        return f"result_{x}"
+
+    ctx.adapter._tools = [my_tool]
+    ctx.adapter._safety_policy = "allow"
+
+    result = await antigravity_tool_exec(ctx, "my_tool", {"x": 7})
+
+    assert result["status"] == "ok"
+    assert result["result"] == "result_7"
+
+
+@pytest.mark.asyncio()
+async def test_tool_exec_workspace_only_denies_non_workspace_tool(ctx: ToolContext):
+    """tool_exec denies a tool not in the workspace_only allowed set."""
+    target = MagicMock(return_value="nope")
+    target.__name__ = "exec_command"
+    ctx.adapter._tools = [target]
+    ctx.adapter._safety_policy = "workspace_only"
+
+    result = await antigravity_tool_exec(ctx, "exec_command", {})
+
+    assert result["status"] == "error"
+    assert result["code"] == ANTIGRAVITY_SAFETY_DENIED
+    target.assert_not_called()
+
+
+@pytest.mark.asyncio()
+async def test_tool_exec_fires_pre_tool_call_decide_hook(ctx: ToolContext):
+    """tool_exec fires pre_tool_call_decide via adapter._fire_hook when configured."""
+
+    def my_tool() -> str:
+        return "ok"
+
+    ctx.adapter._tools = [my_tool]
+    ctx.adapter._safety_policy = "allow"
+    ctx.adapter._lifecycle_hooks = {"pre_tool_call_decide": MagicMock()}
+
+    await antigravity_tool_exec(ctx, "my_tool", {"a": 1})
+
+    ctx.adapter._fire_hook.assert_called_once()
+    call_args = ctx.adapter._fire_hook.call_args
+    assert call_args[0][0] == "pre_tool_call_decide"
+    assert call_args[0][1] == "my_tool"
+    assert call_args[0][2] == {"a": 1}
+    assert call_args[0][3] is True
+
+
+@pytest.mark.asyncio()
+async def test_tool_exec_no_hook_fired_when_not_configured(ctx: ToolContext):
+    """tool_exec does not call _fire_hook when pre_tool_call_decide is unset."""
+
+    def my_tool() -> str:
+        return "ok"
+
+    ctx.adapter._tools = [my_tool]
+    ctx.adapter._safety_policy = "allow"
+    ctx.adapter._lifecycle_hooks = {}
+
+    await antigravity_tool_exec(ctx, "my_tool", {})
+
+    ctx.adapter._fire_hook.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
