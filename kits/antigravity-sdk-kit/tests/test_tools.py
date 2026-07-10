@@ -368,3 +368,51 @@ async def test_safety_check_workspace_denies(ctx: ToolContext):
     assert result["status"] == "ok"
     assert result["allowed"] is False
     assert "exec_command" in result["reason"]
+
+
+# ---------------------------------------------------------------------------
+# Test: unknown safety policy fails closed (H1 fix)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_safety_check_unknown_policy_fails_closed(ctx: ToolContext):
+    """Unknown policy name denies by default (fail-closed)."""
+    ctx.adapter._safety_policy = "nonexistent_policy"
+
+    result = await antigravity_safety_check(ctx, "any_tool", {})
+
+    assert result["status"] == "ok"
+    assert result["allowed"] is False
+    assert "Unknown" in result["reason"]
+
+
+# ---------------------------------------------------------------------------
+# Test: subagent accumulates usage (M2 fix)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_subagent_accumulates_usage(ctx: ToolContext):
+    """subagent merges result.usage into session usage counters."""
+    ctx.adapter._enable_subagents = True
+    ctx.adapter.execute = AsyncMock(
+        return_value=AgentResult(
+            exit_code=0,
+            output="Done",
+            events=[],
+            files_changed=[],
+            usage={"prompt_tokens": 50, "completion_tokens": 25, "total_tokens": 75},
+            agent_id="antigravity-sdk",
+        )
+    )
+
+    # Initial usage is zero
+    assert ctx.session.usage["total_tokens"] == 0
+
+    await antigravity_subagent(ctx, "helper", "task")
+
+    # Usage should be accumulated
+    assert ctx.session.usage["prompt_tokens"] == 50
+    assert ctx.session.usage["completion_tokens"] == 25
+    assert ctx.session.usage["total_tokens"] == 75

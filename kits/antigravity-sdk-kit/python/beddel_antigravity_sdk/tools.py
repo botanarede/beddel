@@ -263,6 +263,14 @@ async def antigravity_subagent(
         }
     )
 
+    # Accumulate usage metrics from sub-agent execution
+    if result.usage:
+        ctx.session.usage["prompt_tokens"] += result.usage.get("prompt_tokens", 0)
+        ctx.session.usage["completion_tokens"] += result.usage.get(
+            "completion_tokens", 0
+        )
+        ctx.session.usage["total_tokens"] += result.usage.get("total_tokens", 0)
+
     return {
         "status": "ok",
         "output": result.output,
@@ -404,6 +412,15 @@ async def antigravity_safety_check(
     """
     policy_name = ctx.adapter._safety_policy
     allowed_tools = _SAFETY_POLICIES.get(policy_name)
+
+    # Unknown policy → fail-closed (deny all)
+    if policy_name not in _SAFETY_POLICIES:
+        return {
+            "status": "ok",
+            "allowed": False,
+            "policy": policy_name,
+            "reason": f"Unknown safety policy '{policy_name}' — denying by default",
+        }
 
     # None means "allow all" (no restriction)
     if allowed_tools is None:

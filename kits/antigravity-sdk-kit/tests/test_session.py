@@ -172,3 +172,38 @@ def test_tool_context_construction():
     assert ctx.session is session
     assert ctx.adapter is mock_adapter
     assert ctx.session.state["ctx"] is True
+
+
+# ---------------------------------------------------------------------------
+# Test: path traversal in conversation_id rejected (C2 fix)
+# ---------------------------------------------------------------------------
+
+
+def test_session_save_rejects_path_traversal(tmp_path: Path):
+    """save() rejects conversation_id with path traversal characters."""
+    session = AntigravitySession(
+        state={"x": 1},
+        conversation_id="../../../etc/passwd",
+        save_dir=str(tmp_path),
+    )
+
+    with pytest.raises(ValueError, match="must not contain"):
+        session.save()
+
+
+def test_session_load_rejects_path_traversal(tmp_path: Path):
+    """load() rejects conversation_id with path traversal characters."""
+    with pytest.raises(ValueError, match="must not contain"):
+        AntigravitySession.load("../../etc/shadow", str(tmp_path))
+
+
+def test_session_save_rejects_slash(tmp_path: Path):
+    """save() rejects conversation_id containing forward slash."""
+    session = AntigravitySession(
+        state={},
+        conversation_id="sub/dir",
+        save_dir=str(tmp_path),
+    )
+
+    with pytest.raises(ValueError, match="must not contain"):
+        session.save()

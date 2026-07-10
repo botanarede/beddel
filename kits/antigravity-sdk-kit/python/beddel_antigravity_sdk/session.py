@@ -29,6 +29,24 @@ logger = logging.getLogger(__name__)
 # Error code constants (architecture §35.10)
 ANTIGRAVITY_SESSION_NOT_FOUND: str = "BEDDEL-AGENT-755"
 
+# Characters forbidden in conversation_id (path traversal prevention)
+_FORBIDDEN_ID_CHARS = frozenset("/\\..")
+
+
+def _validate_conversation_id(conversation_id: str) -> None:
+    """Validate conversation_id does not contain path traversal sequences.
+
+    Raises:
+        ValueError: If the ID contains ``..``, ``/``, ``\\``, or is empty.
+    """
+    if not conversation_id:
+        raise ValueError("conversation_id must not be empty")
+    if ".." in conversation_id or "/" in conversation_id or "\\" in conversation_id:
+        raise ValueError(
+            f"Invalid conversation_id: {conversation_id!r} "
+            "(must not contain '..', '/', or '\\\\')"
+        )
+
 
 @dataclass
 class AntigravitySession:
@@ -60,12 +78,16 @@ class AntigravitySession:
             Path to the saved JSON file.
 
         Raises:
-            ValueError: If ``save_dir`` or ``conversation_id`` is not set.
+            ValueError: If ``save_dir`` or ``conversation_id`` is not set,
+                or if ``conversation_id`` contains path traversal characters.
         """
         if not self.save_dir:
             raise ValueError("Cannot save session: save_dir is not configured")
         if not self.conversation_id:
             self.conversation_id = str(uuid.uuid4())
+
+        # Security: prevent path traversal via conversation_id
+        _validate_conversation_id(self.conversation_id)
 
         save_path = Path(self.save_dir)
         save_path.mkdir(parents=True, exist_ok=True)
@@ -94,7 +116,12 @@ class AntigravitySession:
         Raises:
             AgentError: ``BEDDEL-AGENT-755`` if the conversation file
                 does not exist.
+            ValueError: If ``conversation_id`` contains path traversal
+                characters.
         """
+        # Security: prevent path traversal via conversation_id
+        _validate_conversation_id(conversation_id)
+
         file_path = Path(save_dir) / f"{conversation_id}.json"
         if not file_path.exists():
             raise AgentError(
