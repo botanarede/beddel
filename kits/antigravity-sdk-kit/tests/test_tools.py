@@ -8,8 +8,9 @@ and error paths. All tests use mocked adapter/session.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -198,24 +199,154 @@ async def test_tool_exec_not_found(ctx: ToolContext):
 
 
 # ---------------------------------------------------------------------------
-# Test: antigravity_mcp_call happy path
+# Test: antigravity_mcp_call — stdio happy path (K5.3)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio()
-async def test_mcp_call_happy_path(ctx: ToolContext):
-    """mcp_call returns result when server is configured."""
-    ctx.adapter._mcp_servers = [{"name": "my-server", "url": "http://localhost:3000"}]
+async def test_mcp_call_stdio_happy_path(ctx: ToolContext):
+    """mcp_call with stdio server builds McpStdioServer, calls tool, returns ok."""
+    ctx.adapter._mcp_servers = [
+        {
+            "name": "fs-server",
+            "transport": "stdio",
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-fs"],
+            "env": {"HOME": "/tmp"},
+        }
+    ]
+
+    # Mock google.adk.tools.mcp so McpStdioServer returns a mock server
+    mock_server_instance = AsyncMock()
+    mock_server_instance.call_tool = AsyncMock(
+        return_value={"files": ["a.txt", "b.txt"]}
+    )
+
+    mock_mcp_mod = sys.modules["google.adk.tools.mcp"]
+    mock_mcp_mod.McpStdioServer = MagicMock(return_value=mock_server_instance)
+    mock_mcp_mod.McpSseServer = MagicMock()
+
+    result = await antigravity_mcp_call(ctx, "fs-server", "list_files", {"dir": "/tmp"})
+
+    assert result["status"] == "ok"
+    assert result["result"] == {"files": ["a.txt", "b.txt"]}
+    # Verify call_tool was invoked with correct args
+    mock_server_instance.call_tool.assert_awaited_once_with(
+        "list_files", {"dir": "/tmp"}
+    )
+    # Verify McpStdioServer was constructed with right kwargs
+    mock_mcp_mod.McpStdioServer.assert_called_once_with(
+        command="npx",
+        args=["-y", "@modelcontextprotocol/server-fs"],
+        env={"HOME": "/tmp"},
+    )
+    # Verify session state was updated for traceability
+    assert len(ctx.session.state["_mcp_calls"]) == 1
+    assert ctx.session.state["_mcp_calls"][0]["server"] == "fs-server"
+    assert ctx.session.state["_mcp_calls"][0]["tool"] == "list_files"
+
+
+# ---------------------------------------------------------------------------
+# Test: antigravity_mcp_call — sse happy path (K5.3)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_mcp_call_sse_happy_path(ctx: ToolContext):
+    """mcp_call with sse server builds McpSseServer, calls tool, returns ok."""
+    ctx.adapter._mcp_servers = [
+        {
+            "name": "remote-search",
+            "transport": "sse",
+            "url": "http://localhost:8080/mcp",
+            "headers": {"X-Api-Key": "secret"},
+        }
+    ]
+
+    mock_server_instance = AsyncMock()
+    mock_server_instance.call_tool = AsyncMock(
+        return_value={"results": ["doc1", "doc2"]}
+    )
+
+    mock_mcp_mod = sys.modules["google.adk.tools.mcp"]
+    mock_mcp_mod.McpStdioServer = MagicMock()
+    mock_mcp_mod.McpSseServer = MagicMock(return_value=mock_server_instance)
 
     result = await antigravity_mcp_call(
-        ctx, "my-server", "read_resource", {"uri": "/data"}
+        ctx, "remote-search", "search", {"query": "test"}
     )
 
     assert result["status"] == "ok"
-    assert result["result"]["server"] == "my-server"
-    assert result["result"]["tool"] == "read_resource"
-    # Verify session state was updated
+    assert result["result"] == {"results": ["doc1", "doc2"]}
+    mock_server_instance.call_tool.assert_awaited_once_with("search", {"query": "test"})
+    mock_mcp_mod.McpSseServer.assert_called_once_with(
+        url="http://localhost:8080/mcp",
+        headers={"X-Api-Key": "secret"},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test: antigravity_mcp_call — exception during ADK call (K5.3)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_mcp_call_exception_returns_error(ctx: ToolContext):
+    """mcp_call wraps exceptions into error dict, never raises."""
+    ctx.adapter._mcp_servers = [
+        {
+            "name": "broken-server",
+            "transport": "stdio",
+            "command": "bad-cmd",
+            "args": [],
+            "env": {},
+        }
+    ]
+
+    mock_server_instance = AsyncMock()
+    mock_server_instance.call_tool = AsyncMock(
+        side_effect=RuntimeError("Connection reset")
+    )
+
+    mock_mcp_mod = sys.modules["google.adk.tools.mcp"]
+    mock_mcp_mod.McpStdioServer = MagicMock(return_value=mock_server_instance)
+
+    result = await antigravity_mcp_call(ctx, "broken-server", "any_tool", {"x": 1})
+
+    assert result["status"] == "error"
+    assert result["code"] == ANTIGRAVITY_MCP_FAILED
+    assert "Connection reset" in result["message"]
+    # Verify traceability still recorded the attempt
     assert len(ctx.session.state["_mcp_calls"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# Test: antigravity_mcp_call — google.adk.tools.mcp import fails (K5.3)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_mcp_call_import_failure(ctx: ToolContext):
+    """mcp_call returns error when google.adk.tools.mcp cannot be imported."""
+    ctx.adapter._mcp_servers = [
+        {
+            "name": "fs-server",
+            "transport": "stdio",
+            "command": "npx",
+            "args": [],
+            "env": {},
+        }
+    ]
+
+    # Simulate import failure by patching sys.modules
+    with patch.dict(sys.modules, {"google.adk.tools.mcp": None}):
+        result = await antigravity_mcp_call(
+            ctx, "fs-server", "read_file", {"path": "/x"}
+        )
+
+    assert result["status"] == "error"
+    assert result["code"] == ANTIGRAVITY_MCP_FAILED
+    assert "google-adk is not installed" in result["message"]
 
 
 # ---------------------------------------------------------------------------
@@ -244,7 +375,12 @@ async def test_mcp_call_no_servers(ctx: ToolContext):
 async def test_mcp_call_server_not_found(ctx: ToolContext):
     """mcp_call returns error when target server not in config."""
     ctx.adapter._mcp_servers = [
-        {"name": "other-server", "url": "http://localhost:4000"}
+        {
+            "name": "other-server",
+            "transport": "sse",
+            "url": "http://localhost:4000",
+            "headers": {},
+        }
     ]
 
     result = await antigravity_mcp_call(ctx, "missing-server", "tool", {})
@@ -252,6 +388,8 @@ async def test_mcp_call_server_not_found(ctx: ToolContext):
     assert result["status"] == "error"
     assert result["code"] == ANTIGRAVITY_MCP_FAILED
     assert "missing-server" in result["message"]
+    assert "available_servers" in result
+    assert "other-server" in result["available_servers"]
 
 
 # ---------------------------------------------------------------------------

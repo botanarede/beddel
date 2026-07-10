@@ -26,6 +26,8 @@ from beddel.error_codes import (
     AGENT_TIMEOUT,
 )
 
+from beddel_antigravity_sdk.session import ANTIGRAVITY_MCP_FAILED
+
 __all__ = ["AntigravityAgentAdapter"]
 
 logger = logging.getLogger(__name__)
@@ -153,6 +155,84 @@ class AntigravityAgentAdapter:
 
         return config
 
+    def _build_mcp_servers(self) -> list[Any]:
+        """Build MCP server objects from adapter's ``_mcp_servers`` config list.
+
+        Lazily imports ``McpStdioServer`` and ``McpSseServer`` from
+        ``google.adk.tools.mcp`` and converts each config dict into a real
+        server object based on the ``"transport"`` key.
+
+        Returns:
+            A list of ``McpStdioServer`` / ``McpSseServer`` instances ready
+            to be passed to the ADK ``Agent(tools=[...])``.  Returns an
+            empty list if there are no MCP server configs or if the
+            ``google.adk.tools.mcp`` import fails.
+
+        Raises:
+            AgentError: ``BEDDEL-AGENT-754`` if a config entry has an
+                unrecognized ``"transport"`` value.
+        """
+        if not self._mcp_servers:
+            return []
+
+        try:
+            from google.adk.tools.mcp import McpSseServer, McpStdioServer  # type: ignore[import-not-found]
+        except ImportError:
+            logger.warning(
+                "google.adk.tools.mcp is not available — "
+                "MCP server configuration will be skipped for this run"
+            )
+            return []
+
+        servers: list[Any] = []
+        for server_config in self._mcp_servers:
+            transport = server_config.get("transport", "")
+            name = server_config.get("name", "<unnamed>")
+
+            if transport == "stdio":
+                servers.append(
+                    McpStdioServer(
+                        command=server_config.get("command", ""),
+                        args=server_config.get("args", []),
+                        env=server_config.get("env", {}),
+                    )
+                )
+            elif transport == "sse":
+                servers.append(
+                    McpSseServer(
+                        url=server_config.get("url", ""),
+                        headers=server_config.get("headers", {}),
+                    )
+                )
+            else:
+                raise AgentError(
+                    code=ANTIGRAVITY_MCP_FAILED,
+                    message=f"Unrecognized MCP transport: {transport!r}",
+                    details={
+                        "transport": transport,
+                        "server_name": name,
+                        "supported": ["stdio", "sse"],
+                    },
+                )
+
+        return servers
+
+    def _get_mcp_server_config(self, name: str) -> dict[str, Any] | None:
+        """Look up an MCP server config dict by its ``"name"`` key.
+
+        Args:
+            name: The server name to look up.
+
+        Returns:
+            The config dict if found, or ``None`` if not found.
+        """
+        if not self._mcp_servers:
+            return None
+        for server_config in self._mcp_servers:
+            if isinstance(server_config, dict) and server_config.get("name") == name:
+                return server_config
+        return None
+
     # ------------------------------------------------------------------
     # IAgentAdapter.execute
     # ------------------------------------------------------------------
@@ -223,6 +303,14 @@ class AntigravityAgentAdapter:
         }
         if config["tools"]:
             agent_kwargs["tools"] = config["tools"]
+
+        # Append MCP server objects (ADK manages their lifecycle)
+        mcp_servers = self._build_mcp_servers()
+        if mcp_servers:
+            agent_kwargs.setdefault("tools", [])
+            if not isinstance(agent_kwargs["tools"], list):
+                agent_kwargs["tools"] = list(agent_kwargs["tools"])
+            agent_kwargs["tools"].extend(mcp_servers)
 
         agent = Agent(**agent_kwargs)
         session_service = InMemorySessionService()
@@ -371,6 +459,14 @@ class AntigravityAgentAdapter:
         }
         if config["tools"]:
             agent_kwargs["tools"] = config["tools"]
+
+        # Append MCP server objects (ADK manages their lifecycle)
+        mcp_servers = self._build_mcp_servers()
+        if mcp_servers:
+            agent_kwargs.setdefault("tools", [])
+            if not isinstance(agent_kwargs["tools"], list):
+                agent_kwargs["tools"] = list(agent_kwargs["tools"])
+            agent_kwargs["tools"].extend(mcp_servers)
 
         agent = Agent(**agent_kwargs)
         session_service = InMemorySessionService()

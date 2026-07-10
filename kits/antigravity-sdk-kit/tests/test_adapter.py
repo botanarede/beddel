@@ -218,3 +218,188 @@ def test_output_schema_not_set_when_none(adapter):
     """When output_schema is None, config does not contain the key."""
     config = adapter._build_config()
     assert "output_schema" not in config
+
+
+# ---------------------------------------------------------------------------
+# Test: _build_mcp_servers() stdio transport (K5.3)
+# ---------------------------------------------------------------------------
+
+
+def test_build_mcp_servers_stdio(adapter):
+    """_build_mcp_servers() builds McpStdioServer with correct kwargs."""
+    adapter._mcp_servers = [
+        {
+            "name": "fs-server",
+            "transport": "stdio",
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-fs"],
+            "env": {"HOME": "/tmp"},
+        }
+    ]
+
+    # The mock McpStdioServer/McpSseServer from sys.modules
+    mock_mcp_mod = sys.modules["google.adk.tools.mcp"]
+    mock_stdio_cls = MagicMock()
+    mock_stdio_instance = MagicMock()
+    mock_stdio_cls.return_value = mock_stdio_instance
+    mock_mcp_mod.McpStdioServer = mock_stdio_cls
+    mock_mcp_mod.McpSseServer = MagicMock()
+
+    servers = adapter._build_mcp_servers()
+
+    assert len(servers) == 1
+    assert servers[0] is mock_stdio_instance
+    mock_stdio_cls.assert_called_once_with(
+        command="npx",
+        args=["-y", "@modelcontextprotocol/server-fs"],
+        env={"HOME": "/tmp"},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test: _build_mcp_servers() sse transport (K5.3)
+# ---------------------------------------------------------------------------
+
+
+def test_build_mcp_servers_sse(adapter):
+    """_build_mcp_servers() builds McpSseServer with correct url/headers."""
+    adapter._mcp_servers = [
+        {
+            "name": "remote-search",
+            "transport": "sse",
+            "url": "http://localhost:8080/mcp",
+            "headers": {"Authorization": "Bearer token123"},
+        }
+    ]
+
+    mock_mcp_mod = sys.modules["google.adk.tools.mcp"]
+    mock_sse_cls = MagicMock()
+    mock_sse_instance = MagicMock()
+    mock_sse_cls.return_value = mock_sse_instance
+    mock_mcp_mod.McpSseServer = mock_sse_cls
+    mock_mcp_mod.McpStdioServer = MagicMock()
+
+    servers = adapter._build_mcp_servers()
+
+    assert len(servers) == 1
+    assert servers[0] is mock_sse_instance
+    mock_sse_cls.assert_called_once_with(
+        url="http://localhost:8080/mcp",
+        headers={"Authorization": "Bearer token123"},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test: _build_mcp_servers() unrecognized transport raises AgentError (K5.3)
+# ---------------------------------------------------------------------------
+
+
+def test_build_mcp_servers_unknown_transport(adapter):
+    """_build_mcp_servers() raises AgentError on unrecognized transport."""
+    from beddel_antigravity_sdk.session import ANTIGRAVITY_MCP_FAILED
+
+    adapter._mcp_servers = [
+        {
+            "name": "bad-server",
+            "transport": "websocket",
+        }
+    ]
+
+    mock_mcp_mod = sys.modules["google.adk.tools.mcp"]
+    mock_mcp_mod.McpStdioServer = MagicMock()
+    mock_mcp_mod.McpSseServer = MagicMock()
+
+    with pytest.raises(AgentError) as exc_info:
+        adapter._build_mcp_servers()
+
+    assert exc_info.value.code == ANTIGRAVITY_MCP_FAILED
+    assert "websocket" in exc_info.value.message
+    assert exc_info.value.details["server_name"] == "bad-server"
+    assert exc_info.value.details["supported"] == ["stdio", "sse"]
+
+
+# ---------------------------------------------------------------------------
+# Test: _build_mcp_servers() import failure gracefully returns [] (K5.3)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_build_mcp_servers_import_failure_graceful(
+    adapter, mock_runner_with_text_events
+):
+    """When google.adk.tools.mcp import fails, warns and returns [].
+
+    execute() still succeeds using only plain tools.
+    """
+    adapter._mcp_servers = [
+        {
+            "name": "fs-server",
+            "transport": "stdio",
+            "command": "npx",
+            "args": [],
+            "env": {},
+        }
+    ]
+
+    # Simulate import failure
+    with patch.dict(sys.modules, {"google.adk.tools.mcp": None}):
+        # _build_mcp_servers() should return [] and log a warning
+        servers = adapter._build_mcp_servers()
+        assert servers == []
+
+        # execute() should still work — set up runner to yield text
+        mock_runner_with_text_events(["MCP skipped, plain tools work"])
+        result = await adapter.execute("Hello")
+
+    assert result.exit_code == 0
+    assert "plain tools work" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Test: _get_mcp_server_config() finds matching config (K5.3)
+# ---------------------------------------------------------------------------
+
+
+def test_get_mcp_server_config_found(adapter):
+    """_get_mcp_server_config() returns matching config dict by name."""
+    adapter._mcp_servers = [
+        {"name": "alpha", "transport": "stdio", "command": "cmd-a"},
+        {"name": "beta", "transport": "sse", "url": "http://localhost:9090"},
+    ]
+
+    config = adapter._get_mcp_server_config("beta")
+
+    assert config is not None
+    assert config["name"] == "beta"
+    assert config["transport"] == "sse"
+    assert config["url"] == "http://localhost:9090"
+
+
+# ---------------------------------------------------------------------------
+# Test: _get_mcp_server_config() returns None when not found (K5.3)
+# ---------------------------------------------------------------------------
+
+
+def test_get_mcp_server_config_not_found(adapter):
+    """_get_mcp_server_config() returns None when name not in list."""
+    adapter._mcp_servers = [
+        {"name": "alpha", "transport": "stdio", "command": "cmd-a"},
+    ]
+
+    config = adapter._get_mcp_server_config("nonexistent")
+
+    assert config is None
+
+
+# ---------------------------------------------------------------------------
+# Test: _get_mcp_server_config() returns None when mcp_servers is None (K5.3)
+# ---------------------------------------------------------------------------
+
+
+def test_get_mcp_server_config_none_servers(adapter):
+    """_get_mcp_server_config() returns None when no servers configured."""
+    adapter._mcp_servers = None
+
+    config = adapter._get_mcp_server_config("any-name")
+
+    assert config is None

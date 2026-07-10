@@ -22,6 +22,7 @@ from typing import Any
 from beddel.domain.errors import AgentError
 
 from beddel_antigravity_sdk.session import (
+    ANTIGRAVITY_MCP_FAILED,
     ANTIGRAVITY_SESSION_NOT_FOUND,
     AntigravitySession,
     ToolContext,
@@ -42,7 +43,6 @@ logger = logging.getLogger(__name__)
 # Error code constants (architecture §35.10)
 ANTIGRAVITY_EXECUTION_FAILED: str = "BEDDEL-AGENT-751"
 ANTIGRAVITY_SAFETY_DENIED: str = "BEDDEL-AGENT-753"
-ANTIGRAVITY_MCP_FAILED: str = "BEDDEL-AGENT-754"
 
 # Safety policy rules
 _SAFETY_POLICIES: dict[str, set[str]] = {
@@ -193,18 +193,52 @@ async def antigravity_mcp_call(
         }
     )
 
-    # In a real implementation, this would use ADK's MCP client.
-    # For now, we delegate to the MCP infrastructure and return a placeholder.
-    # The actual MCP execution is wired in Story K5.3.
-    return {
-        "status": "ok",
-        "result": {
-            "server": server_name,
-            "tool": tool_name,
-            "args": args,
-            "_note": "MCP passthrough execution (full wiring in K5.3)",
-        },
-    }
+    # Build MCP server object and invoke tool via ADK
+    try:
+        from google.adk.tools.mcp import McpStdioServer, McpSseServer  # type: ignore[import-not-found]
+    except ImportError:
+        return {
+            "status": "error",
+            "code": ANTIGRAVITY_MCP_FAILED,
+            "message": "google-adk is not installed",
+        }
+
+    transport = (
+        target_server.get("transport", "") if isinstance(target_server, dict) else ""
+    )
+
+    try:
+        if transport == "stdio":
+            server = McpStdioServer(
+                command=target_server.get("command", ""),
+                args=target_server.get("args", []),
+                env=target_server.get("env", {}),
+            )
+        elif transport == "sse":
+            server = McpSseServer(
+                url=target_server.get("url", ""),
+                headers=target_server.get("headers", {}),
+            )
+        else:
+            return {
+                "status": "error",
+                "code": ANTIGRAVITY_MCP_FAILED,
+                "message": (
+                    f"Unsupported MCP transport {transport!r} "
+                    f"for server {server_name!r}"
+                ),
+            }
+
+        # Invoke the tool on the MCP server
+        result = await server.call_tool(tool_name, args)
+    except Exception as exc:
+        return {
+            "status": "error",
+            "code": ANTIGRAVITY_MCP_FAILED,
+            "message": f"MCP call failed: {exc}",
+        }
+
+    return {"status": "ok", "result": result}
 
 
 # ---------------------------------------------------------------------------

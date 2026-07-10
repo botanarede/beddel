@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 # Error code constants (architecture §35.10)
 ANTIGRAVITY_SESSION_NOT_FOUND: str = "BEDDEL-AGENT-755"
+ANTIGRAVITY_MCP_FAILED: str = "BEDDEL-AGENT-754"
 
 # Characters forbidden in conversation_id (path traversal prevention)
 _FORBIDDEN_ID_CHARS = frozenset("/\\..")

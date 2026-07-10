@@ -76,6 +76,8 @@ def _inject_mock_adk() -> dict[str, MagicMock]:
     mock_agents = MagicMock()
     mock_runners = MagicMock()
     mock_sessions = MagicMock()
+    mock_tools = MagicMock()
+    mock_tools_mcp = MagicMock()
     mock_genai = MagicMock()
     mock_genai_types = MagicMock()
 
@@ -89,6 +91,8 @@ def _inject_mock_adk() -> dict[str, MagicMock]:
     mock_adk.agents = mock_agents
     mock_adk.runners = mock_runners
     mock_adk.sessions = mock_sessions
+    mock_adk.tools = mock_tools
+    mock_tools.mcp = mock_tools_mcp
     mock_genai.types = mock_genai_types
 
     modules = {
@@ -97,6 +101,8 @@ def _inject_mock_adk() -> dict[str, MagicMock]:
         "google.adk.agents": mock_agents,
         "google.adk.runners": mock_runners,
         "google.adk.sessions": mock_sessions,
+        "google.adk.tools": mock_tools,
+        "google.adk.tools.mcp": mock_tools_mcp,
         "google.genai": mock_genai,
         "google.genai.types": mock_genai_types,
     }
@@ -108,6 +114,8 @@ def _inject_mock_adk() -> dict[str, MagicMock]:
         "agents": mock_agents,
         "runners": mock_runners,
         "sessions": mock_sessions,
+        "tools": mock_tools,
+        "tools_mcp": mock_tools_mcp,
         "genai": mock_genai,
         "genai_types": mock_genai_types,
     }
