@@ -1,0 +1,91 @@
+name: bonar-cms-kit
+version: 0.1.0
+description: >
+  Self-contained CMS kit for bonar-cms (Bota na Rede) — encapsulates all packages,
+  the Next.js app, tenant templates, and Firebase configs. Full tenant lifecycle:
+  generation, validation, build, deploy, preview.
+author: Beddel Team
+category: solution
+
+config:
+  firebase_project: ""
+  firebase_account: ""
+  default_locale: pt-BR
+
+tools:
+  # Generation (planned — CMS.3)
+  - name: generate_tenant
+    target: "beddel_bonar_cms.tools.generation:generate_tenant"
+    description: AI-powered tenant config generation from business briefing
+    category: generation
+
+  # Validation (planned — CMS.2)
+  - name: validate_tenant
+    target: "beddel_bonar_cms.tools.validation:validate_tenant"
+    description: Validate tenant JSON against @botanarede/schema (Zod)
+    category: validation
+
+  # CRUD (implemented — CMS.1)
+  - name: create_tenant
+    target: "beddel_bonar_cms.tools.crud:create_tenant"
+    description: Write new tenant config JSON to kit-internal tenants directory
+    category: crud
+  - name: read_tenant
+    target: "beddel_bonar_cms.tools.crud:read_tenant"
+    description: Load tenant config by ID
+    category: crud
+  - name: update_tenant
+    target: "beddel_bonar_cms.tools.crud:update_tenant"
+    description: Merge partial updates into existing tenant config
+    category: crud
+  - name: list_tenants
+    target: "beddel_bonar_cms.tools.crud:list_tenants"
+    description: List all tenant IDs with metadata
+    category: crud
+
+  # Build (planned — CMS.4)
+  - name: build_site
+    target: "beddel_bonar_cms.tools.build:build_site"
+    description: Next.js static export for a tenant (from kit-internal app)
+    category: build
+
+  # Deploy (planned — CMS.5)
+  - name: deploy_site
+    target: "beddel_bonar_cms.tools.deploy:deploy_site"
+    description: Firebase Hosting deploy for a tenant
+    category: deploy
+  - name: provision_firebase
+    target: "beddel_bonar_cms.tools.deploy:provision_firebase"
+    description: Create Firebase project + enable APIs via gcloud ADC
+    category: deploy
+
+  # Dev (planned — CMS.6)
+  - name: preview_site
+    target: "beddel_bonar_cms.tools.dev:preview_site"
+    description: Start local Next.js dev server for a tenant
+    category: dev
+  - name: stop_preview
+    target: "beddel_bonar_cms.tools.dev:stop_preview"
+    description: Stop running preview dev server
+    category: dev
+
+targets:
+  python:
+    status: implemented
+    module: beddel_bonar_cms
+    dependencies: []
+    tools:
+      - name: create_tenant
+        target: "beddel_bonar_cms.tools.crud:create_tenant"
+      - name: read_tenant
+        target: "beddel_bonar_cms.tools.crud:read_tenant"
+      - name: update_tenant
+        target: "beddel_bonar_cms.tools.crud:update_tenant"
+      - name: list_tenants
+        target: "beddel_bonar_cms.tools.crud:list_tenants"
+  typescript:
+    status: unavailable
+    unavailable_reason: >
+      bonar-cms-kit encapsulates a Node.js monorepo internally. The Python kit IS
+      the orchestration layer — Node.js is the runtime being orchestrated, not a
+      separate implementation target.
