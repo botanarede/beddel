@@ -1,0 +1,68 @@
+name: antigravity-sdk-kit
+version: 0.1.0
+description: "Antigravity SDK bridge \u2014 exposes Google Antigravity agent runtime as a Beddel IAgentAdapter"
+author: Beddel Team
+adapters:
+  - port: IAgentAdapter
+    name: antigravity
+    target: "beddel_antigravity_sdk.adapter:AntigravityAgentAdapter"
+    description: Agent adapter for Google Antigravity SDK runtime (LocalAgentConfig)
+tools:
+  - name: antigravity_tool_exec
+    target: "beddel_antigravity_sdk.tools:antigravity_tool_exec"
+    description: Execute a registered Antigravity custom tool by name
+    category: agent
+  - name: antigravity_mcp_call
+    target: "beddel_antigravity_sdk.tools:antigravity_mcp_call"
+    description: Call an MCP tool via Antigravity's McpStdioServer/McpSseServer
+    category: mcp
+  - name: antigravity_subagent
+    target: "beddel_antigravity_sdk.tools:antigravity_subagent"
+    description: Delegate a task to an Antigravity sub-agent
+    category: agent
+  - name: antigravity_session_save
+    target: "beddel_antigravity_sdk.tools:antigravity_session_save"
+    description: Persist Antigravity conversation state to save_dir
+    category: persistence
+  - name: antigravity_session_load
+    target: "beddel_antigravity_sdk.tools:antigravity_session_load"
+    description: Load a previous Antigravity conversation by conversation_id
+    category: persistence
+  - name: antigravity_usage
+    target: "beddel_antigravity_sdk.tools:antigravity_usage"
+    description: Retrieve token usage and cost metrics from an Antigravity session
+    category: observability
+  - name: antigravity_safety_check
+    target: "beddel_antigravity_sdk.tools:antigravity_safety_check"
+    description: Evaluate a tool invocation against Antigravity safety policies
+    category: guardrail
+targets:
+  python:
+    status: implemented
+    module: beddel_antigravity_sdk
+    dependencies:
+      - "google-adk>=2.0.0,<3.0.0"
+      - "pydantic>=2.0"
+    adapters:
+      - port: IAgentAdapter
+        name: antigravity
+        target: "beddel_antigravity_sdk.adapter:AntigravityAgentAdapter"
+    tools:
+      - name: antigravity_tool_exec
+        target: "beddel_antigravity_sdk.tools:antigravity_tool_exec"
+      - name: antigravity_mcp_call
+        target: "beddel_antigravity_sdk.tools:antigravity_mcp_call"
+      - name: antigravity_subagent
+        target: "beddel_antigravity_sdk.tools:antigravity_subagent"
+      - name: antigravity_session_save
+        target: "beddel_antigravity_sdk.tools:antigravity_session_save"
+      - name: antigravity_session_load
+        target: "beddel_antigravity_sdk.tools:antigravity_session_load"
+      - name: antigravity_usage
+        target: "beddel_antigravity_sdk.tools:antigravity_usage"
+      - name: antigravity_safety_check
+        target: "beddel_antigravity_sdk.tools:antigravity_safety_check"
+  typescript:
+    status: unavailable
+    unavailable_reason: "Antigravity SDK (google-adk) is Python-only. No TypeScript equivalent exists."
+    dev_note: "Monitor Google for a potential JS/TS port of the ADK. If released, implement the TS adapter following the same pattern as agent-claude-kit/typescript."

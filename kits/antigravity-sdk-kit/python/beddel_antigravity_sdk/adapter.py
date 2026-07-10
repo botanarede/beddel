@@ -1,0 +1,432 @@
+"""Antigravity Agent SDK adapter — in-process agent execution via ``google-adk``.
+
+This adapter bridges the Beddel domain core to the Google Antigravity SDK
+(``google-adk``), enabling agent-style interactions through Google's ADK
+``Runner.run_async()`` async generator.  It implements the
+:class:`~beddel.domain.ports.IAgentAdapter` protocol via structural
+subtyping (no explicit inheritance).
+
+Unlike the Claude adapter which spawns a subprocess, the Antigravity SDK
+runs in-process as a native async Python library.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from collections.abc import AsyncGenerator
+from typing import Any
+
+from beddel.domain.errors import AgentError
+from beddel.domain.models import AgentResult
+from beddel.error_codes import (
+    AGENT_EXECUTION_FAILED,
+    AGENT_NOT_CONFIGURED,
+    AGENT_STREAM_INTERRUPTED,
+    AGENT_TIMEOUT,
+)
+
+__all__ = ["AntigravityAgentAdapter"]
+
+logger = logging.getLogger(__name__)
+
+_SANDBOX_MAP: dict[str, str] = {
+    "read-only": "deny_all",
+    "workspace-write": "workspace_only",
+    "danger-full-access": "allow",
+}
+
+
+class AntigravityAgentAdapter:
+    """Antigravity SDK adapter using ``Runner.run_async()`` for in-process execution.
+
+    Implements the ``IAgentAdapter`` protocol structurally by exposing
+    :meth:`execute` and :meth:`stream` with matching signatures.  All
+    interaction with the Google ADK happens through ``Runner.run_async()``,
+    which is a native async generator yielding events in-process.
+
+    Note: The ``sandbox`` parameter in :meth:`execute` and :meth:`stream`
+    **overrides** the ``safety_policy`` set at construction time. This
+    matches the behavior of the Claude adapter where ``sandbox`` is the
+    caller's explicit intent for a specific invocation.
+
+    Args:
+        model: Default model identifier for Antigravity SDK invocations.
+        timeout: Maximum execution time in seconds before the session
+            is aborted.
+        safety_policy: Default safety policy (used when sandbox is None).
+        mcp_servers: Optional list of MCP server configurations.
+        tools: Optional list of tool objects to pass to the Agent.
+        enable_subagents: Whether to enable sub-agent spawning.
+        save_dir: Optional directory for agent session persistence.
+            (Wired in Story K5.5 — currently stored but not passed to Runner.)
+        skills_paths: Optional list of skill file paths to load.
+            (Wired in Story K5.5 — currently stored but not passed to Agent.)
+        lifecycle_hooks: Optional lifecycle hook callbacks.
+            (Wired in Story K5.4 — currently stored but not invoked.)
+    """
+
+    def __init__(
+        self,
+        model: str = "gemini-2.5-flash",
+        timeout: int = 300,
+        safety_policy: str = "deny_all",
+        mcp_servers: list[Any] | None = None,
+        tools: list[Any] | None = None,
+        enable_subagents: bool = False,
+        save_dir: str | None = None,
+        skills_paths: list[str] | None = None,
+        lifecycle_hooks: dict[str, Any] | None = None,
+    ) -> None:
+        self._model = model
+        self._timeout = timeout
+        self._safety_policy = safety_policy
+        self._mcp_servers = mcp_servers
+        self._tools = tools or []
+        self._enable_subagents = enable_subagents
+        self._save_dir = save_dir
+        self._skills_paths = skills_paths or []
+        self._lifecycle_hooks = lifecycle_hooks or {}
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _build_config(
+        self,
+        *,
+        sandbox: str | None = None,
+        tools: list[Any] | None = None,
+        model: str | None = None,
+        output_schema: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Build configuration dict for the Agent and Runner setup.
+
+        Maps the ``sandbox`` parameter to a safety policy and assembles
+        configuration for agent creation.  When ``sandbox`` is provided,
+        it overrides the adapter's default ``safety_policy`` — this is
+        the caller's explicit intent for this specific invocation.
+
+        Args:
+            sandbox: Sandbox access level mapped to a safety policy.
+                Overrides constructor ``safety_policy`` when set.
+            tools: Optional list of tool overrides.
+            model: Optional model override.
+            output_schema: Optional JSON Schema dict for structured output.
+                Note: ADK requires a Pydantic model, not raw JSON Schema.
+                This field is stored for future conversion (Story K5.5).
+
+        Returns:
+            A dict with keys: ``model``, ``safety_policy``, ``tools``,
+            and optionally ``output_schema``.
+
+        Raises:
+            AgentError: ``BEDDEL-AGENT-701`` if ``sandbox`` is not a
+                recognized value.
+        """
+        safety_policy = self._safety_policy
+        if sandbox is not None:
+            if sandbox not in _SANDBOX_MAP:
+                raise AgentError(
+                    code=AGENT_EXECUTION_FAILED,
+                    message=f"Unsupported sandbox value: {sandbox!r}",
+                    details={
+                        "sandbox": sandbox,
+                        "supported": list(_SANDBOX_MAP.keys()),
+                    },
+                )
+            safety_policy = _SANDBOX_MAP[sandbox]
+            if sandbox == "danger-full-access":
+                logger.warning(
+                    "antigravity-sdk: sandbox='danger-full-access' grants unrestricted "
+                    "tool execution. Ensure this is intentional."
+                )
+
+        config: dict[str, Any] = {
+            "model": model or self._model,
+            "safety_policy": safety_policy,
+            "tools": tools if tools is not None else self._tools,
+        }
+
+        if output_schema is not None:
+            config["output_schema"] = output_schema
+
+        return config
+
+    # ------------------------------------------------------------------
+    # IAgentAdapter.execute
+    # ------------------------------------------------------------------
+
+    async def execute(
+        self,
+        prompt: str,
+        *,
+        model: str | None = None,
+        sandbox: str = "read-only",
+        tools: list[str] | None = None,
+        output_schema: dict[str, Any] | None = None,
+    ) -> AgentResult:
+        """Execute a prompt via the Antigravity SDK ``Runner.run_async()``.
+
+        Imports ``google.adk`` at runtime, creates an Agent and Runner,
+        iterates the async generator to collect text output, tool usage,
+        and events, then returns a structured :class:`AgentResult`.
+
+        The ``prompt`` is sent as the user message to the agent. The Agent
+        is created with a generic instruction; the prompt drives behavior
+        via the user message channel (correct ADK semantics).
+
+        Args:
+            prompt: The instruction or task to send to the agent.
+            model: Optional model override.  Falls back to the adapter's
+                configured model when ``None``.
+            sandbox: Sandbox access level mapped to a safety policy.
+            tools: Optional list of tool names the agent is allowed to use.
+            output_schema: Optional JSON Schema dict for structured output.
+                Note: Currently stored but not converted to Pydantic model.
+                Full output_schema support is planned for Story K5.5.
+
+        Returns:
+            An :class:`AgentResult` with the agent's text output, changed
+            files, usage metrics, and event log.
+
+        Raises:
+            AgentError: ``BEDDEL-AGENT-700`` if ``google-adk`` is not
+                installed, ``BEDDEL-AGENT-701`` on execution errors,
+                ``BEDDEL-AGENT-702`` on timeout.
+        """
+        try:
+            from google.adk.agents import Agent  # type: ignore[import-not-found]
+            from google.adk.runners import Runner  # type: ignore[import-not-found]
+            from google.adk.sessions import InMemorySessionService  # type: ignore[import-not-found]
+            from google.genai.types import Content, Part  # type: ignore[import-not-found]
+        except ImportError as exc:
+            raise AgentError(
+                code=AGENT_NOT_CONFIGURED,
+                message="google-adk is not installed",
+                details={"package": "google-adk"},
+            ) from exc
+
+        config = self._build_config(
+            sandbox=sandbox,
+            tools=tools,
+            model=model,
+            output_schema=output_schema,
+        )
+
+        # Build agent — prompt is the USER MESSAGE, not the instruction.
+        # ADK semantics: instruction = system prompt, new_message = user input.
+        agent_kwargs: dict[str, Any] = {
+            "name": "beddel-antigravity",
+            "model": config["model"],
+            "instruction": "You are a helpful assistant executing tasks for the Beddel workflow engine.",
+        }
+        if config["tools"]:
+            agent_kwargs["tools"] = config["tools"]
+
+        agent = Agent(**agent_kwargs)
+        session_service = InMemorySessionService()
+        runner = Runner(
+            agent=agent,
+            app_name="beddel-antigravity",
+            session_service=session_service,
+        )
+
+        text_parts: list[str] = []
+        events: list[dict[str, Any]] = []
+        files_changed: list[str] = []
+        exit_code = 0
+
+        try:
+            session = await session_service.create_session(
+                app_name="beddel-antigravity",
+                user_id="beddel",
+            )
+            content = Content(parts=[Part(text=prompt)])
+
+            async with asyncio.timeout(self._timeout):
+                async for event in runner.run_async(
+                    user_id="beddel",
+                    session_id=session.id,
+                    new_message=content,
+                ):
+                    if event.content and event.content.parts:
+                        for part in event.content.parts:
+                            if hasattr(part, "text") and part.text:
+                                text_parts.append(part.text)
+                                events.append(
+                                    {
+                                        "type": "text",
+                                        "text": part.text,
+                                        "author": getattr(event, "author", ""),
+                                    }
+                                )
+                            elif hasattr(part, "function_call") and part.function_call:
+                                fc = part.function_call
+                                tool_name = getattr(fc, "name", "")
+                                tool_args = getattr(fc, "args", {})
+                                events.append(
+                                    {
+                                        "type": "tool_use",
+                                        "name": tool_name,
+                                        "input": tool_args,
+                                    }
+                                )
+                                # Track file changes from tool calls
+                                if tool_name in (
+                                    "write_file",
+                                    "edit_file",
+                                    "create_file",
+                                ):
+                                    file_path = tool_args.get(
+                                        "file_path", ""
+                                    ) or tool_args.get("path", "")
+                                    if file_path:
+                                        files_changed.append(file_path)
+
+        except TimeoutError as exc:
+            raise AgentError(
+                code=AGENT_TIMEOUT,
+                message=f"Antigravity SDK timed out after {self._timeout}s",
+                details={"timeout": self._timeout},
+            ) from exc
+        except AgentError:
+            raise
+        except Exception as exc:
+            raise AgentError(
+                code=AGENT_EXECUTION_FAILED,
+                message="Antigravity SDK execution error",
+                details={"error": str(exc)},
+            ) from exc
+
+        return AgentResult(
+            exit_code=exit_code,
+            output="\n".join(text_parts),
+            events=events,
+            files_changed=files_changed,
+            usage={},
+            agent_id="antigravity-sdk",
+        )
+
+    # ------------------------------------------------------------------
+    # IAgentAdapter.stream
+    # ------------------------------------------------------------------
+
+    async def stream(
+        self,
+        prompt: str,
+        *,
+        model: str | None = None,
+        sandbox: str = "read-only",
+        tools: list[str] | None = None,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """Stream events from the Antigravity SDK.
+
+        Imports ``google.adk`` at runtime, creates an Agent and Runner,
+        calls ``run_async()``, and yields structured event dicts as
+        events arrive from the in-process agent execution.
+
+        Event types:
+            - ``"text"``: Text content from an agent response part.
+            - ``"tool_use"``: Tool invocation from a function_call part.
+            - ``"complete"``: Final event signaling execution is done.
+
+        Args:
+            prompt: The instruction or task to send to the agent.
+            model: Optional model override.  Falls back to the adapter's
+                configured model when ``None``.
+            sandbox: Sandbox access level mapped to a safety policy.
+            tools: Optional list of tool names the agent is allowed to use.
+
+        Yields:
+            Structured event dicts from the agent execution stream.
+
+        Raises:
+            AgentError: ``BEDDEL-AGENT-700`` if ``google-adk`` is not
+                installed, ``BEDDEL-AGENT-703`` on stream interruption.
+        """
+        try:
+            from google.adk.agents import Agent  # type: ignore[import-not-found]
+            from google.adk.runners import Runner  # type: ignore[import-not-found]
+            from google.adk.sessions import InMemorySessionService  # type: ignore[import-not-found]
+            from google.genai.types import Content, Part  # type: ignore[import-not-found]
+        except ImportError as exc:
+            raise AgentError(
+                code=AGENT_NOT_CONFIGURED,
+                message="google-adk is not installed",
+                details={"package": "google-adk"},
+            ) from exc
+
+        config = self._build_config(
+            sandbox=sandbox,
+            tools=tools,
+            model=model,
+        )
+
+        # Build agent — prompt is user message, not instruction
+        agent_kwargs: dict[str, Any] = {
+            "name": "beddel-antigravity",
+            "model": config["model"],
+            "instruction": "You are a helpful assistant executing tasks for the Beddel workflow engine.",
+        }
+        if config["tools"]:
+            agent_kwargs["tools"] = config["tools"]
+
+        agent = Agent(**agent_kwargs)
+        session_service = InMemorySessionService()
+        runner = Runner(
+            agent=agent,
+            app_name="beddel-antigravity",
+            session_service=session_service,
+        )
+
+        text_parts: list[str] = []
+
+        try:
+            session = await session_service.create_session(
+                app_name="beddel-antigravity",
+                user_id="beddel",
+            )
+            content = Content(parts=[Part(text=prompt)])
+
+            async with asyncio.timeout(self._timeout):
+                async for event in runner.run_async(
+                    user_id="beddel",
+                    session_id=session.id,
+                    new_message=content,
+                ):
+                    if event.content and event.content.parts:
+                        for part in event.content.parts:
+                            if hasattr(part, "text") and part.text:
+                                text_parts.append(part.text)
+                                yield {"type": "text", "text": part.text}
+                            elif hasattr(part, "function_call") and part.function_call:
+                                fc = part.function_call
+                                yield {
+                                    "type": "tool_use",
+                                    "name": getattr(fc, "name", ""),
+                                    "input": getattr(fc, "args", {}),
+                                }
+
+        except TimeoutError as exc:
+            raise AgentError(
+                code=AGENT_STREAM_INTERRUPTED,
+                message=f"Antigravity SDK stream interrupted after {self._timeout}s",
+                details={"timeout": self._timeout},
+            ) from exc
+        except AgentError:
+            raise
+        except Exception as exc:
+            raise AgentError(
+                code=AGENT_STREAM_INTERRUPTED,
+                message="Antigravity SDK stream interrupted",
+                details={"error": str(exc)},
+            ) from exc
+
+        # Emit final completion event
+        yield {
+            "type": "complete",
+            "output": "\n".join(text_parts),
+            "exit_code": 0,
+            "usage": {},
+        }
