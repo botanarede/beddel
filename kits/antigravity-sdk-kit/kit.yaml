@@ -36,6 +36,20 @@ tools:
     target: "beddel_antigravity_sdk.tools:antigravity_safety_check"
     description: Evaluate a tool invocation against Antigravity safety policies
     category: guardrail
+workflows:
+  - name: hello-world
+    path: workflows/hello-world.yaml
+    description: Minimal agent-exec example using the Antigravity SDK adapter
+  - name: mcp-pipeline
+    path: workflows/mcp-pipeline.yaml
+    description: >-
+      Multi-step pipeline combining a standalone tool call, an MCP
+      passthrough call, and a schedule trigger
+  - name: vds-orchestrator
+    path: workflows/vds-orchestrator.yaml
+    description: >-
+      Simplified Viver de Samba multi-agent automation using sub-agent
+      delegation and session persistence
 targets:
   python:
     status: implemented

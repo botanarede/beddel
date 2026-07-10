@@ -1,0 +1,78 @@
+# =============================================================================
+# mcp-pipeline.yaml — Multi-step tool + MCP + schedule trigger example
+# =============================================================================
+#
+# Demonstrates a more realistic pipeline pattern for antigravity-sdk-kit:
+#   1. A `schedule` trigger (Beddel's native IEventTrigger — architecture
+#      §35.8 "Replace, not wrap": Antigravity's every()/on_file_change()
+#      helpers are NOT exposed, use Beddel's own event-driven execution).
+#   2. A standalone tool call (`antigravity_tool_exec`) to run a registered
+#      Antigravity custom tool without going through a full agent-exec step.
+#   3. An MCP passthrough call (`antigravity_mcp_call`) against a connected
+#      MCP server.
+#   4. A final `agent-exec` step that synthesizes the two prior results.
+#
+# Host wiring requirements:
+#   - agent_registry must contain "antigravity" -> AntigravityAgentAdapter
+#     instance, configured with:
+#       * tools=[<callable registered as "fetch_status">]
+#       * mcp_servers=[{"name": "docs-server", "transport": "stdio", ...}]
+#   - tool_registry must expose "antigravity_tool_exec" and
+#     "antigravity_mcp_call" (kit.yaml tools section)
+#   - Trigger scheduling requires ScheduleTriggerHandler wired on the host
+#     (see src/beddel-py/src/beddel/domain/strategies/event_driven.py)
+#
+# Run (manual invocation, ignoring the trigger):
+#   beddel run --file workflows/mcp-pipeline.yaml
+# =============================================================================
+
+id: antigravity_mcp_pipeline
+name: Antigravity MCP Pipeline
+description: >-
+  Scheduled pipeline combining a standalone Antigravity tool call, an MCP
+  passthrough call, and a synthesizing agent-exec step.
+version: "1.0"
+
+metadata:
+  trigger:
+    type: schedule
+    config:
+      cron: "*/30 *"  # every 30 minutes (minute-field "*/N" shorthand)
+
+steps:
+  - id: fetch_status
+    primitive: tool
+    config:
+      tool: antigravity_tool_exec
+      tool_name: fetch_status
+      args: {}
+
+  - id: fetch_docs
+    primitive: tool
+    config:
+      tool: antigravity_mcp_call
+      server_name: docs-server
+      tool_name: search_docs
+      args:
+        query: "release notes"
+
+  - id: synthesize
+    primitive: agent-exec
+    config:
+      adapter: antigravity
+      prompt: |
+        Summarize the following status and docs search results into a
+        short status update:
+
+        Status: $stepResult.fetch_status.result
+        Docs: $stepResult.fetch_docs.result
+      model: gemini-2.5-flash
+      sandbox: read-only
+
+  - id: report
+    primitive: output-generator
+    config:
+      template: |
+        # Scheduled Status Update
+
+        $stepResult.synthesize.output

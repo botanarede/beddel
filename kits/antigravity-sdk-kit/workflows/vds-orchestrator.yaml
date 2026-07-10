@@ -1,0 +1,83 @@
+# =============================================================================
+# vds-orchestrator.yaml — Simplified Viver de Samba multi-agent automation
+# =============================================================================
+#
+# A simplified version of the Viver de Samba marketing-pipeline target use
+# case referenced in epic-k5-overview.md. Demonstrates multi-agent
+# coordination using the sub-agent delegation feature added in Story K5.5
+# (`sub_agents` constructor config + `antigravity_subagent` named delegation)
+# combined with session persistence via `antigravity_session_save`.
+#
+# Pipeline:
+#   1. A "researcher" sub-agent gathers samba-school event highlights.
+#   2. A "writer" sub-agent turns the research into a social post draft.
+#   3. The session is persisted so a follow-up run can resume/audit state.
+#
+# Host wiring requirements:
+#   - agent_registry must contain "antigravity" -> AntigravityAgentAdapter,
+#     configured with:
+#       enable_subagents=True
+#       sub_agents=[
+#           {"name": "researcher", "instruction": "You research samba
+#            school events and community news."},
+#           {"name": "writer", "instruction": "You write short, upbeat
+#            social media posts in Portuguese."},
+#       ]
+#   - Optional: state_store=<IStateStore instance> to persist session state
+#     via AntigravityStateSync instead of file-based save_dir persistence
+#
+# Run:
+#   beddel run --file workflows/vds-orchestrator.yaml \
+#     -i event_topic="Roda de samba no Largo do Machado"
+# =============================================================================
+
+id: vds_orchestrator
+name: Viver de Samba Orchestrator (Simplified)
+description: >-
+  Simplified multi-agent samba-community marketing pipeline: research sub-
+  agent gathers highlights, writer sub-agent drafts a post, session state is
+  persisted for later reuse.
+version: "1.0"
+
+input_schema:
+  type: object
+  properties:
+    event_topic:
+      type: string
+      description: The samba event or theme to research and write about.
+  required:
+    - event_topic
+
+steps:
+  - id: research
+    primitive: tool
+    config:
+      tool: antigravity_subagent
+      agent_name: researcher
+      prompt: "Research recent highlights and community buzz about: $input.event_topic"
+
+  - id: draft_post
+    primitive: tool
+    config:
+      tool: antigravity_subagent
+      agent_name: writer
+      prompt: |
+        Write a short, upbeat Portuguese social media post about
+        "$input.event_topic" using this research:
+
+        $stepResult.research.output
+
+  - id: persist_session
+    primitive: tool
+    config:
+      tool: antigravity_session_save
+
+  - id: publish_preview
+    primitive: output-generator
+    config:
+      template: |
+        # Viver de Samba — Post Preview
+
+        $stepResult.draft_post.output
+
+        _(session saved as: $stepResult.persist_session.conversation_id)_

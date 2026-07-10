@@ -1,0 +1,48 @@
+# =============================================================================
+# hello-world.yaml — Minimal antigravity-sdk-kit example
+# =============================================================================
+#
+# The simplest possible workflow that runs a prompt through the Antigravity
+# SDK adapter via the `agent-exec` primitive. Demonstrates:
+#   - Wiring the `antigravity` adapter (registered under IAgentAdapter)
+#   - Passing a prompt + sandbox level
+#   - Reading the agent's text output in a follow-up step
+#
+# Host wiring requirements:
+#   - agent_registry must contain "antigravity" -> AntigravityAgentAdapter instance
+#   - google-adk installed (pip install google-adk)
+#
+# Run:
+#   beddel run --file workflows/hello-world.yaml -i topic="the Beddel SDK"
+# =============================================================================
+
+id: antigravity_hello_world
+name: Antigravity Hello World
+description: "Minimal agent-exec example using the Antigravity SDK adapter."
+version: "1.0"
+
+input_schema:
+  type: object
+  properties:
+    topic:
+      type: string
+      description: Topic for the agent to write a short greeting about.
+  required:
+    - topic
+
+steps:
+  - id: greet
+    primitive: agent-exec
+    config:
+      adapter: antigravity
+      prompt: "Write a one-paragraph, friendly greeting about $input.topic."
+      model: gemini-2.5-flash
+      sandbox: read-only
+
+  - id: print_result
+    primitive: output-generator
+    config:
+      template: |
+        Antigravity says:
+
+        $stepResult.greet.output
