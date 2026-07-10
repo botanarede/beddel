@@ -69,6 +69,14 @@ class AntigravityAgentAdapter:
             ``post_tool_call``, ``on_tool_error``. Each value is a callable
             (sync or async) invoked defensively by :meth:`_fire_hook` —
             exceptions are logged and never propagate into agent execution.
+        sub_agents: Optional list of sub-agent configuration dicts.
+            Each entry requires a ``"name"`` key and supports optional
+            ``"model"``, ``"instruction"``, ``"tools"`` keys. Config dicts
+            are lazily resolved into ADK ``Agent`` instances at call time
+            (mirrors the ``mcp_servers`` config-dict-list pattern).
+        state_store: Optional ``IStateStore``-shaped instance (duck-typed,
+            not imported at module level) used by ``AntigravityStateSync``
+            to bridge session state to Beddel's state-store infrastructure.
         tracer: Optional ``ITracer``-shaped instance (duck-typed, not
             imported at module level) used to emit ``"antigravity.execute"``
             / ``"antigravity.stream"`` spans around each run. Tracing
@@ -87,6 +95,8 @@ class AntigravityAgentAdapter:
         save_dir: str | None = None,
         skills_paths: list[str] | None = None,
         lifecycle_hooks: dict[str, Any] | None = None,
+        sub_agents: list[dict[str, Any]] | None = None,
+        state_store: Any | None = None,
         tracer: Any | None = None,
     ) -> None:
         self._model = model
@@ -98,6 +108,8 @@ class AntigravityAgentAdapter:
         self._save_dir = save_dir
         self._skills_paths = skills_paths or []
         self._lifecycle_hooks = lifecycle_hooks or {}
+        self._sub_agents = sub_agents or []
+        self._state_store = state_store
         self._tracer = tracer
 
     # ------------------------------------------------------------------
@@ -242,6 +254,85 @@ class AntigravityAgentAdapter:
             if isinstance(server_config, dict) and server_config.get("name") == name:
                 return server_config
         return None
+
+    def _build_sub_agents(self) -> list[Any]:
+        """Build ADK ``Agent`` instances from the adapter's ``_sub_agents`` config list.
+
+        Lazily imports ``google.adk.agents.Agent`` and converts each config
+        dict into a real ``Agent`` instance.  Returns an empty list if there
+        are no sub-agent configs or if the import fails.
+
+        Returns:
+            A list of ADK ``Agent`` instances ready to be passed as
+            ``sub_agents=`` to the top-level Agent constructor.
+        """
+        if not self._sub_agents:
+            return []
+
+        try:
+            from google.adk.agents import Agent  # type: ignore[import-not-found]
+        except ImportError:
+            logger.warning(
+                "google.adk.agents is not available — "
+                "sub_agents configuration will be skipped for this run"
+            )
+            return []
+
+        agents: list[Any] = []
+        for cfg in self._sub_agents:
+            kwargs: dict[str, Any] = {
+                "name": cfg["name"],
+                "model": cfg.get("model", self._model),
+                "instruction": cfg.get("instruction", ""),
+            }
+            if cfg.get("tools"):
+                kwargs["tools"] = cfg["tools"]
+            agents.append(Agent(**kwargs))
+        return agents
+
+    def _build_sub_agent(self, name: str) -> Any | None:
+        """Build a single ADK ``Agent`` for a named sub-agent config entry.
+
+        Looks up ``name`` in ``self._sub_agents`` and builds the matching
+        ``Agent`` instance.  Returns ``None`` if no config matches or if
+        the ``google.adk.agents`` import fails.
+
+        Args:
+            name: The sub-agent name to look up in the config list.
+
+        Returns:
+            An ADK ``Agent`` instance, or ``None`` if not found or
+            import failed.
+        """
+        if not self._sub_agents:
+            return None
+
+        cfg_match: dict[str, Any] | None = None
+        for cfg in self._sub_agents:
+            if cfg.get("name") == name:
+                cfg_match = cfg
+                break
+
+        if cfg_match is None:
+            return None
+
+        try:
+            from google.adk.agents import Agent  # type: ignore[import-not-found]
+        except ImportError:
+            logger.warning(
+                "google.adk.agents is not available — sub_agent %r cannot be built",
+                name,
+            )
+            return None
+
+        kwargs: dict[str, Any] = {
+            "name": cfg_match["name"],
+            "model": cfg_match.get("model", self._model),
+            "instruction": cfg_match.get("instruction", ""),
+        }
+        if cfg_match.get("tools"):
+            kwargs["tools"] = cfg_match["tools"]
+        return Agent(**kwargs)
 
     def _start_span(
         self, name: str, attributes: dict[str, Any] | None = None
@@ -423,6 +514,9 @@ class AntigravityAgentAdapter:
                 agent_kwargs["tools"] = list(agent_kwargs["tools"])
             agent_kwargs["tools"].extend(mcp_servers)
 
+        if self._enable_subagents and self._sub_agents:
+            agent_kwargs["sub_agents"] = self._build_sub_agents()
+
         agent = Agent(**agent_kwargs)
         session_service = InMemorySessionService()
         runner = Runner(
@@ -598,6 +692,9 @@ class AntigravityAgentAdapter:
             if not isinstance(agent_kwargs["tools"], list):
                 agent_kwargs["tools"] = list(agent_kwargs["tools"])
             agent_kwargs["tools"].extend(mcp_servers)
+
+        if self._enable_subagents and self._sub_agents:
+            agent_kwargs["sub_agents"] = self._build_sub_agents()
 
         agent = Agent(**agent_kwargs)
         session_service = InMemorySessionService()

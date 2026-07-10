@@ -665,3 +665,267 @@ async def test_execute_fires_on_tool_error_hook_on_failure(adapter):
 
     on_tool_error.assert_called_once()
     assert "kaboom" in on_tool_error.call_args.kwargs["error"]
+
+
+# ---------------------------------------------------------------------------
+# K5.5: Sub-agent building and wiring tests
+# ---------------------------------------------------------------------------
+
+
+def test_build_sub_agents_happy_path():
+    """_build_sub_agents converts config dicts to Agent instances via mocked ADK."""
+    from beddel_antigravity_sdk.adapter import AntigravityAgentAdapter
+
+    mock_agents_mod = sys.modules["google.adk.agents"]
+    mock_agent_cls = MagicMock()
+    mock_agent_instance_1 = MagicMock()
+    mock_agent_instance_2 = MagicMock()
+    mock_agent_cls.side_effect = [mock_agent_instance_1, mock_agent_instance_2]
+    mock_agents_mod.Agent = mock_agent_cls
+
+    adapter = AntigravityAgentAdapter(
+        model="gemini-2.5-flash",
+        timeout=30,
+        sub_agents=[
+            {
+                "name": "researcher",
+                "model": "gemini-2.5-pro",
+                "instruction": "Do research.",
+            },
+            {"name": "writer"},
+        ],
+    )
+
+    agents = adapter._build_sub_agents()
+
+    assert len(agents) == 2
+    assert agents[0] is mock_agent_instance_1
+    assert agents[1] is mock_agent_instance_2
+
+    # First call: explicit model + instruction, no tools
+    call1_kwargs = mock_agent_cls.call_args_list[0].kwargs
+    assert call1_kwargs["name"] == "researcher"
+    assert call1_kwargs["model"] == "gemini-2.5-pro"
+    assert call1_kwargs["instruction"] == "Do research."
+    assert "tools" not in call1_kwargs
+
+    # Second call: model falls back to adapter's _model, instruction to ""
+    call2_kwargs = mock_agent_cls.call_args_list[1].kwargs
+    assert call2_kwargs["name"] == "writer"
+    assert call2_kwargs["model"] == "gemini-2.5-flash"
+    assert call2_kwargs["instruction"] == ""
+    assert "tools" not in call2_kwargs
+
+
+def test_build_sub_agents_with_tools():
+    """_build_sub_agents passes tools kwarg when config entry provides them."""
+    from beddel_antigravity_sdk.adapter import AntigravityAgentAdapter
+
+    mock_agents_mod = sys.modules["google.adk.agents"]
+    mock_agent_cls = MagicMock()
+    mock_agents_mod.Agent = mock_agent_cls
+
+    dummy_tool = MagicMock()
+    adapter = AntigravityAgentAdapter(
+        model="gemini-2.5-flash",
+        timeout=30,
+        sub_agents=[
+            {"name": "helper", "tools": [dummy_tool]},
+        ],
+    )
+
+    adapter._build_sub_agents()
+
+    call_kwargs = mock_agent_cls.call_args.kwargs
+    assert call_kwargs["tools"] == [dummy_tool]
+
+
+def test_build_sub_agents_returns_empty_for_none():
+    """_build_sub_agents returns [] when sub_agents is empty/None (default)."""
+    from beddel_antigravity_sdk.adapter import AntigravityAgentAdapter
+
+    adapter = AntigravityAgentAdapter(model="gemini-2.5-flash", timeout=30)
+    assert adapter._build_sub_agents() == []
+
+    adapter_none = AntigravityAgentAdapter(
+        model="gemini-2.5-flash", timeout=30, sub_agents=None
+    )
+    assert adapter_none._build_sub_agents() == []
+
+
+def test_build_sub_agents_import_error_returns_empty():
+    """_build_sub_agents returns [] and does not raise when google.adk.agents import fails."""
+    from beddel_antigravity_sdk.adapter import AntigravityAgentAdapter
+
+    adapter = AntigravityAgentAdapter(
+        model="gemini-2.5-flash",
+        timeout=30,
+        sub_agents=[{"name": "researcher", "instruction": "Research."}],
+    )
+
+    with patch.dict(sys.modules, {"google.adk.agents": None}):
+        agents = adapter._build_sub_agents()
+
+    assert agents == []
+
+
+def test_build_sub_agent_singular_happy_path():
+    """_build_sub_agent(name) builds matching Agent when config entry found."""
+    from beddel_antigravity_sdk.adapter import AntigravityAgentAdapter
+
+    mock_agents_mod = sys.modules["google.adk.agents"]
+    mock_agent_cls = MagicMock()
+    mock_agent_instance = MagicMock()
+    mock_agent_cls.return_value = mock_agent_instance
+    mock_agents_mod.Agent = mock_agent_cls
+
+    adapter = AntigravityAgentAdapter(
+        model="gemini-2.5-flash",
+        timeout=30,
+        sub_agents=[
+            {"name": "researcher", "instruction": "Research."},
+            {"name": "writer", "instruction": "Write."},
+        ],
+    )
+
+    result = adapter._build_sub_agent("writer")
+
+    assert result is mock_agent_instance
+    call_kwargs = mock_agent_cls.call_args.kwargs
+    assert call_kwargs["name"] == "writer"
+    assert call_kwargs["instruction"] == "Write."
+
+
+def test_build_sub_agent_singular_not_found():
+    """_build_sub_agent(name) returns None when no config entry matches."""
+    from beddel_antigravity_sdk.adapter import AntigravityAgentAdapter
+
+    adapter = AntigravityAgentAdapter(
+        model="gemini-2.5-flash",
+        timeout=30,
+        sub_agents=[{"name": "researcher"}],
+    )
+
+    result = adapter._build_sub_agent("nonexistent")
+
+    assert result is None
+
+
+@pytest.mark.asyncio()
+async def test_execute_passes_sub_agents_when_enabled(mock_runner_with_text_events):
+    """execute() passes sub_agents= to Agent() when enable_subagents=True and sub_agents non-empty."""
+    from beddel_antigravity_sdk.adapter import AntigravityAgentAdapter
+
+    mock_agents_mod = sys.modules["google.adk.agents"]
+    mock_agent_cls = MagicMock()
+    mock_agents_mod.Agent = mock_agent_cls
+
+    adapter = AntigravityAgentAdapter(
+        model="gemini-2.5-flash",
+        timeout=30,
+        enable_subagents=True,
+        sub_agents=[{"name": "helper", "instruction": "Help."}],
+    )
+    mock_runner_with_text_events(["Hello"])
+
+    await adapter.execute("Test prompt")
+
+    # The Agent() constructor was called — check sub_agents kwarg is present
+    agent_call_kwargs = mock_agent_cls.call_args.kwargs
+    assert "sub_agents" in agent_call_kwargs
+    assert len(agent_call_kwargs["sub_agents"]) == 1
+
+
+@pytest.mark.asyncio()
+async def test_execute_no_sub_agents_when_disabled(mock_runner_with_text_events):
+    """execute() does NOT pass sub_agents= when enable_subagents=False (default)."""
+    from beddel_antigravity_sdk.adapter import AntigravityAgentAdapter
+
+    mock_agents_mod = sys.modules["google.adk.agents"]
+    mock_agent_cls = MagicMock()
+    mock_agents_mod.Agent = mock_agent_cls
+
+    adapter = AntigravityAgentAdapter(
+        model="gemini-2.5-flash",
+        timeout=30,
+        enable_subagents=False,
+        sub_agents=[{"name": "helper", "instruction": "Help."}],
+    )
+    mock_runner_with_text_events(["Hello"])
+
+    await adapter.execute("Test prompt")
+
+    agent_call_kwargs = mock_agent_cls.call_args.kwargs
+    assert "sub_agents" not in agent_call_kwargs
+
+
+@pytest.mark.asyncio()
+async def test_execute_no_sub_agents_when_list_empty(mock_runner_with_text_events):
+    """execute() does NOT pass sub_agents= when _sub_agents list is empty."""
+    from beddel_antigravity_sdk.adapter import AntigravityAgentAdapter
+
+    mock_agents_mod = sys.modules["google.adk.agents"]
+    mock_agent_cls = MagicMock()
+    mock_agents_mod.Agent = mock_agent_cls
+
+    adapter = AntigravityAgentAdapter(
+        model="gemini-2.5-flash",
+        timeout=30,
+        enable_subagents=True,
+        sub_agents=[],
+    )
+    mock_runner_with_text_events(["Hello"])
+
+    await adapter.execute("Test prompt")
+
+    agent_call_kwargs = mock_agent_cls.call_args.kwargs
+    assert "sub_agents" not in agent_call_kwargs
+
+
+@pytest.mark.asyncio()
+async def test_stream_passes_sub_agents_when_enabled(mock_runner_with_mixed_events):
+    """stream() passes sub_agents= to Agent() when enable_subagents=True and sub_agents non-empty."""
+    from beddel_antigravity_sdk.adapter import AntigravityAgentAdapter
+
+    mock_agents_mod = sys.modules["google.adk.agents"]
+    mock_agent_cls = MagicMock()
+    mock_agents_mod.Agent = mock_agent_cls
+
+    adapter = AntigravityAgentAdapter(
+        model="gemini-2.5-flash",
+        timeout=30,
+        enable_subagents=True,
+        sub_agents=[{"name": "helper", "instruction": "Help."}],
+    )
+    mock_runner_with_mixed_events([{"type": "text", "text": "Hi"}])
+
+    async for _ in adapter.stream("Test prompt"):
+        pass
+
+    agent_call_kwargs = mock_agent_cls.call_args.kwargs
+    assert "sub_agents" in agent_call_kwargs
+    assert len(agent_call_kwargs["sub_agents"]) == 1
+
+
+@pytest.mark.asyncio()
+async def test_stream_no_sub_agents_when_disabled(mock_runner_with_mixed_events):
+    """stream() does NOT pass sub_agents= when enable_subagents=False."""
+    from beddel_antigravity_sdk.adapter import AntigravityAgentAdapter
+
+    mock_agents_mod = sys.modules["google.adk.agents"]
+    mock_agent_cls = MagicMock()
+    mock_agents_mod.Agent = mock_agent_cls
+
+    adapter = AntigravityAgentAdapter(
+        model="gemini-2.5-flash",
+        timeout=30,
+        enable_subagents=False,
+        sub_agents=[{"name": "helper"}],
+    )
+    mock_runner_with_mixed_events([{"type": "text", "text": "Hi"}])
+
+    async for _ in adapter.stream("Test prompt"):
+        pass
+
+    agent_call_kwargs = mock_agent_cls.call_args.kwargs
+    assert "sub_agents" not in agent_call_kwargs

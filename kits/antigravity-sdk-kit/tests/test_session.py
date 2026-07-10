@@ -1,14 +1,15 @@
-"""Unit tests for AntigravitySession and ToolContext.
+"""Unit tests for AntigravitySession, AntigravityStateSync, and ToolContext.
 
 Tests cover: session creation, save/load lifecycle, error paths
-(missing save_dir, missing file), and ToolContext construction.
+(missing save_dir, missing file), ToolContext construction, and
+AntigravityStateSync load/save with IStateStore duck-typing.
 """
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -17,6 +18,7 @@ from beddel.domain.errors import AgentError
 from beddel_antigravity_sdk.session import (
     ANTIGRAVITY_SESSION_NOT_FOUND,
     AntigravitySession,
+    AntigravityStateSync,
     ToolContext,
 )
 
@@ -207,3 +209,87 @@ def test_session_save_rejects_slash(tmp_path: Path):
 
     with pytest.raises(ValueError, match="must not contain"):
         session.save()
+
+
+# ---------------------------------------------------------------------------
+# K5.5: AntigravityStateSync — IStateStore bridge tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_state_sync_load_replaces_session_state():
+    """load_into_session replaces session.state when store returns data."""
+    mock_store = AsyncMock()
+    mock_store.load = AsyncMock(return_value={"restored": True, "count": 42})
+
+    session = AntigravitySession(state={"original": "data"})
+    sync = AntigravityStateSync(mock_store)
+
+    await sync.load_into_session(session, "my-key")
+
+    assert session.state == {"restored": True, "count": 42}
+    mock_store.load.assert_awaited_once_with("my-key")
+
+
+@pytest.mark.asyncio()
+async def test_state_sync_load_noop_when_store_returns_none():
+    """load_into_session is a no-op when store.load() returns None."""
+    mock_store = AsyncMock()
+    mock_store.load = AsyncMock(return_value=None)
+
+    original_state = {"keep": "this"}
+    session = AntigravitySession(state=original_state)
+    sync = AntigravityStateSync(mock_store)
+
+    await sync.load_into_session(session, "absent-key")
+
+    assert session.state is original_state
+    assert session.state == {"keep": "this"}
+    mock_store.load.assert_awaited_once_with("absent-key")
+
+
+@pytest.mark.asyncio()
+async def test_state_sync_save_calls_store_with_correct_args():
+    """save_from_session calls state_store.save(key, session.state)."""
+    mock_store = AsyncMock()
+    mock_store.save = AsyncMock(return_value=None)
+
+    session = AntigravitySession(state={"data": "to_persist", "n": 7})
+    sync = AntigravityStateSync(mock_store)
+
+    await sync.save_from_session(session, "save-key-1")
+
+    mock_store.save.assert_awaited_once_with(
+        "save-key-1", {"data": "to_persist", "n": 7}
+    )
+
+
+@pytest.mark.asyncio()
+async def test_state_sync_load_propagates_store_exception():
+    """Exceptions from state_store.load() propagate unchanged."""
+    mock_store = AsyncMock()
+    mock_store.load = AsyncMock(side_effect=RuntimeError("connection lost"))
+
+    session = AntigravitySession(state={"untouched": True})
+    sync = AntigravityStateSync(mock_store)
+
+    with pytest.raises(RuntimeError, match="connection lost"):
+        await sync.load_into_session(session, "any-key")
+
+    # Session state must be unchanged
+    assert session.state == {"untouched": True}
+
+
+@pytest.mark.asyncio()
+async def test_state_sync_save_propagates_store_exception():
+    """Exceptions from state_store.save() propagate unchanged."""
+    mock_store = AsyncMock()
+    mock_store.save = AsyncMock(side_effect=IOError("disk full"))
+
+    session = AntigravitySession(state={"important": "data"})
+    sync = AntigravityStateSync(mock_store)
+
+    with pytest.raises(IOError, match="disk full"):
+        await sync.save_from_session(session, "save-key")
+
+    mock_store.save.assert_awaited_once()

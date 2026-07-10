@@ -47,6 +47,8 @@ def mock_adapter() -> MagicMock:
     adapter._safety_policy = "allow"
     adapter._lifecycle_hooks = {}
     adapter._fire_hook = AsyncMock()
+    adapter._build_sub_agent = MagicMock(return_value=None)
+    adapter._state_store = None
     return adapter
 
 
@@ -646,3 +648,219 @@ async def test_subagent_accumulates_usage(ctx: ToolContext):
     assert ctx.session.usage["prompt_tokens"] == 50
     assert ctx.session.usage["completion_tokens"] == 25
     assert ctx.session.usage["total_tokens"] == 75
+
+
+# ---------------------------------------------------------------------------
+# K5.5: Named sub-agent delegation tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_subagent_delegates_to_named_child_agent(ctx: ToolContext):
+    """subagent delegates to named configured sub-agent via _run_named_sub_agent."""
+    ctx.adapter._enable_subagents = True
+
+    # _build_sub_agent returns a mock Agent (name matches)
+    mock_child_agent = MagicMock()
+    ctx.adapter._build_sub_agent = MagicMock(return_value=mock_child_agent)
+
+    # Patch _run_named_sub_agent to avoid needing full ADK Runner mock
+    mock_result = {
+        "output": "Named agent response",
+        "events": [
+            {"type": "text", "text": "Named agent response", "author": "researcher"}
+        ],
+        "usage": {},
+    }
+    with patch(
+        "beddel_antigravity_sdk.tools._run_named_sub_agent",
+        new=AsyncMock(return_value=mock_result),
+    ) as mock_run:
+        result = await antigravity_subagent(ctx, "researcher", "Research AI trends")
+
+    assert result["status"] == "ok"
+    assert result["output"] == "Named agent response"
+    assert result["agent_name"] == "researcher"
+    assert len(result["events"]) == 1
+    mock_run.assert_awaited_once_with(mock_child_agent, "Research AI trends")
+    # Verify session state records the call
+    assert len(ctx.session.state["_subagent_calls"]) == 1
+    assert ctx.session.state["_subagent_calls"][0]["agent_name"] == "researcher"
+    assert ctx.session.state["_subagent_calls"][0]["prompt"] == "Research AI trends"
+
+
+@pytest.mark.asyncio()
+async def test_subagent_falls_back_to_execute_when_name_not_matched(ctx: ToolContext):
+    """subagent falls back to adapter.execute() when _build_sub_agent returns None."""
+    ctx.adapter._enable_subagents = True
+    ctx.adapter._build_sub_agent = MagicMock(return_value=None)
+    ctx.adapter.execute = AsyncMock(
+        return_value=AgentResult(
+            exit_code=0,
+            output="Fallback response",
+            events=[{"type": "text", "text": "Fallback response"}],
+            files_changed=[],
+            usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            agent_id="antigravity-sdk",
+        )
+    )
+
+    result = await antigravity_subagent(ctx, "unknown-agent", "Do something")
+
+    assert result["status"] == "ok"
+    assert result["output"] == "Fallback response"
+    assert result["agent_name"] == "unknown-agent"
+    ctx.adapter._build_sub_agent.assert_called_once_with("unknown-agent")
+    ctx.adapter.execute.assert_awaited_once()
+
+
+@pytest.mark.asyncio()
+async def test_subagent_disabled_short_circuits_before_name_lookup(ctx: ToolContext):
+    """enable_subagents=False short-circuits BEFORE named-lookup logic."""
+    ctx.adapter._enable_subagents = False
+    # Configure _build_sub_agent to return something non-None — should never be called
+    mock_child = MagicMock()
+    ctx.adapter._build_sub_agent = MagicMock(return_value=mock_child)
+
+    result = await antigravity_subagent(ctx, "researcher", "Research AI")
+
+    assert result["status"] == "error"
+    assert "disabled" in result["message"]
+    ctx.adapter._build_sub_agent.assert_not_called()
+
+
+@pytest.mark.asyncio()
+async def test_subagent_named_delegation_accumulates_usage(ctx: ToolContext):
+    """Named sub-agent delegation accumulates usage into session."""
+    ctx.adapter._enable_subagents = True
+    ctx.adapter._build_sub_agent = MagicMock(return_value=MagicMock())
+
+    mock_result = {
+        "output": "Done",
+        "events": [],
+        "usage": {"prompt_tokens": 30, "completion_tokens": 15, "total_tokens": 45},
+    }
+    with patch(
+        "beddel_antigravity_sdk.tools._run_named_sub_agent",
+        new=AsyncMock(return_value=mock_result),
+    ):
+        await antigravity_subagent(ctx, "helper", "task")
+
+    assert ctx.session.usage["prompt_tokens"] == 30
+    assert ctx.session.usage["completion_tokens"] == 15
+    assert ctx.session.usage["total_tokens"] == 45
+
+
+# ---------------------------------------------------------------------------
+# K5.5: IStateStore-backed session save/load tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_session_save_uses_state_store_when_configured(ctx: ToolContext):
+    """antigravity_session_save uses AntigravityStateSync when _state_store is set."""
+    mock_store = AsyncMock()
+    mock_store.save = AsyncMock(return_value=None)
+    ctx.adapter._state_store = mock_store
+    ctx.session.state = {"important": "data"}
+    ctx.session.conversation_id = "conv-abc"
+
+    result = await antigravity_session_save(ctx)
+
+    assert result["status"] == "ok"
+    assert result["conversation_id"] == "conv-abc"
+    assert result["path"] is None
+    mock_store.save.assert_awaited_once_with("conv-abc", {"important": "data"})
+
+
+@pytest.mark.asyncio()
+async def test_session_save_state_store_uses_default_key(ctx: ToolContext):
+    """antigravity_session_save defaults key to 'default' when conversation_id is None."""
+    mock_store = AsyncMock()
+    mock_store.save = AsyncMock(return_value=None)
+    ctx.adapter._state_store = mock_store
+    ctx.session.conversation_id = None
+    ctx.session.state = {"x": 1}
+
+    result = await antigravity_session_save(ctx)
+
+    assert result["status"] == "ok"
+    assert result["conversation_id"] == "default"
+    assert ctx.session.conversation_id == "default"
+    mock_store.save.assert_awaited_once_with("default", {"x": 1})
+
+
+@pytest.mark.asyncio()
+async def test_session_save_falls_back_to_file_when_no_state_store(
+    ctx: ToolContext, tmp_path: Path
+):
+    """antigravity_session_save uses file-based save when _state_store is None."""
+    ctx.adapter._state_store = None
+    ctx.session.state = {"file_based": True}
+    ctx.session.save_dir = str(tmp_path)
+    ctx.session.conversation_id = "file-conv"
+
+    result = await antigravity_session_save(ctx)
+
+    assert result["status"] == "ok"
+    assert result["path"] is not None
+    assert Path(result["path"]).exists()
+
+
+@pytest.mark.asyncio()
+async def test_session_load_uses_state_store_when_configured(ctx: ToolContext):
+    """antigravity_session_load uses AntigravityStateSync when _state_store is set."""
+    mock_store = AsyncMock()
+    mock_store.load = AsyncMock(return_value={"restored": True, "n": 7})
+    ctx.adapter._state_store = mock_store
+    ctx.session.state = {"old": "data"}
+
+    result = await antigravity_session_load(ctx, "conv-xyz")
+
+    assert result["status"] == "ok"
+    assert result["state"] == {"restored": True, "n": 7}
+    assert result["conversation_id"] == "conv-xyz"
+    assert ctx.session.state == {"restored": True, "n": 7}
+    assert ctx.session.conversation_id == "conv-xyz"
+    mock_store.load.assert_awaited_once_with("conv-xyz")
+
+
+@pytest.mark.asyncio()
+async def test_session_load_state_store_none_leaves_state_unchanged(ctx: ToolContext):
+    """antigravity_session_load via state_store no-ops when store returns None."""
+    mock_store = AsyncMock()
+    mock_store.load = AsyncMock(return_value=None)
+    ctx.adapter._state_store = mock_store
+    ctx.session.state = {"original": "stays"}
+
+    result = await antigravity_session_load(ctx, "empty-conv")
+
+    assert result["status"] == "ok"
+    # State unchanged because store returned None (no-op on load_into_session)
+    assert ctx.session.state == {"original": "stays"}
+    assert ctx.session.conversation_id == "empty-conv"
+
+
+@pytest.mark.asyncio()
+async def test_session_load_falls_back_to_file_when_no_state_store(
+    ctx: ToolContext, tmp_path: Path
+):
+    """antigravity_session_load uses file-based load when _state_store is None."""
+    import json
+
+    ctx.adapter._state_store = None
+    ctx.session.save_dir = str(tmp_path)
+
+    # Pre-create a session file
+    payload = {
+        "conversation_id": "file-conv-2",
+        "state": {"from_file": True},
+        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+    }
+    (tmp_path / "file-conv-2.json").write_text(json.dumps(payload))
+
+    result = await antigravity_session_load(ctx, "file-conv-2")
+
+    assert result["status"] == "ok"
+    assert result["state"] == {"from_file": True}
+    assert result["conversation_id"] == "file-conv-2"

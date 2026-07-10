@@ -22,7 +22,7 @@ from beddel.domain.errors import AgentError
 if TYPE_CHECKING:
     from beddel_antigravity_sdk.adapter import AntigravityAgentAdapter
 
-__all__ = ["AntigravitySession", "ToolContext"]
+__all__ = ["AntigravitySession", "AntigravityStateSync", "ToolContext"]
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +149,57 @@ class AntigravitySession:
                 },
             ),
         )
+
+
+class AntigravityStateSync:
+    """Bidirectional sync between AntigravitySession.state and Beddel IStateStore.
+
+    Provides async methods to load state from an ``IStateStore``-compatible
+    object into a session, and to save session state back to the store.
+
+    The ``state_store`` parameter is duck-typed (``Any``) — it must conform
+    to the ``IStateStore`` protocol (i.e., expose async ``save(key, state)``
+    and ``load(key)`` methods) but no hard import is required.
+
+    Exceptions raised by the underlying state store propagate unchanged
+    to the caller.  This is deliberate — silent data loss on save/load
+    is a correctness bug, not an observability nicety.
+
+    Args:
+        state_store: An object implementing the ``IStateStore`` protocol
+            (``save``, ``load`` async methods).
+    """
+
+    def __init__(self, state_store: Any) -> None:
+        self._state_store = state_store
+
+    async def load_into_session(self, session: AntigravitySession, key: str) -> None:
+        """Load persisted state into the given session.
+
+        Calls ``state_store.load(key)``.  If the result is not ``None``,
+        replaces ``session.state`` with the loaded dict.  If ``None``
+        (no checkpoint exists), ``session.state`` is left unchanged.
+
+        Args:
+            session: The session whose state may be replaced.
+            key: The state-store key to load from (maps to
+                ``IStateStore.load(workflow_id)``).
+        """
+        loaded = await self._state_store.load(key)
+        if loaded is not None:
+            session.state = loaded
+
+    async def save_from_session(self, session: AntigravitySession, key: str) -> None:
+        """Persist the session's current state to the store.
+
+        Calls ``state_store.save(key, session.state)``.
+
+        Args:
+            session: The session whose state will be persisted.
+            key: The state-store key to save under (maps to
+                ``IStateStore.save(workflow_id, state)``).
+        """
+        await self._state_store.save(key, session.state)
 
 
 @dataclass

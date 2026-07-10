@@ -25,6 +25,7 @@ from beddel_antigravity_sdk.session import (
     ANTIGRAVITY_MCP_FAILED,
     ANTIGRAVITY_SESSION_NOT_FOUND,
     AntigravitySession,
+    AntigravityStateSync,
     ToolContext,
 )
 
@@ -276,6 +277,64 @@ async def antigravity_mcp_call(
 # ---------------------------------------------------------------------------
 
 
+async def _run_named_sub_agent(child_agent: Any, prompt: str) -> dict[str, Any]:
+    """Run a named sub-agent via a standalone ADK Runner session.
+
+    Creates an ``InMemorySessionService`` and ``Runner`` scoped to the
+    given child ``Agent``, sends the prompt as the user message, and
+    collects text output + events.
+
+    Args:
+        child_agent: A pre-built ADK ``Agent`` instance.
+        prompt: The user message to send to the child agent.
+
+    Returns:
+        Dict with ``output``, ``events``, and ``usage`` keys.
+        Usage is best-effort ``{}`` for this standalone path.
+    """
+    try:
+        from google.adk.runners import Runner  # type: ignore[import-not-found]
+        from google.adk.sessions import InMemorySessionService  # type: ignore[import-not-found]
+        from google.genai.types import Content, Part  # type: ignore[import-not-found]
+    except ImportError:
+        return {"output": "", "events": [], "usage": {}}
+
+    session_service = InMemorySessionService()
+    runner = Runner(
+        agent=child_agent,
+        app_name="beddel-antigravity-subagent",
+        session_service=session_service,
+    )
+
+    session = await session_service.create_session(
+        app_name="beddel-antigravity-subagent",
+        user_id="beddel",
+    )
+    content = Content(parts=[Part(text=prompt)])
+
+    text_parts: list[str] = []
+    events: list[dict[str, Any]] = []
+
+    async for event in runner.run_async(
+        user_id="beddel",
+        session_id=session.id,
+        new_message=content,
+    ):
+        if event.content and event.content.parts:
+            for part in event.content.parts:
+                if hasattr(part, "text") and part.text:
+                    text_parts.append(part.text)
+                    events.append(
+                        {
+                            "type": "text",
+                            "text": part.text,
+                            "author": getattr(event, "author", ""),
+                        }
+                    )
+
+    return {"output": "\n".join(text_parts), "events": events, "usage": {}}
+
+
 async def antigravity_subagent(
     ctx: ToolContext,
     agent_name: str,
@@ -284,17 +343,23 @@ async def antigravity_subagent(
 ) -> dict[str, Any]:
     """Delegate a task to an Antigravity sub-agent.
 
-    Creates a sub-agent execution via the ADK Runner. Requires that
-    the adapter was configured with ``enable_subagents=True``.
+    When ``agent_name`` matches a configured sub-agent in the adapter's
+    ``_sub_agents`` list, builds that specific child agent and runs the
+    prompt through a standalone ADK session. Otherwise, falls back to
+    the adapter's top-level ``execute()`` method (existing behavior).
+
+    Requires that the adapter was configured with ``enable_subagents=True``.
 
     Args:
         ctx: Tool context with session and adapter reference.
-        agent_name: Name for the sub-agent.
+        agent_name: Name for the sub-agent (matched against configured
+            sub-agent names).
         prompt: Task/instruction to delegate.
         model: Optional model override for the sub-agent.
 
     Returns:
-        Dict with ``status`` "ok", ``output``, and ``events``.
+        Dict with ``status`` "ok", ``output``, ``events``, and
+        ``agent_name``.
     """
     if not ctx.adapter._enable_subagents:
         return {
@@ -303,18 +368,28 @@ async def antigravity_subagent(
             "message": "Sub-agent delegation disabled (enable_subagents=False)",
         }
 
-    # Execute via adapter (re-uses the same execution path)
-    try:
-        result = await ctx.adapter.execute(
-            prompt=prompt,
-            model=model or ctx.adapter._model,
-            sandbox="workspace-write",
-        )
-    except AgentError as exc:
-        return {
-            "status": "error",
-            "code": exc.code,
-            "message": str(exc.message),
+    child_agent = ctx.adapter._build_sub_agent(agent_name)
+
+    if child_agent is not None:
+        result = await _run_named_sub_agent(child_agent, prompt)
+    else:
+        # Fallback: existing K5.2-era behavior — delegate to adapter.execute()
+        try:
+            exec_result = await ctx.adapter.execute(
+                prompt=prompt,
+                model=model or ctx.adapter._model,
+                sandbox="workspace-write",
+            )
+        except AgentError as exc:
+            return {
+                "status": "error",
+                "code": exc.code,
+                "message": str(exc.message),
+            }
+        result = {
+            "output": exec_result.output,
+            "events": exec_result.events,
+            "usage": exec_result.usage,
         }
 
     # Record in session state
@@ -323,22 +398,20 @@ async def antigravity_subagent(
         {
             "agent_name": agent_name,
             "prompt": prompt,
-            "output_length": len(result.output),
+            "output_length": len(result["output"]),
         }
     )
 
     # Accumulate usage metrics from sub-agent execution
-    if result.usage:
-        ctx.session.usage["prompt_tokens"] += result.usage.get("prompt_tokens", 0)
-        ctx.session.usage["completion_tokens"] += result.usage.get(
-            "completion_tokens", 0
-        )
-        ctx.session.usage["total_tokens"] += result.usage.get("total_tokens", 0)
+    usage = result.get("usage") or {}
+    ctx.session.usage["prompt_tokens"] += usage.get("prompt_tokens", 0)
+    ctx.session.usage["completion_tokens"] += usage.get("completion_tokens", 0)
+    ctx.session.usage["total_tokens"] += usage.get("total_tokens", 0)
 
     return {
         "status": "ok",
-        "output": result.output,
-        "events": result.events,
+        "output": result["output"],
+        "events": result["events"],
         "agent_name": agent_name,
     }
 
@@ -349,17 +422,27 @@ async def antigravity_subagent(
 
 
 async def antigravity_session_save(ctx: ToolContext) -> dict[str, Any]:
-    """Persist conversation state to save_dir.
+    """Persist conversation state to a state store or save_dir.
 
-    Serializes the current session state (including all accumulated
-    tool call history) to a JSON file.
+    When the adapter has a configured ``_state_store`` (non-None), uses
+    ``AntigravityStateSync`` to persist via Beddel's ``IStateStore`` port.
+    Otherwise falls back to file-based JSON serialization at ``save_dir``.
 
     Args:
-        ctx: Tool context with session reference.
+        ctx: Tool context with session and adapter reference.
 
     Returns:
-        Dict with ``status`` "ok", ``conversation_id``, and ``path``.
+        Dict with ``status`` "ok", ``conversation_id``, and ``path``
+        (``path`` is ``None`` when using the state-store-backed path).
     """
+    state_store = getattr(ctx.adapter, "_state_store", None)
+    if state_store is not None:
+        key = ctx.session.conversation_id or "default"
+        ctx.session.conversation_id = key
+        sync = AntigravityStateSync(state_store)
+        await sync.save_from_session(ctx.session, key)
+        return {"status": "ok", "conversation_id": key, "path": None}
+
     try:
         path = ctx.session.save()
     except ValueError as exc:
@@ -387,19 +470,31 @@ async def antigravity_session_load(
 ) -> dict[str, Any]:
     """Load a previous conversation by conversation_id.
 
-    Deserializes session state from the save_dir and updates the
-    current context session.
+    When the adapter has a configured ``_state_store`` (non-None), uses
+    ``AntigravityStateSync`` to load via Beddel's ``IStateStore`` port.
+    Otherwise falls back to file-based JSON deserialization from ``save_dir``.
 
     Args:
-        ctx: Tool context with session reference.
+        ctx: Tool context with session and adapter reference.
         conversation_id: The conversation identifier to load.
 
     Returns:
         Dict with ``status`` "ok", ``state``, and ``conversation_id``.
 
     Raises:
-        AgentError: BEDDEL-AGENT-755 if conversation not found.
+        AgentError: BEDDEL-AGENT-755 if conversation not found (file-based path).
     """
+    state_store = getattr(ctx.adapter, "_state_store", None)
+    if state_store is not None:
+        sync = AntigravityStateSync(state_store)
+        await sync.load_into_session(ctx.session, conversation_id)
+        ctx.session.conversation_id = conversation_id
+        return {
+            "status": "ok",
+            "state": ctx.session.state,
+            "conversation_id": conversation_id,
+        }
+
     save_dir = ctx.session.save_dir
     if not save_dir:
         return {
