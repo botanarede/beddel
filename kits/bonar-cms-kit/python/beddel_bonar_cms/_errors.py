@@ -13,6 +13,7 @@ from typing import Any
 from beddel.domain.errors import BeddelError
 
 __all__ = [
+    "CMS_ADMIN_ERROR",
     "CMS_BUILD_FAILED",
     "CMS_DEPLOY_FAILED",
     "CMS_GENERATION_FAILED",
@@ -26,6 +27,9 @@ __all__ = [
     "CMS_VALIDATION_ERROR",
     "CMSError",
 ]
+
+CMS_ADMIN_ERROR = "CMS_ADMIN_ERROR"
+"""Raised when an admin tool operation fails (e.g. duplicate user, user not found)."""
 
 CMS_BUILD_FAILED = "CMS_BUILD_FAILED"
 """Raised when Next.js static export build fails."""
