@@ -87,6 +87,20 @@ tools:
     description: Get statistics for a tenant (user count, last build/deploy)
     category: admin
 
+  # SDK (CMS.9)
+  - name: init_firebase_app
+    target: "beddel_bonar_cms.tools.sdk:init_firebase_app"
+    description: Initialize Firebase Admin SDK via bonarjs-sdk-alpha bootstrap
+    category: sdk
+  - name: sync_tenant_cache
+    target: "beddel_bonar_cms.tools.sdk:sync_tenant_cache"
+    description: Sync tenant Firestore data to local JSON cache via SDK
+    category: sdk
+  - name: clear_cache
+    target: "beddel_bonar_cms.tools.sdk:clear_cache"
+    description: Clear cached JSON files for a tenant or all tenants
+    category: sdk
+
 workflows:
   - name: onboarding-novo-cliente
     file: workflows/onboarding-novo-cliente.yaml
@@ -134,6 +148,12 @@ targets:
         target: "beddel_bonar_cms.tools.admin:update_user_role"
       - name: get_tenant_stats
         target: "beddel_bonar_cms.tools.admin:get_tenant_stats"
+      - name: init_firebase_app
+        target: "beddel_bonar_cms.tools.sdk:init_firebase_app"
+      - name: sync_tenant_cache
+        target: "beddel_bonar_cms.tools.sdk:sync_tenant_cache"
+      - name: clear_cache
+        target: "beddel_bonar_cms.tools.sdk:clear_cache"
   typescript:
     status: unavailable
     unavailable_reason: >
