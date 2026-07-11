@@ -21,6 +21,7 @@ __all__ = [
     "CMS_NODE_NOT_FOUND",
     "CMS_PREVIEW_FAILED",
     "CMS_PROVISION_FAILED",
+    "CMS_SDK_ERROR",
     "CMS_SUBPROCESS_TIMEOUT",
     "CMS_TENANT_EXISTS",
     "CMS_TENANT_NOT_FOUND",
@@ -39,6 +40,9 @@ CMS_DEPLOY_FAILED = "CMS_DEPLOY_FAILED"
 
 CMS_PROVISION_FAILED = "CMS_PROVISION_FAILED"
 """Raised when Firebase project provisioning fails (e.g. gcloud CLI not found)."""
+
+CMS_SDK_ERROR = "CMS_SDK_ERROR"
+"""Raised when a bonarjs-sdk-alpha operation fails (e.g. init, cache sync)."""
 
 CMS_TENANT_NOT_FOUND = "CMS_TENANT_NOT_FOUND"
 """Raised when a tenant_id has no corresponding config file."""
