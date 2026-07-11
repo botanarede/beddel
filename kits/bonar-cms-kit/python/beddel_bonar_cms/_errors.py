@@ -14,8 +14,11 @@ from beddel.domain.errors import BeddelError
 
 __all__ = [
     "CMS_INVALID_TENANT_ID",
+    "CMS_NODE_NOT_FOUND",
+    "CMS_SUBPROCESS_TIMEOUT",
     "CMS_TENANT_EXISTS",
     "CMS_TENANT_NOT_FOUND",
+    "CMS_VALIDATION_ERROR",
     "CMSError",
 ]
 
@@ -27,6 +30,15 @@ CMS_TENANT_EXISTS = "CMS_TENANT_EXISTS"
 
 CMS_INVALID_TENANT_ID = "CMS_INVALID_TENANT_ID"
 """Raised when a tenant_id fails kebab-case validation."""
+
+CMS_VALIDATION_ERROR = "CMS_VALIDATION_ERROR"
+"""Raised when schema validation script fails or returns unexpected output."""
+
+CMS_SUBPROCESS_TIMEOUT = "CMS_SUBPROCESS_TIMEOUT"
+"""Raised when a Node.js subprocess exceeds the configured timeout."""
+
+CMS_NODE_NOT_FOUND = "CMS_NODE_NOT_FOUND"
+"""Raised when Node.js is not available on PATH."""
 
 
 class CMSError(BeddelError):
