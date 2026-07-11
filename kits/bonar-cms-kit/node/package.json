@@ -15,6 +15,7 @@
     "@botanarede/core": "workspace:*",
     "@botanarede/ui-react": "workspace:*",
     "@botanarede/bonar-creator-studio": "workspace:*",
+    "@botanarede/bonarjs-sdk-alpha": "workspace:*",
     "@botanarede/platform": "workspace:*"
   }
 }
