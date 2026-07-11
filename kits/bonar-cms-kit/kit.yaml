@@ -75,6 +75,10 @@ targets:
     module: beddel_bonar_cms
     dependencies: []
     tools:
+      - name: generate_tenant
+        target: "beddel_bonar_cms.tools.generation:generate_tenant"
+      - name: validate_tenant
+        target: "beddel_bonar_cms.tools.validation:validate_tenant"
       - name: create_tenant
         target: "beddel_bonar_cms.tools.crud:create_tenant"
       - name: read_tenant

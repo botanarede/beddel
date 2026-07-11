@@ -13,6 +13,7 @@ from typing import Any
 from beddel.domain.errors import BeddelError
 
 __all__ = [
+    "CMS_GENERATION_FAILED",
     "CMS_INVALID_TENANT_ID",
     "CMS_NODE_NOT_FOUND",
     "CMS_SUBPROCESS_TIMEOUT",
@@ -30,6 +31,9 @@ CMS_TENANT_EXISTS = "CMS_TENANT_EXISTS"
 
 CMS_INVALID_TENANT_ID = "CMS_INVALID_TENANT_ID"
 """Raised when a tenant_id fails kebab-case validation."""
+
+CMS_GENERATION_FAILED = "CMS_GENERATION_FAILED"
+"""Raised when LLM generation fails after retry."""
 
 CMS_VALIDATION_ERROR = "CMS_VALIDATION_ERROR"
 """Raised when schema validation script fails or returns unexpected output."""
