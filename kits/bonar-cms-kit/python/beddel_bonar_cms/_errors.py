@@ -18,6 +18,7 @@ __all__ = [
     "CMS_GENERATION_FAILED",
     "CMS_INVALID_TENANT_ID",
     "CMS_NODE_NOT_FOUND",
+    "CMS_PREVIEW_FAILED",
     "CMS_PROVISION_FAILED",
     "CMS_SUBPROCESS_TIMEOUT",
     "CMS_TENANT_EXISTS",
@@ -55,6 +56,9 @@ CMS_SUBPROCESS_TIMEOUT = "CMS_SUBPROCESS_TIMEOUT"
 
 CMS_NODE_NOT_FOUND = "CMS_NODE_NOT_FOUND"
 """Raised when Node.js is not available on PATH."""
+
+CMS_PREVIEW_FAILED = "CMS_PREVIEW_FAILED"
+"""Raised when the Next.js dev server fails to start."""
 
 
 class CMSError(BeddelError):
