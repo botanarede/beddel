@@ -1,0 +1,19 @@
+{
+  "name": "@botanarede/bonar-creator-studio",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "dev": "next dev --webpack --port 3003",
+    "build": "bash ../../scripts/copy-tenant-assets.sh && next build",
+    "start": "next start",
+    "export": "next build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@botanarede/core": "workspace:*",
+    "@botanarede/ui-react": "workspace:*"
+  }
+}
