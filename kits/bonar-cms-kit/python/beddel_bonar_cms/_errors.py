@@ -14,9 +14,11 @@ from beddel.domain.errors import BeddelError
 
 __all__ = [
     "CMS_BUILD_FAILED",
+    "CMS_DEPLOY_FAILED",
     "CMS_GENERATION_FAILED",
     "CMS_INVALID_TENANT_ID",
     "CMS_NODE_NOT_FOUND",
+    "CMS_PROVISION_FAILED",
     "CMS_SUBPROCESS_TIMEOUT",
     "CMS_TENANT_EXISTS",
     "CMS_TENANT_NOT_FOUND",
@@ -26,6 +28,12 @@ __all__ = [
 
 CMS_BUILD_FAILED = "CMS_BUILD_FAILED"
 """Raised when Next.js static export build fails."""
+
+CMS_DEPLOY_FAILED = "CMS_DEPLOY_FAILED"
+"""Raised when Firebase Hosting deploy fails (e.g. CLI not found)."""
+
+CMS_PROVISION_FAILED = "CMS_PROVISION_FAILED"
+"""Raised when Firebase project provisioning fails (e.g. gcloud CLI not found)."""
 
 CMS_TENANT_NOT_FOUND = "CMS_TENANT_NOT_FOUND"
 """Raised when a tenant_id has no corresponding config file."""

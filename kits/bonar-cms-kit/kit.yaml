@@ -81,6 +81,10 @@ targets:
         target: "beddel_bonar_cms.tools.validation:validate_tenant"
       - name: build_site
         target: "beddel_bonar_cms.tools.build:build_site"
+      - name: deploy_site
+        target: "beddel_bonar_cms.tools.deploy:deploy_site"
+      - name: provision_firebase
+        target: "beddel_bonar_cms.tools.deploy:provision_firebase"
       - name: create_tenant
         target: "beddel_bonar_cms.tools.crud:create_tenant"
       - name: read_tenant
