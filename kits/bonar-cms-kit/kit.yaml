@@ -69,6 +69,17 @@ tools:
     description: Stop running preview dev server
     category: dev
 
+workflows:
+  - name: onboarding-novo-cliente
+    file: workflows/onboarding-novo-cliente.yaml
+    description: Full new client pipeline (provision → generate → validate → save → build → deploy)
+  - name: deploy-tenant
+    file: workflows/deploy-tenant.yaml
+    description: Build + deploy for existing tenant (read → validate → build → deploy)
+  - name: update-tenant
+    file: workflows/update-tenant.yaml
+    description: Modify config + redeploy (read → update → validate → build → deploy)
+
 targets:
   python:
     status: implemented

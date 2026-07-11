@@ -1,0 +1,36 @@
+id: deploy-tenant
+description: Build and deploy an existing tenant site — reads config, validates, builds static export, deploys to Firebase Hosting.
+version: "1.0"
+inputs:
+  - name: tenant_id
+    type: string
+    description: Tenant identifier to deploy
+  - name: project_id
+    type: string
+    description: Firebase project ID for deploy target
+steps:
+  - id: read-tenant
+    primitive: tool
+    config:
+      tool: read_tenant
+      inputs:
+        tenant_id: "{{ inputs.tenant_id }}"
+  - id: validate-tenant
+    primitive: tool
+    config:
+      tool: validate_tenant
+      inputs:
+        tenant_json: "{{ steps.read-tenant.output }}"
+  - id: build-site
+    primitive: tool
+    config:
+      tool: build_site
+      inputs:
+        tenant_id: "{{ inputs.tenant_id }}"
+  - id: deploy-site
+    primitive: tool
+    config:
+      tool: deploy_site
+      inputs:
+        tenant_id: "{{ inputs.tenant_id }}"
+        project_id: "{{ inputs.project_id }}"

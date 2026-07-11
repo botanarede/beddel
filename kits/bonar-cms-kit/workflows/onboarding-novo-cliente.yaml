@@ -1,0 +1,51 @@
+id: onboarding-novo-cliente
+description: Full new client onboarding pipeline — provision Firebase, generate tenant config via LLM, validate, save, build, and deploy.
+version: "1.0"
+inputs:
+  - name: briefing
+    type: string
+    description: Natural language description of the business/venue
+  - name: project_id
+    type: string
+    description: Firebase project ID for provisioning and deploy
+  - name: tenant_id
+    type: string
+    description: Desired tenant identifier (kebab-case)
+steps:
+  - id: provision-firebase
+    primitive: tool
+    config:
+      tool: provision_firebase
+      inputs:
+        project_id: "{{ inputs.project_id }}"
+  - id: generate-tenant
+    primitive: llm
+    config:
+      prompt: "Generate a TenantConfig JSON for a business described as: {{ inputs.briefing }}"
+      output_format: json
+  - id: validate-tenant
+    primitive: tool
+    config:
+      tool: validate_tenant
+      inputs:
+        tenant_json: "{{ steps.generate-tenant.output }}"
+  - id: create-tenant
+    primitive: tool
+    config:
+      tool: create_tenant
+      inputs:
+        tenant_id: "{{ inputs.tenant_id }}"
+        tenant_json: "{{ steps.generate-tenant.output }}"
+  - id: build-site
+    primitive: tool
+    config:
+      tool: build_site
+      inputs:
+        tenant_id: "{{ inputs.tenant_id }}"
+  - id: deploy-site
+    primitive: tool
+    config:
+      tool: deploy_site
+      inputs:
+        tenant_id: "{{ inputs.tenant_id }}"
+        project_id: "{{ inputs.project_id }}"
