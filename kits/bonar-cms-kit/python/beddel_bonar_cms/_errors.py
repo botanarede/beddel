@@ -13,6 +13,7 @@ from typing import Any
 from beddel.domain.errors import BeddelError
 
 __all__ = [
+    "CMS_BUILD_FAILED",
     "CMS_GENERATION_FAILED",
     "CMS_INVALID_TENANT_ID",
     "CMS_NODE_NOT_FOUND",
@@ -22,6 +23,9 @@ __all__ = [
     "CMS_VALIDATION_ERROR",
     "CMSError",
 ]
+
+CMS_BUILD_FAILED = "CMS_BUILD_FAILED"
+"""Raised when Next.js static export build fails."""
 
 CMS_TENANT_NOT_FOUND = "CMS_TENANT_NOT_FOUND"
 """Raised when a tenant_id has no corresponding config file."""

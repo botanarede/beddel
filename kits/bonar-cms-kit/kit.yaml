@@ -79,6 +79,8 @@ targets:
         target: "beddel_bonar_cms.tools.generation:generate_tenant"
       - name: validate_tenant
         target: "beddel_bonar_cms.tools.validation:validate_tenant"
+      - name: build_site
+        target: "beddel_bonar_cms.tools.build:build_site"
       - name: create_tenant
         target: "beddel_bonar_cms.tools.crud:create_tenant"
       - name: read_tenant
