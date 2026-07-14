@@ -42,6 +42,12 @@
     "category": "governance"
   },
   {
+    "name": "antigravity-sdk-kit",
+    "version": "0.1.0",
+    "description": "Antigravity SDK bridge \u2014 exposes Google Antigravity agent runtime as a Beddel IAgentAdapter",
+    "category": "antigravity"
+  },
+  {
     "name": "auth-firebase-kit",
     "version": "0.1.0",
     "description": "Firebase Auth token verification + App Check + tenant resolution for Beddel backends",
@@ -188,7 +194,7 @@
   {
     "name": "solution-cms-kit",
     "version": "0.1.0",
-    "description": "Multi-tenant CMS solution kit \u2014 full tenant lifecycle with static site generation",
+    "description": "Self-contained CMS solution kit \u2014 encapsulates all packages, the Next.js app, tenant templates, and Firebase configs. Full tenant lifecycle: generation, validation, build, deploy, preview.\n",
     "category": "solution"
   },
   {
