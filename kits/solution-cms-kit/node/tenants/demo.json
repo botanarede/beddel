@@ -1,0 +1,419 @@
+{
+  "metadata": {
+    "id": "demo",
+    "name": "Solution CMS Demo",
+    "status": "active",
+    "domains": ["localhost"],
+    "features": {
+      "events": true,
+      "menu": true,
+      "photos": true,
+      "contact": true,
+      "reservations": true,
+      "birthdayList": true,
+      "corporateEvents": true,
+      "faq": true,
+      "vip": true,
+      "reports": true,
+      "symplaImport": false
+    }
+  },
+  "designTokens": {
+    "colors": {
+      "primary": "#2563eb",
+      "accent": "#f59e0b",
+      "background": "#ffffff",
+      "foreground": "#0f172a",
+      "muted": "#f1f5f9",
+      "border": "#e2e8f0"
+    },
+    "typography": {
+      "fontFamilies": {
+        "heading": "Inter, sans-serif",
+        "body": "Inter, sans-serif"
+      },
+      "fontSizes": {
+        "sm": "0.875rem",
+        "base": "1rem",
+        "lg": "1.125rem",
+        "xl": "1.25rem",
+        "2xl": "1.5rem",
+        "3xl": "1.875rem",
+        "4xl": "2.25rem"
+      }
+    },
+    "spacing": {
+      "section": "4rem",
+      "container": "1.5rem"
+    }
+  },
+  "features": {
+    "events": true,
+    "menu": true,
+    "photos": true,
+    "contact": true,
+    "reservations": true,
+    "birthdayList": true,
+    "corporateEvents": true,
+    "faq": true,
+    "vip": true,
+    "reports": true,
+    "symplaImport": false
+  },
+  "navigation": {
+    "menus": {
+      "main": {
+        "items": [
+          { "label": "Home", "type": "route", "route": "/" },
+          { "label": "Events", "type": "route", "route": "/events" },
+          { "label": "Menu", "type": "route", "route": "/menu" },
+          { "label": "Photos", "type": "route", "route": "/photos" },
+          { "label": "About", "type": "route", "route": "/about" },
+          { "label": "Contact", "type": "route", "route": "/contact" }
+        ]
+      },
+      "footer": {
+        "items": [
+          { "label": "Privacy Policy", "type": "route", "route": "/privacy" },
+          { "label": "Terms of Service", "type": "route", "route": "/terms" },
+          { "label": "FAQ", "type": "hash", "hash": "#faq" }
+        ]
+      }
+    }
+  },
+  "siteDefaults": {
+    "name": "Solution CMS Demo",
+    "tagline": "A complete CMS kit for building tenant-driven websites",
+    "description": "Solution CMS Kit is a multi-tenant content management system that enables rapid creation of fully customizable, statically-exported websites. Each tenant gets independent configuration for design tokens, navigation, pages, components, and features.",
+    "url": "http://localhost:3000",
+    "locale": "en-US",
+    "email": "demo@example.com",
+    "phone": "+1 (555) 000-0000",
+    "whatsapp": "+15550000000",
+    "address": {
+      "street": "123 Demo Street",
+      "city": "Sample City",
+      "state": "SC",
+      "zip": "00000",
+      "country": "US",
+      "geo": {
+        "lat": 0.0,
+        "lng": 0.0
+      },
+      "googleMapsQuery": "123 Demo Street, Sample City"
+    },
+    "social": {
+      "instagram": "#",
+      "facebook": "#",
+      "twitter": "#",
+      "linkedin": "#",
+      "youtube": "#"
+    },
+    "branding": {
+      "logo": "/images/logo.svg",
+      "logoWhite": "/images/logo-white.svg",
+      "favicon": "/images/favicon.ico",
+      "ogImage": "/images/og-image.png",
+      "primaryColor": "#2563eb",
+      "accentColor": "#f59e0b",
+      "fontHeading": "Inter",
+      "fontBody": "Inter"
+    },
+    "businessTypes": ["CMS", "SaaS", "Multi-tenant Platform"],
+    "openingHours": [
+      {
+        "dayOfWeek": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+        "opens": "09:00",
+        "closes": "18:00",
+        "description": "Business hours"
+      },
+      {
+        "dayOfWeek": ["Saturday"],
+        "opens": "10:00",
+        "closes": "14:00",
+        "description": "Weekend support"
+      }
+    ],
+    "maxCapacity": 200,
+    "reservations": {
+      "timeSlots": ["09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00"],
+      "defaultCapacityPerSlot": 20,
+      "blockedDates": [],
+      "minGuests": 1,
+      "maxGuests": 50
+    },
+    "faq": [
+      {
+        "question": "What is Solution CMS Kit?",
+        "answer": "Solution CMS Kit is a multi-tenant content management system that generates static websites from JSON configuration. Each tenant defines their own design tokens, pages, components, and features."
+      },
+      {
+        "question": "How do I create a new tenant?",
+        "answer": "Copy template.json from the tenants/ directory, fill in your configuration values, and set EXPORT_TENANT_ID to your tenant ID when building."
+      },
+      {
+        "question": "What components are available?",
+        "answer": "The kit includes HeroCarousel, EventGrid, MenuDisplay, PhotoGallery, ContactSection, AboutSection, ServicesSection, CTASection, StructuredData, MembersGrid, MediaGallery, and more."
+      },
+      {
+        "question": "How do features work?",
+        "answer": "Features are boolean flags in the tenant config. Components can use featureGate to conditionally render based on enabled features. This allows each tenant to enable only what they need."
+      },
+      {
+        "question": "Can I add custom components?",
+        "answer": "Yes. Register your component in the registry manifest and component map. The manifest acts as an allowlist — only registered types can be rendered from tenant JSON."
+      },
+      {
+        "question": "How is the site exported?",
+        "answer": "The kit uses Next.js static export. Run the build with EXPORT_TENANT_ID set to your tenant ID, and the output is a fully static site ready for any hosting provider."
+      }
+    ]
+  },
+  "pages": {
+    "home": {
+      "route": "/",
+      "title": "Solution CMS Demo - Home",
+      "description": "A complete CMS kit for building tenant-driven websites",
+      "ogImage": "/images/og-image.png",
+      "layoutRef": "default",
+      "sections": [
+        {
+          "type": "HeroCarousel",
+          "id": "hero",
+          "props": {
+            "slides": [
+              {
+                "desktopImage": "/images/hero-1.webp",
+                "mobileImage": "/images/hero-1-mobile.webp",
+                "alt": "Solution CMS Kit - Build multi-tenant websites",
+                "caption": "Build beautiful, tenant-driven websites from JSON configuration"
+              },
+              {
+                "desktopImage": "/images/hero-2.webp",
+                "mobileImage": "/images/hero-2-mobile.webp",
+                "alt": "Design tokens and theming",
+                "caption": "Full design system with customizable tokens per tenant"
+              },
+              {
+                "desktopImage": "/images/hero-3.webp",
+                "mobileImage": "/images/hero-3-mobile.webp",
+                "alt": "Component-driven architecture",
+                "caption": "Compose pages from a library of reusable, data-driven components"
+              }
+            ],
+            "autoplay": true,
+            "interval": 6000,
+            "overlay": {
+              "title": "Solution CMS Kit",
+              "tagline": "Multi-tenant websites from JSON",
+              "ctaLabel": "Explore Features",
+              "ctaHref": "#features"
+            },
+            "height": "h-[500px] md:h-[600px]"
+          }
+        },
+        {
+          "type": "EventGrid",
+          "id": "upcoming-events",
+          "props": {
+            "heading": "Upcoming Events",
+            "emptyMessage": "No events scheduled yet. Events will appear here when configured.",
+            "items": [
+              {
+                "id": "demo-event-1",
+                "title": "Kit Launch Webinar",
+                "date": "2025-03-15",
+                "time": "14:00",
+                "image": "/images/event-1.webp",
+                "description": "Learn how to set up your first tenant and deploy a static site in minutes.",
+                "location": "Online"
+              },
+              {
+                "id": "demo-event-2",
+                "title": "Component Workshop",
+                "date": "2025-03-22",
+                "time": "10:00",
+                "image": "/images/event-2.webp",
+                "description": "Hands-on session building custom components and registering them in the manifest.",
+                "location": "Online"
+              }
+            ]
+          },
+          "featureGate": "events"
+        },
+        {
+          "type": "CTASection",
+          "id": "cta",
+          "props": {
+            "heading": "Ready to build your site?",
+            "description": "Start with this demo tenant as a template. Customize design tokens, enable features, and compose your pages from the component library.",
+            "ctaLabel": "Get Started",
+            "ctaHref": "/contact"
+          }
+        },
+        {
+          "type": "StructuredData",
+          "id": "schema-org",
+          "props": {
+            "type": "LocalBusiness",
+            "schemaData": {
+              "name": "Solution CMS Demo",
+              "description": "A complete CMS kit for building tenant-driven websites",
+              "url": "http://localhost:3000",
+              "telephone": "+1 (555) 000-0000",
+              "email": "demo@example.com",
+              "address": {
+                "@type": "PostalAddress",
+                "streetAddress": "123 Demo Street",
+                "addressLocality": "Sample City",
+                "addressRegion": "SC",
+                "postalCode": "00000",
+                "addressCountry": "US"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "events": {
+      "route": "/events",
+      "title": "Events - Solution CMS Demo",
+      "description": "Upcoming events and activities",
+      "layoutRef": "default",
+      "sections": [
+        {
+          "type": "EventGrid",
+          "id": "all-events",
+          "props": {
+            "heading": "All Events",
+            "emptyMessage": "No events scheduled. Check back soon!",
+            "items": []
+          },
+          "dataBinding": {
+            "source": "cache",
+            "table": "events",
+            "query": {}
+          },
+          "featureGate": "events"
+        }
+      ]
+    },
+    "menu": {
+      "route": "/menu",
+      "title": "Menu - Solution CMS Demo",
+      "description": "Browse our menu offerings",
+      "layoutRef": "default",
+      "sections": [
+        {
+          "type": "MenuDisplay",
+          "id": "menu-viewer",
+          "props": {
+            "pages": [
+              {
+                "front": "/images/menu-page-1-front.webp",
+                "back": "/images/menu-page-1-back.webp",
+                "label": "Main Menu"
+              },
+              {
+                "front": "/images/menu-page-2-front.webp",
+                "label": "Drinks & Desserts"
+              }
+            ]
+          },
+          "featureGate": "menu"
+        }
+      ]
+    },
+    "photos": {
+      "route": "/photos",
+      "title": "Photos - Solution CMS Demo",
+      "description": "Photo gallery showcasing our space and events",
+      "layoutRef": "default",
+      "sections": [
+        {
+          "type": "PhotoGallery",
+          "id": "gallery",
+          "props": {
+            "sections": [],
+            "initialVisibleCount": 8
+          },
+          "dataBinding": {
+            "source": "cache",
+            "table": "gallery_sections",
+            "query": {}
+          },
+          "featureGate": "photos"
+        }
+      ]
+    },
+    "about": {
+      "route": "/about",
+      "title": "About - Solution CMS Demo",
+      "description": "Learn more about Solution CMS Kit",
+      "layoutRef": "default",
+      "sections": [
+        {
+          "type": "AboutSection",
+          "id": "about-intro",
+          "props": {
+            "heading": "About Solution CMS Kit",
+            "subheading": "A modern approach to multi-tenant content management",
+            "body": "Solution CMS Kit enables teams to build and manage multiple tenant websites from a single codebase. Each tenant gets full control over design, content, and features through a declarative JSON configuration."
+          }
+        },
+        {
+          "type": "ServicesSection",
+          "id": "capabilities",
+          "props": {
+            "heading": "Kit Capabilities",
+            "items": [
+              "Multi-tenant architecture",
+              "Design token system",
+              "Component registry with manifest",
+              "Feature gating",
+              "Static export (Next.js)",
+              "Data binding from cache"
+            ]
+          }
+        }
+      ]
+    },
+    "contact": {
+      "route": "/contact",
+      "title": "Contact - Solution CMS Demo",
+      "description": "Get in touch with us",
+      "layoutRef": "default",
+      "sections": [
+        {
+          "type": "ContactSection",
+          "id": "contact-form",
+          "props": {
+            "siteConfig": {
+              "name": "Solution CMS Demo",
+              "email": "demo@example.com",
+              "phone": "+1 (555) 000-0000",
+              "whatsapp": "+15550000000",
+              "address": "123 Demo Street, Sample City, SC 00000"
+            }
+          },
+          "featureGate": "contact"
+        }
+      ]
+    }
+  },
+  "layouts": {
+    "default": {
+      "id": "default",
+      "slots": [
+        { "name": "header", "description": "Top navigation and branding" },
+        { "name": "main", "description": "Primary content area for page sections" },
+        { "name": "footer", "description": "Site footer with links and contact info" }
+      ],
+      "defaultProps": {
+        "maxWidth": "1280px",
+        "padding": "0"
+      }
+    }
+  },
+  "components": {}
+}

@@ -1,0 +1,78 @@
+{
+  "metadata": {
+    "id": "",
+    "name": "",
+    "status": "active",
+    "domains": [],
+    "features": {}
+  },
+  "designTokens": {
+    "colors": {
+      "primary": "",
+      "accent": "",
+      "background": "",
+      "foreground": ""
+    },
+    "typography": {
+      "fontFamilies": {
+        "heading": "",
+        "body": ""
+      }
+    }
+  },
+  "features": {},
+  "navigation": {
+    "menus": {
+      "main": {
+        "items": []
+      }
+    }
+  },
+  "siteDefaults": {
+    "name": "",
+    "tagline": "",
+    "description": "",
+    "url": "",
+    "locale": "",
+    "email": "",
+    "phone": "",
+    "whatsapp": "",
+    "address": {
+      "street": "",
+      "city": "",
+      "state": "",
+      "zip": "",
+      "country": ""
+    },
+    "social": {},
+    "branding": {
+      "logo": "",
+      "logoWhite": "",
+      "favicon": "",
+      "ogImage": "",
+      "primaryColor": "",
+      "accentColor": ""
+    },
+    "openingHours": [],
+    "reservations": {
+      "timeSlots": [],
+      "defaultCapacityPerSlot": 0,
+      "blockedDates": [],
+      "minGuests": 1,
+      "maxGuests": 10
+    },
+    "faq": []
+  },
+  "pages": {},
+  "layouts": {
+    "default": {
+      "id": "default",
+      "slots": [
+        { "name": "header", "description": "Top navigation and branding" },
+        { "name": "main", "description": "Primary content area for page sections" },
+        { "name": "footer", "description": "Site footer with links and contact info" }
+      ]
+    }
+  },
+  "components": {}
+}

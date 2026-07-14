@@ -186,6 +186,12 @@
     "category": "workflow"
   },
   {
+    "name": "solution-cms-kit",
+    "version": "0.1.0",
+    "description": "Multi-tenant CMS solution kit \u2014 full tenant lifecycle with static site generation",
+    "category": "solution"
+  },
+  {
     "name": "state-postgres-kit",
     "version": "0.1.0",
     "description": "PostgreSQL state persistence adapter for Beddel",
