@@ -10,7 +10,7 @@ import type { AuthHandlerDeps } from './types'
  * token using the Firebase Admin SDK. The client uses this token for
  * subsequent requests that require App Check verification.
  *
- * Preserves the legacy response envelope for casasavana compatibility:
+ * Preserves the legacy response envelope for backward compatibility:
  * `{ token, ttlMillis }` with status 201.
  */
 export function makeVerifyAppCheck(deps: AuthHandlerDeps) {

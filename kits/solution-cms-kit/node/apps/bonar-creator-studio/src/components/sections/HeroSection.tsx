@@ -74,7 +74,7 @@ export function HeroSection() {
           >
             <img
               src="/images/marca-prana.webp"
-              alt="Demo Brand"
+              alt="Site Logo"
               className="h-auto w-[60vw] max-w-[520px] brightness-0 invert drop-shadow-[0_4px_30px_rgba(0,0,0,0.4)] md:w-[26vw]"
             />
           </div>
@@ -120,7 +120,7 @@ export function HeroSection() {
           <div className="relative z-10 mx-auto flex h-full max-w-6xl items-center justify-between px-5 md:px-8">
             <img
               src="/images/marca-prana.webp"
-              alt="Demo Brand"
+              alt="Site Logo"
               className="h-14 w-auto md:h-[68px]"
             />
 

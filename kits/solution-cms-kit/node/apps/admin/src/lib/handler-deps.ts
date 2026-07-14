@@ -42,7 +42,7 @@ function createPostmarkSender(serverToken: string): EmailSender {
           'X-Postmark-Server-Token': serverToken,
         },
         body: JSON.stringify({
-          From: 'Login Botanarede <noreply@example.com>',
+          From: process.env.EMAIL_FROM ?? 'Login <noreply@example.com>',
           To: to,
           Subject: subject,
           HtmlBody: htmlBody,

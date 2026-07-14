@@ -15,7 +15,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 /**
  * API URL for SDK adapters.
  *
- * In dev: http://botanarede-cms-api.local:3001 (set via NEXT_PUBLIC_URL_API)
+ * In dev: http://cms-admin.local:3001 (set via NEXT_PUBLIC_URL_API)
  * In prod: the production API domain
  *
  * Falls back to window.location.origin if env var is not set,

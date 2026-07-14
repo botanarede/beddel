@@ -40,7 +40,7 @@ export function RadarArticlePage({ article, product, allArticles, editionWeek }:
         {/* Footer */}
         <footer className="border-t py-6">
           <div className="mx-auto flex max-w-3xl flex-col items-center gap-2 px-6 text-xs text-muted-foreground md:flex-row md:justify-between">
-            <span>© {new Date().getFullYear()} Demo Brand</span>
+            <span>© {new Date().getFullYear()} Your Brand</span>
             <div className="flex gap-4">
               <a href="/" className="hover:text-foreground">Home</a>
               <a href="/radar/" className="hover:text-foreground">Radar</a>

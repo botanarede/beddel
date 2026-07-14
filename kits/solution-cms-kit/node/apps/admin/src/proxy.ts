@@ -39,12 +39,12 @@ let serviceAccountParseErrorLogged = false
  * |---------------------------------|-----------------|
  * | localhost                        | null            |
  * | 127.0.0.1                       | null            |
- * | cms-admin.local       | null (dev)      |
- * | admin.example.com          | null (selector) |
- * | admin.tenant-a.example.com          | casasavana      |
- * | tenant-a.example.com     | casasavana      |
- * | www.example.com            | null (reserved) |
- * | api.example.com            | null (reserved) |
+ * | cms-admin.local                  | null (dev)      |
+ * | admin.platform.example.com       | null (selector) |
+ * | admin.tenant-a.example.com       | tenant-a        |
+ * | tenant-a.platform.example.com    | tenant-a        |
+ * | www.platform.example.com         | null (reserved) |
+ * | api.platform.example.com         | null (reserved) |
  *
  * If `KNOWN_TENANTS` env var is set (comma-separated), only IDs in that
  * allow-list are returned. If unset, any resolved tenant is accepted
@@ -61,23 +61,32 @@ function resolveTenant(request: NextRequest): string | null {
 
   if (!host) return null
 
+  // Configurable platform domain and local hostname
+  const platformDomain = process.env.PLATFORM_DOMAIN ?? 'example.com'
+  const adminLocalHostname = process.env.ADMIN_LOCAL_HOSTNAME ?? 'cms-admin.local'
+  const adminPlatformDomain = process.env.ADMIN_PLATFORM_DOMAIN ?? `admin.${platformDomain}`
+
   // Local dev hostnames → null (show selector)
   if (host === 'localhost' || host === '127.0.0.1') return null
-  if (host === 'cms-admin.local') return null
+  if (host === adminLocalHostname) return null
 
   // Generic admin domain → null (show selector)
-  if (host === 'admin.example.com') return null
+  if (host === adminPlatformDomain) return null
 
   let tenantId: string | null = null
 
-  // Pattern: admin.{tenant}.com.br → tenant
-  const adminMatch = host.match(/^admin\.([a-z0-9-]+)\.com\.br$/)
+  // Pattern: admin.{tenant}.{tld} → tenant
+  const platformParts = platformDomain.split('.')
+  const platformRegex = new RegExp(
+    `^admin\\.([a-z0-9-]+)\\.${platformParts.map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\.')}$`,
+  )
+  const adminMatch = host.match(platformRegex)
   if (adminMatch) {
     tenantId = adminMatch[1]
   }
 
-  // Pattern: {tenant}.botanarede.com.br (subdomain not in reserved list)
-  if (!tenantId && host.endsWith('.botanarede.com.br')) {
+  // Pattern: {tenant}.{platformDomain} (subdomain not in reserved list)
+  if (!tenantId && host.endsWith('.' + platformDomain)) {
     const parts = host.split('.')
     const subdomain = parts[0]
     if (['admin', 'www', 'api'].includes(subdomain)) return null

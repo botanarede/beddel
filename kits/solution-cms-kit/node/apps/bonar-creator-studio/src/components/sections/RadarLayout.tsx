@@ -54,14 +54,14 @@ export function RadarLayout({ articles, products, editionWeek }: RadarLayoutProp
         {/* Footer */}
         <footer className="border-t py-6">
           <div className="mx-auto flex max-w-3xl flex-col items-center gap-2 px-6 text-xs text-muted-foreground md:flex-row md:justify-between">
-            <span>© {new Date().getFullYear()} Demo Brand</span>
+            <span>© {new Date().getFullYear()} Your Brand</span>
             <div className="flex gap-4">
               <a href="/" className="hover:text-foreground">Home</a>
               <a href="/politica-de-privacidade/" className="hover:text-foreground">
                 Política de Privacidade
               </a>
-              <a href="mailto:contact@example.com" className="hover:text-foreground">
-                contact@example.com
+              <a href="mailto:demo@example.com" className="hover:text-foreground">
+                demo@example.com
               </a>
             </div>
           </div>

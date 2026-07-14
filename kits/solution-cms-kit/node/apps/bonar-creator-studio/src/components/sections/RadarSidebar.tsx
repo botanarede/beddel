@@ -100,7 +100,7 @@ export function RadarSidebar({ articles, activeId, editionWeek, sourcePage = 'li
           <a href="/radar/">
             <img
               src="/images/marca-prana.webp"
-              alt="Demo Brand"
+              alt="Site Logo"
               className="h-12 w-auto brightness-0 invert lg:h-14"
             />
           </a>
@@ -188,7 +188,7 @@ export function RadarSidebar({ articles, activeId, editionWeek, sourcePage = 'li
         {/* Footer */}
         <div className="border-t border-white/10 px-6 py-4">
           <p className="text-center text-[10px] text-white/25">
-            © {new Date().getFullYear()} Demo Brand
+            © {new Date().getFullYear()} Your Brand
           </p>
         </div>
       </aside>

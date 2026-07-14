@@ -24,7 +24,7 @@ export function RadarTopbar() {
         <a href="/" className="flex items-center gap-3">
           <img
             src="/images/marca-prana.webp"
-            alt="Demo Brand"
+            alt="Site Logo"
             className={`h-10 w-auto transition-all duration-300 md:h-12 ${
               scrolled ? '' : 'brightness-0 invert drop-shadow-[0_2px_8px_rgba(0,0,0,0.3)]'
             }`}

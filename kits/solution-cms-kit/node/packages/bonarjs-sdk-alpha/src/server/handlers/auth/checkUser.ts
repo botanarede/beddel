@@ -10,7 +10,7 @@ import type { AuthHandlerDeps } from './types'
  * `users` Firestore collection. If the user exists in Auth but not in
  * Firestore, creates the Firestore document.
  *
- * Preserves the legacy response envelope for casasavana compatibility:
+ * Preserves the legacy response envelope for backward compatibility:
  * `{ message: true }` with status 201 on success.
  */
 export function makeCheckUserInDatabase(deps: AuthHandlerDeps) {

@@ -9,10 +9,10 @@ export function CTASection() {
           Se você atua no mercado de bem-estar e quer entender melhor quem é seu público, fale com a gente.
         </p>
         <a
-          href="mailto:contact@example.com?subject=Brasil%20Prana"
+          href="mailto:demo@example.com?subject=Contact"
           className="mt-8 inline-block rounded-full bg-[var(--brand-primary)] px-8 py-3 text-sm font-semibold text-white transition hover:opacity-90"
         >
-          contact@example.com
+          demo@example.com
         </a>
       </div>
     </section>

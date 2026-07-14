@@ -52,7 +52,7 @@ async function ensureUser(
  * - `{ email }` → generates a 6-digit code, stores it, sends via email
  * - `{ email, code }` → verifies code, creates custom token, returns it
  *
- * Preserves the legacy response envelope for casasavana compatibility.
+ * Preserves the legacy response envelope for backward compatibility.
  */
 export function makeEmailCodeAuth(deps: AuthHandlerDeps) {
   return async function POST(req: NextRequest): Promise<NextResponse> {

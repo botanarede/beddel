@@ -13,7 +13,7 @@ export function AboutSection() {
         está, ou o que ele quer.
       </p>
       <p className="mt-4 text-base leading-relaxed text-muted-foreground">
-        A Demo Brand existe para mudar isso.
+        We exist to change that.
       </p>
     </section>
   )

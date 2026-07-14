@@ -10,7 +10,7 @@ import {
 } from 'react'
 import type { TenantConfig } from '@botanarede/schema'
 
-const STORAGE_KEY = 'botanarede_selected_tenant'
+const STORAGE_KEY = 'cms_selected_tenant'
 
 interface TenantSummary {
   id: string
