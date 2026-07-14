@@ -15,7 +15,7 @@ function resolveDistDir() {
     const data = JSON.parse(raw)
     const id = data?.metadata?.id ?? tenantId
     const exportDomain = data?.metadata?.exportDomain
-    const distPath = `${exportDomain ?? id}.botanarede.com.br`
+    const distPath = `${exportDomain ?? id}.${process.env.PLATFORM_DOMAIN ?? 'example.com'}`
     console.log(`[next.config] Export mode: tenant="${id}", distDir=sites/${distPath}/`)
     // Kit-internal path: node/apps/bonar-creator-studio → node/sites/{domain}
     return `../../sites/${distPath}`
