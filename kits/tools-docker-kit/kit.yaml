@@ -1,0 +1,35 @@
+name: tools-docker-kit
+version: 0.1.0
+description: Docker Compose operations for containerized agent sessions
+author: Beddel Team
+tools:
+- name: docker_compose_build
+  target: beddel_tools_docker.tools:docker_compose_build
+  description: Build a Docker Compose service image
+  category: docker
+- name: docker_compose_run
+  target: beddel_tools_docker.tools:docker_compose_run
+  description: Run a one-off command in a Compose service container
+  category: docker
+- name: docker_compose_up
+  target: beddel_tools_docker.tools:docker_compose_up
+  description: Start Compose services
+  category: docker
+- name: docker_compose_down
+  target: beddel_tools_docker.tools:docker_compose_down
+  description: Stop and remove Compose services
+  category: docker
+targets:
+  python:
+    status: implemented
+    module: beddel_tools_docker
+    dependencies: []
+    tools:
+    - name: docker_compose_build
+      target: beddel_tools_docker.tools:docker_compose_build
+    - name: docker_compose_run
+      target: beddel_tools_docker.tools:docker_compose_run
+    - name: docker_compose_up
+      target: beddel_tools_docker.tools:docker_compose_up
+    - name: docker_compose_down
+      target: beddel_tools_docker.tools:docker_compose_down
