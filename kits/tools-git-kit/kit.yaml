@@ -1,0 +1,71 @@
+name: tools-git-kit
+version: 0.1.0
+description: Typed Git operations for Beddel workflows
+author: Beddel Team
+tools:
+- name: git_status
+  target: beddel_tools_git.tools:git_status
+  description: Check worktree status (clean/dirty, modified files, ahead/behind)
+  category: git
+- name: git_branch_create
+  target: beddel_tools_git.tools:git_branch_create
+  description: Create and checkout a new branch
+  category: git
+- name: git_branch_current
+  target: beddel_tools_git.tools:git_branch_current
+  description: Get current branch name and SHA
+  category: git
+- name: git_commit
+  target: beddel_tools_git.tools:git_commit
+  description: Stage specific files and commit with message
+  category: git
+- name: git_push
+  target: beddel_tools_git.tools:git_push
+  description: Push branch to remote
+  category: git
+- name: git_merge
+  target: beddel_tools_git.tools:git_merge
+  description: Merge a branch into current
+  category: git
+- name: git_diff_stat
+  target: beddel_tools_git.tools:git_diff_stat
+  description: Get diff statistics between two refs
+  category: git
+- name: git_fetch
+  target: beddel_tools_git.tools:git_fetch
+  description: Fetch from remote with optional prune
+  category: git
+- name: git_tag_create
+  target: beddel_tools_git.tools:git_tag_create
+  description: Create annotated tag and optionally push
+  category: git
+- name: git_branch_delete
+  target: beddel_tools_git.tools:git_branch_delete
+  description: Delete branch locally and optionally on remote
+  category: git
+targets:
+  python:
+    status: implemented
+    module: beddel_tools_git
+    dependencies: []
+    tools:
+    - name: git_status
+      target: beddel_tools_git.tools:git_status
+    - name: git_branch_create
+      target: beddel_tools_git.tools:git_branch_create
+    - name: git_branch_current
+      target: beddel_tools_git.tools:git_branch_current
+    - name: git_commit
+      target: beddel_tools_git.tools:git_commit
+    - name: git_push
+      target: beddel_tools_git.tools:git_push
+    - name: git_merge
+      target: beddel_tools_git.tools:git_merge
+    - name: git_diff_stat
+      target: beddel_tools_git.tools:git_diff_stat
+    - name: git_fetch
+      target: beddel_tools_git.tools:git_fetch
+    - name: git_tag_create
+      target: beddel_tools_git.tools:git_tag_create
+    - name: git_branch_delete
+      target: beddel_tools_git.tools:git_branch_delete
