@@ -1,0 +1,29 @@
+name: tools-remote-exec-kit
+version: 0.1.0
+description: Execute commands on remote/VM environments (Multipass, SSH, Docker)
+author: Beddel Team
+tools:
+- name: remote_exec
+  target: beddel_tools_remote.tools:remote_exec
+  description: Execute a command on a remote VM or container
+  category: remote
+- name: remote_health_check
+  target: beddel_tools_remote.tools:remote_health_check
+  description: Check if a remote VM is reachable and test file existence
+  category: remote
+- name: remote_file_read
+  target: beddel_tools_remote.tools:remote_file_read
+  description: Read a file from a remote VM
+  category: remote
+targets:
+  python:
+    status: implemented
+    module: beddel_tools_remote
+    dependencies: []
+    tools:
+    - name: remote_exec
+      target: beddel_tools_remote.tools:remote_exec
+    - name: remote_health_check
+      target: beddel_tools_remote.tools:remote_health_check
+    - name: remote_file_read
+      target: beddel_tools_remote.tools:remote_file_read
