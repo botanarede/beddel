@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from collections.abc import AsyncGenerator
@@ -9,6 +10,7 @@ from typing import Any
 
 from openai import (
     APIStatusError,
+    APITimeoutError,
     AsyncOpenAI,
     AuthenticationError,
     BadRequestError,
@@ -18,14 +20,22 @@ from openai import (
 
 from beddel.domain.errors import AdapterError
 from beddel.domain.ports import ILLMProvider
+from beddel_provider_kimi.caching import stable_prefix_messages
 from beddel_provider_kimi.errors import (
     ADAPT_KIMI_AUTH,
     ADAPT_KIMI_MODEL_UNAVAILABLE,
     ADAPT_KIMI_PARAM_REJECTED,
     ADAPT_KIMI_RATE_LIMIT,
+    ADAPT_PROVIDER_ERROR,
+    ADAPT_TIMEOUT,
 )
 
 logger = logging.getLogger(__name__)
+
+# Retry configuration
+_MAX_RETRIES = 3
+_BASE_BACKOFF_S = 2.0
+_RETRYABLE_STATUS_CODES = {429, 500, 502, 503}
 
 
 class KimiLLMProvider(ILLMProvider):
@@ -34,9 +44,15 @@ class KimiLLMProvider(ILLMProvider):
     Implements the ILLMProvider port using the OpenAI-compatible Moonshot API.
     Supports K2.6, K2.7, and K3 model families with appropriate parameter
     validation and normalization per model constraints.
+
+    Args:
+        api_key: Moonshot API key. Falls back to MOONSHOT_API_KEY env var.
+        base_url: API base URL. Defaults to "https://api.moonshot.ai/v1".
+        timeout: Request timeout in seconds. Defaults to 120.
     """
 
-    _BASE_URL = "https://api.moonshot.ai/v1"
+    _DEFAULT_BASE_URL = "https://api.moonshot.ai/v1"
+    _DEFAULT_TIMEOUT = 120
 
     _K3_FIXED_PARAMS: dict[str, float | int] = {
         "temperature": 1.0,
@@ -50,7 +66,12 @@ class KimiLLMProvider(ILLMProvider):
 
     _K2_7_MODELS = ("kimi-k2.7",)
 
-    def __init__(self, api_key: str | None = None) -> None:
+    def __init__(
+        self,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        timeout: float | None = None,
+    ) -> None:
         resolved_key = api_key or os.environ.get("MOONSHOT_API_KEY")
         if not resolved_key:
             raise AdapterError(
@@ -58,7 +79,14 @@ class KimiLLMProvider(ILLMProvider):
                 message="MOONSHOT_API_KEY not set",
                 details={"provider": "kimi"},
             )
-        self._client = AsyncOpenAI(api_key=resolved_key, base_url=self._BASE_URL)
+        self._base_url = base_url or self._DEFAULT_BASE_URL
+        self._timeout = timeout if timeout is not None else self._DEFAULT_TIMEOUT
+        self._client = AsyncOpenAI(
+            api_key=resolved_key,
+            base_url=self._base_url,
+            timeout=self._timeout,
+            max_retries=0,  # We handle retries ourselves
+        )
 
     @staticmethod
     def _is_k3(model: str) -> bool:
@@ -151,7 +179,39 @@ class KimiLLMProvider(ILLMProvider):
 
         return kwargs
 
+    @staticmethod
+    def _get_retry_after(exc: APIStatusError) -> float | None:
+        """Extract Retry-After header value from an API error response."""
+        response = getattr(exc, "response", None)
+        if response is None:
+            return None
+        headers = getattr(response, "headers", None)
+        if headers is None:
+            return None
+        retry_after = headers.get("retry-after")
+        if retry_after is None:
+            return None
+        try:
+            return float(retry_after)
+        except (ValueError, TypeError):
+            return None
+
+    @staticmethod
+    def _is_retryable(exc: Exception) -> bool:
+        """Check if an exception is retryable (429/500/502/503)."""
+        if isinstance(exc, APIStatusError):
+            return exc.status_code in _RETRYABLE_STATUS_CODES
+        if isinstance(exc, RateLimitError):
+            return True
+        return False
+
     def _handle_error(self, exc: Exception, model: str) -> AdapterError:
+        if isinstance(exc, APITimeoutError):
+            return AdapterError(
+                code=ADAPT_TIMEOUT,
+                message=f"Kimi request timed out for model '{model}'",
+                details={"model": model, "timeout": self._timeout},
+            )
         if isinstance(exc, AuthenticationError):
             return AdapterError(
                 code=ADAPT_KIMI_AUTH,
@@ -197,20 +257,20 @@ class KimiLLMProvider(ILLMProvider):
                     details={"model": model},
                 )
             return AdapterError(
-                code=ADAPT_KIMI_PARAM_REJECTED,
+                code=ADAPT_PROVIDER_ERROR,
                 message=f"Kimi API error for model '{model}': {exc}",
-                details={"model": model},
+                details={"model": model, "status_code": status},
             )
         return AdapterError(
-            code=ADAPT_KIMI_AUTH,
-            message=f"Kimi API error for model '{model}': {exc}",
+            code=ADAPT_PROVIDER_ERROR,
+            message=f"Kimi unexpected error for model '{model}': {exc}",
             details={"model": model},
         )
 
     async def complete(
         self, model: str, messages: list[dict[str, Any]], **kwargs: Any
     ) -> dict[str, Any]:
-        """Send a completion request to the Kimi API.
+        """Send a completion request to the Kimi API with retry.
 
         Args:
             model: Model identifier (e.g. "kimi-k3", "kimi-k2.7", "kimi-k2.6-math").
@@ -226,12 +286,43 @@ class KimiLLMProvider(ILLMProvider):
         self._validate_messages(messages)
         params = dict(kwargs)
         params = self._normalize_params(model, params)
-        api_kwargs: dict[str, Any] = {"model": model, "messages": messages, **params}
 
-        try:
-            response = await self._client.chat.completions.create(**api_kwargs)
-        except Exception as exc:
-            raise self._handle_error(exc, model) from exc
+        # Apply context caching — separate system prefix from dynamic content
+        cached_messages = stable_prefix_messages(messages)
+
+        api_kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": cached_messages,
+            **params,
+        }
+
+        last_exc: Exception | None = None
+        for attempt in range(_MAX_RETRIES + 1):
+            try:
+                response = await self._client.chat.completions.create(**api_kwargs)
+                break
+            except Exception as exc:
+                if attempt < _MAX_RETRIES and self._is_retryable(exc):
+                    last_exc = exc
+                    backoff = _BASE_BACKOFF_S * (2**attempt)
+                    # Honor Retry-After header if present
+                    if isinstance(exc, APIStatusError):
+                        retry_after = self._get_retry_after(exc)
+                        if retry_after is not None:
+                            backoff = max(backoff, retry_after)
+                    logger.warning(
+                        "Kimi API retryable error (attempt %d/%d), retrying in %.1fs: %s",
+                        attempt + 1,
+                        _MAX_RETRIES,
+                        backoff,
+                        exc,
+                    )
+                    await asyncio.sleep(backoff)
+                    continue
+                raise self._handle_error(exc, model) from exc
+        else:
+            # All retries exhausted
+            raise self._handle_error(last_exc, model) from last_exc  # type: ignore[arg-type]
 
         choice = response.choices[0]
         content = choice.message.content or ""
@@ -266,7 +357,7 @@ class KimiLLMProvider(ILLMProvider):
     async def stream(
         self, model: str, messages: list[dict[str, Any]], **kwargs: Any
     ) -> AsyncGenerator[str, None]:
-        """Stream completion tokens from the Kimi API.
+        """Stream completion tokens from the Kimi API with retry.
 
         Yields only content tokens (not reasoning_content) per the port contract.
 
@@ -284,17 +375,43 @@ class KimiLLMProvider(ILLMProvider):
         self._validate_messages(messages)
         params = dict(kwargs)
         params = self._normalize_params(model, params)
+
+        # Apply context caching — separate system prefix from dynamic content
+        cached_messages = stable_prefix_messages(messages)
+
         api_kwargs: dict[str, Any] = {
             "model": model,
-            "messages": messages,
+            "messages": cached_messages,
             "stream": True,
             **params,
         }
 
-        try:
-            stream = await self._client.chat.completions.create(**api_kwargs)
-        except Exception as exc:
-            raise self._handle_error(exc, model) from exc
+        last_exc: Exception | None = None
+        stream = None
+        for attempt in range(_MAX_RETRIES + 1):
+            try:
+                stream = await self._client.chat.completions.create(**api_kwargs)
+                break
+            except Exception as exc:
+                if attempt < _MAX_RETRIES and self._is_retryable(exc):
+                    last_exc = exc
+                    backoff = _BASE_BACKOFF_S * (2**attempt)
+                    if isinstance(exc, APIStatusError):
+                        retry_after = self._get_retry_after(exc)
+                        if retry_after is not None:
+                            backoff = max(backoff, retry_after)
+                    logger.warning(
+                        "Kimi stream retryable error (attempt %d/%d), retrying in %.1fs: %s",
+                        attempt + 1,
+                        _MAX_RETRIES,
+                        backoff,
+                        exc,
+                    )
+                    await asyncio.sleep(backoff)
+                    continue
+                raise self._handle_error(exc, model) from exc
+        else:
+            raise self._handle_error(last_exc, model) from last_exc  # type: ignore[arg-type]
 
         try:
             async for chunk in stream:
