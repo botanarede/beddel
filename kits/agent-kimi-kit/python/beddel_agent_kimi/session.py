@@ -1,12 +1,13 @@
 """Kimi Session lifecycle helpers.
 
 Provides session configuration mapping and utility functions
-for the KimiAgentAdapter.
+for the KimiAgentAdapter and KimiSwarmStrategy.
 """
 
 from __future__ import annotations
 
 import os
+from typing import Any
 
 
 # ---------------------------------------------------------------------------
@@ -93,3 +94,34 @@ def get_api_key() -> str:
             "Set it to your Moonshot platform API key."
         )
     return key
+
+
+def build_kimi_config(api_key: str, model: str) -> dict[str, Any]:
+    """Build a kimi-agent-sdk Config kwargs dict.
+
+    Centralises the provider/model config structure so adapter and swarm
+    share the same wiring without duplication.
+
+    Args:
+        api_key: Moonshot platform API key.
+        model: Resolved Kimi model identifier.
+
+    Returns:
+        Dict suitable for unpacking into ``Config(**kwargs)``.
+    """
+    return {
+        "default_model": model,
+        "providers": {
+            "kimi": {
+                "type": "kimi",
+                "base_url": "https://api.moonshot.ai/v1",
+                "api_key": api_key,
+            }
+        },
+        "models": {
+            model: {
+                "provider": "kimi",
+                "model": model,
+            }
+        },
+    }

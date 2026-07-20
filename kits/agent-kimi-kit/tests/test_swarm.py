@@ -28,8 +28,10 @@ from beddel.domain.models import (
     Step,
     Workflow,
 )
+from beddel_agent_kimi import swarm as swarm_module
 from beddel_agent_kimi.swarm import (
     KIMI_AUTH_MISSING,
+    KIMI_RATE_LIMITED,
     KIMI_SESSION_TIMEOUT,
     KIMI_SWARM_ALL_FAILED,
     KIMI_SWARM_NONCOMPLIANT,
@@ -71,11 +73,15 @@ def _make_subagent_event(
     return obj
 
 
-def _make_tool_result(text: str = "Aggregate report: all tasks completed") -> Any:
+def _make_tool_result(
+    text: str = "Aggregate report: all tasks completed",
+    parent_tool_call_id: str = "tc-001",
+) -> Any:
     """Create a fake ToolResult wire message."""
     cls = type("ToolResult", (), {})
     obj = cls()
     obj.text = text  # type: ignore[attr-defined]
+    obj.parent_tool_call_id = parent_tool_call_id  # type: ignore[attr-defined]
     return obj
 
 
@@ -102,7 +108,7 @@ def _make_fake_session(
             _make_tool_call("AgentSwarm", "tc-001"),
             _make_subagent_event("tc-001", "child-1", "completed", "result 1"),
             _make_subagent_event("tc-001", "child-2", "completed", "result 2"),
-            _make_tool_result("All 2 tasks completed successfully"),
+            _make_tool_result("All 2 tasks completed successfully", "tc-001"),
         ]
 
     session = MagicMock()
@@ -147,6 +153,16 @@ def _make_sdk_mock(
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _reset_concurrency_module_state() -> Any:
+    """Reset module-level concurrency state between tests to avoid pollution."""
+    yield
+    # After each test, clear ref counts and original value
+    swarm_module._concurrency_ref_counts.clear()
+    swarm_module._concurrency_original = None
+    os.environ.pop("KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY", None)
 
 
 @pytest.fixture()
@@ -451,7 +467,7 @@ class TestPartialFailure:
                 _make_subagent_event("tc-001", "child-1", "completed", "ok"),
                 _make_subagent_event("tc-001", "child-2", "failed", ""),
                 _make_subagent_event("tc-001", "child-3", "completed", "ok too"),
-                _make_tool_result("Partial results: 2/3 succeeded"),
+                _make_tool_result("Partial results: 2/3 succeeded", "tc-001"),
             ]
         )
         sdk_mock = _make_sdk_mock(session)
@@ -488,7 +504,7 @@ class TestTotalFailure:
                 _make_tool_call("AgentSwarm", "tc-001"),
                 _make_subagent_event("tc-001", "child-1", "failed", ""),
                 _make_subagent_event("tc-001", "child-2", "failed", ""),
-                _make_tool_result("All tasks failed"),
+                _make_tool_result("All tasks failed", "tc-001"),
             ]
         )
         sdk_mock = _make_sdk_mock(session)
@@ -536,6 +552,43 @@ class TestTimeout:
             with pytest.raises(AgentError) as exc_info:
                 await strategy.coordinate({}, task, context)
             assert exc_info.value.code == KIMI_SESSION_TIMEOUT
+
+    @pytest.mark.asyncio
+    async def test_timeout_includes_partial_state(
+        self,
+        mock_env: None,
+        context: ExecutionContext,
+    ) -> None:
+        """Timeout error details include partial_output, child_states, failed_ids."""
+
+        async def _slow_after_events(text: str):  # noqa: ANN202
+            yield _make_tool_call("AgentSwarm", "tc-001")
+            yield _make_subagent_event("tc-001", "child-1", "completed", "partial ok")
+            yield _make_subagent_event("tc-001", "child-2", "failed", "")
+            # Simulate stalling before ToolResult
+            await asyncio.sleep(999)
+
+        session = MagicMock()
+        session.prompt = _slow_after_events
+        sdk_mock = _make_sdk_mock(session)
+
+        strategy = KimiSwarmStrategy(timeout=0)
+        task = CoordinationTask(
+            prompt="timeout-test",
+            subtasks=["a", "b"],
+            context_data={"work_dir": "/tmp"},
+            timeout=0.01,
+        )
+
+        with patch.dict("sys.modules", {"kimi_agent_sdk": sdk_mock}):
+            with pytest.raises(AgentError) as exc_info:
+                await strategy.coordinate({}, task, context)
+
+        details = exc_info.value.details
+        assert "partial_output" in details
+        assert "child_states" in details
+        assert "failed_ids" in details
+        assert "child-2" in details["failed_ids"]
 
 
 # ---------------------------------------------------------------------------
@@ -609,9 +662,12 @@ class TestConcurrencyConflict:
         task: CoordinationTask,
         context: ExecutionContext,
     ) -> None:
-        """BEDDEL-AGENT-804 when env var already set to different value."""
+        """BEDDEL-AGENT-804 when env var already set to different value with active refs."""
         monkeypatch.setenv("MOONSHOT_API_KEY", "test-key")
         monkeypatch.setenv("KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY", "16")
+
+        # Simulate an active ref count for "16" so that the conflict is detected
+        swarm_module._concurrency_ref_counts["16"] = 1
 
         strategy = KimiSwarmStrategy(swarm_concurrency=8)
 
@@ -675,3 +731,268 @@ class TestPromptConstruction:
         )
         prompt = KimiSwarmStrategy._build_swarm_prompt(task)
         assert "Analyze {{item}} deeply" in prompt
+
+
+# ---------------------------------------------------------------------------
+# Test: Sandbox Mode (HIGH-2)
+# ---------------------------------------------------------------------------
+
+
+class TestSandboxMode:
+    """Test that Session.create() receives sandbox_mode='read_only'."""
+
+    @pytest.mark.asyncio
+    async def test_sandbox_mode_read_only(
+        self,
+        strategy: KimiSwarmStrategy,
+        task: CoordinationTask,
+        context: ExecutionContext,
+    ) -> None:
+        """Session.create() is called with sandbox_mode='read_only'."""
+        session = _make_fake_session()
+        sdk_mock = _make_sdk_mock(session)
+
+        with patch.dict("sys.modules", {"kimi_agent_sdk": sdk_mock}):
+            await strategy.coordinate({}, task, context)
+
+        # The _create_kwargs is set by our _fake_create mock
+        assert session._create_kwargs["sandbox_mode"] == "read_only"
+
+
+# ---------------------------------------------------------------------------
+# Test: Tool Result Required (HIGH-4)
+# ---------------------------------------------------------------------------
+
+
+class TestToolResultRequired:
+    """Test that AgentSwarm ToolCall without matching ToolResult raises error."""
+
+    @pytest.mark.asyncio
+    async def test_tool_result_required(
+        self,
+        strategy: KimiSwarmStrategy,
+        task: CoordinationTask,
+        context: ExecutionContext,
+    ) -> None:
+        """AgentSwarm ToolCall with NO matching ToolResult raises BEDDEL-AGENT-804."""
+        session = _make_fake_session(
+            [
+                _make_tool_call("AgentSwarm", "tc-001"),
+                _make_subagent_event("tc-001", "child-1", "completed", "done"),
+                # No ToolResult — stream ends
+            ]
+        )
+        sdk_mock = _make_sdk_mock(session)
+
+        with patch.dict("sys.modules", {"kimi_agent_sdk": sdk_mock}):
+            with pytest.raises(AgentError) as exc_info:
+                await strategy.coordinate({}, task, context)
+            assert exc_info.value.code == KIMI_SWARM_ALL_FAILED
+            assert "no matching" in exc_info.value.message.lower()
+
+
+# ---------------------------------------------------------------------------
+# Test: Event Correlation (HIGH-4)
+# ---------------------------------------------------------------------------
+
+
+class TestEventCorrelation:
+    """Test that events with wrong parent_tool_call_id are ignored."""
+
+    @pytest.mark.asyncio
+    async def test_events_from_wrong_tool_call_ignored(
+        self,
+        strategy: KimiSwarmStrategy,
+        task: CoordinationTask,
+        context: ExecutionContext,
+    ) -> None:
+        """SubagentEvent with parent_tool_call_id != call ID is not counted."""
+        session = _make_fake_session(
+            [
+                _make_tool_call("AgentSwarm", "tc-001"),
+                # This event has wrong parent_tool_call_id — should be ignored
+                _make_subagent_event("tc-wrong", "child-X", "completed", "ignored"),
+                # This event is correctly correlated
+                _make_subagent_event("tc-001", "child-1", "completed", "counted"),
+                _make_tool_result("Done", "tc-001"),
+            ]
+        )
+        sdk_mock = _make_sdk_mock(session)
+
+        with patch.dict("sys.modules", {"kimi_agent_sdk": sdk_mock}):
+            result = await strategy.coordinate({}, task, context)
+
+        # Only the correctly correlated child should appear
+        assert result.metadata["child_count"] == 1
+        assert "child-1" in result.agent_results
+        assert "child-X" not in result.agent_results
+
+
+# ---------------------------------------------------------------------------
+# Test: Multiple Events Per Child (HIGH-3)
+# ---------------------------------------------------------------------------
+
+
+class TestMultipleEventsPerChild:
+    """Test that duplicate events for same child_id are counted once."""
+
+    @pytest.mark.asyncio
+    async def test_multiple_events_per_child_counted_once(
+        self,
+        strategy: KimiSwarmStrategy,
+        task: CoordinationTask,
+        context: ExecutionContext,
+    ) -> None:
+        """Same child_id with 'running' then 'completed' results in child_count=1."""
+        session = _make_fake_session(
+            [
+                _make_tool_call("AgentSwarm", "tc-001"),
+                # Same child emits running (non-terminal), then completed (terminal)
+                _make_subagent_event("tc-001", "child-1", "running", ""),
+                _make_subagent_event("tc-001", "child-1", "completed", "final"),
+                _make_subagent_event("tc-001", "child-2", "completed", "ok"),
+                _make_tool_result("All done", "tc-001"),
+            ]
+        )
+        sdk_mock = _make_sdk_mock(session)
+
+        with patch.dict("sys.modules", {"kimi_agent_sdk": sdk_mock}):
+            result = await strategy.coordinate({}, task, context)
+
+        # child-1 should only be counted once in child_terminal_states
+        assert result.metadata["child_count"] == 2
+        assert result.metadata["succeeded"] == 2
+        assert result.agent_results["child-1"].output == "final"
+
+
+# ---------------------------------------------------------------------------
+# Test: Rate Limit (HIGH-6)
+# ---------------------------------------------------------------------------
+
+
+class TestRateLimit:
+    """Test 429 rate limit detection and error code mapping."""
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_429_raises_802(
+        self,
+        strategy: KimiSwarmStrategy,
+        task: CoordinationTask,
+        context: ExecutionContext,
+    ) -> None:
+        """SDK exception with '429' in message raises KIMI_RATE_LIMITED."""
+        session = _make_fake_session(
+            prompt_side_effect=RuntimeError("HTTP 429 Too Many Requests")
+        )
+        sdk_mock = _make_sdk_mock(session)
+
+        with patch.dict("sys.modules", {"kimi_agent_sdk": sdk_mock}):
+            with pytest.raises(AgentError) as exc_info:
+                await strategy.coordinate({}, task, context)
+            assert exc_info.value.code == KIMI_RATE_LIMITED
+
+
+# ---------------------------------------------------------------------------
+# Test: Context Data Validation (MEDIUM-9)
+# ---------------------------------------------------------------------------
+
+
+class TestContextDataValidation:
+    """Test non-serializable context_data raises AgentError."""
+
+    @pytest.mark.asyncio
+    async def test_non_serializable_context_data(
+        self,
+        strategy: KimiSwarmStrategy,
+        context: ExecutionContext,
+    ) -> None:
+        """context_data with lambda raises AgentError."""
+        bad_task = CoordinationTask(
+            prompt="test",
+            subtasks=["a", "b"],
+            context_data={"work_dir": "/tmp", "callback": lambda x: x},
+        )
+        with pytest.raises(AgentError) as exc_info:
+            await strategy.coordinate({}, bad_task, context)
+        assert exc_info.value.code == KIMI_SWARM_ALL_FAILED
+        assert "not JSON-serializable" in exc_info.value.message
+
+
+# ---------------------------------------------------------------------------
+# Test: Model Validation (MEDIUM-10)
+# ---------------------------------------------------------------------------
+
+
+class TestModelValidation:
+    """Test invalid model tier raises AgentError with code BEDDEL-AGENT-821."""
+
+    @pytest.mark.asyncio
+    async def test_invalid_model_raises_821(
+        self,
+        mock_env: None,
+        context: ExecutionContext,
+    ) -> None:
+        """Invalid model tier raises AgentError code BEDDEL-AGENT-821."""
+        strategy = KimiSwarmStrategy(model="nonexistent-tier")
+        task = CoordinationTask(
+            prompt="test",
+            subtasks=["a", "b"],
+            context_data={"work_dir": "/tmp"},
+        )
+        with pytest.raises(AgentError) as exc_info:
+            await strategy.coordinate({}, task, context)
+        assert exc_info.value.code == "BEDDEL-AGENT-821"
+        assert "nonexistent-tier" in str(exc_info.value.details)
+
+
+# ---------------------------------------------------------------------------
+# Test: Effective Timeout in Metadata (MEDIUM-8)
+# ---------------------------------------------------------------------------
+
+
+class TestEffectiveTimeout:
+    """Test that metadata.timeout reports the effective timeout."""
+
+    @pytest.mark.asyncio
+    async def test_effective_timeout_in_metadata(
+        self,
+        mock_env: None,
+        context: ExecutionContext,
+    ) -> None:
+        """task.timeout=42 → metadata['timeout']==42."""
+        strategy = KimiSwarmStrategy(timeout=300)
+        task = CoordinationTask(
+            prompt="test",
+            subtasks=["a", "b"],
+            context_data={"work_dir": "/tmp"},
+            timeout=42,
+        )
+        session = _make_fake_session()
+        sdk_mock = _make_sdk_mock(session)
+
+        with patch.dict("sys.modules", {"kimi_agent_sdk": sdk_mock}):
+            result = await strategy.coordinate({}, task, context)
+
+        assert result.metadata["timeout"] == 42
+
+    @pytest.mark.asyncio
+    async def test_strategy_timeout_used_when_task_has_none(
+        self,
+        mock_env: None,
+        context: ExecutionContext,
+    ) -> None:
+        """When task.timeout is None, strategy._timeout is used."""
+        strategy = KimiSwarmStrategy(timeout=99)
+        task = CoordinationTask(
+            prompt="test",
+            subtasks=["a", "b"],
+            context_data={"work_dir": "/tmp"},
+            timeout=None,
+        )
+        session = _make_fake_session()
+        sdk_mock = _make_sdk_mock(session)
+
+        with patch.dict("sys.modules", {"kimi_agent_sdk": sdk_mock}):
+            result = await strategy.coordinate({}, task, context)
+
+        assert result.metadata["timeout"] == 99
