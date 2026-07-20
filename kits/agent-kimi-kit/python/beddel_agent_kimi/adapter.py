@@ -19,7 +19,14 @@ from typing import Any
 from beddel.domain.errors import AgentError
 from beddel.domain.models import AgentResult
 
-from beddel_agent_kimi.approval import KIMI_APPROVAL_DENIED, KimiApprovalBridge
+from beddel_agent_kimi.approval import KimiApprovalBridge
+from beddel_agent_kimi.errors import (
+    KIMI_AUTH_MISSING,
+    KIMI_EXECUTION_FAILED,
+    KIMI_INVALID_MODEL,
+    KIMI_RATE_LIMITED,
+    KIMI_SESSION_TIMEOUT,
+)
 from beddel_agent_kimi.session import (
     DEFAULT_TIMEOUT,
     get_api_key,
@@ -27,16 +34,9 @@ from beddel_agent_kimi.session import (
     resolve_sandbox,
 )
 
-__all__ = ["KimiAgentAdapter", "KIMI_APPROVAL_DENIED"]
+__all__ = ["KimiAgentAdapter"]
 
 logger = logging.getLogger(__name__)
-
-# Custom error codes for Kimi adapter (from architecture §40.6)
-KIMI_AUTH_MISSING: str = "BEDDEL-AGENT-800"
-KIMI_SESSION_TIMEOUT: str = "BEDDEL-AGENT-801"
-KIMI_RATE_LIMITED: str = "BEDDEL-AGENT-802"
-KIMI_EXECUTION_FAILED: str = "BEDDEL-AGENT-803"
-KIMI_INVALID_MODEL: str = "BEDDEL-AGENT-821"
 
 _SUPPORTED_SANDBOXES = ("read-only", "workspace-write", "danger-full-access")
 

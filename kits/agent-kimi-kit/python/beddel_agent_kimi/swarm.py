@@ -28,6 +28,14 @@ from beddel.domain.models import (
 )
 from beddel.domain.ports import IAgentAdapter
 
+from beddel_agent_kimi.errors import (
+    KIMI_AUTH_MISSING,
+    KIMI_INVALID_MODEL,
+    KIMI_RATE_LIMITED,
+    KIMI_SESSION_TIMEOUT,
+    KIMI_SWARM_ALL_FAILED,
+    KIMI_SWARM_NONCOMPLIANT,
+)
 from beddel_agent_kimi.session import (
     DEFAULT_TIMEOUT,
     build_kimi_config,
@@ -38,13 +46,6 @@ from beddel_agent_kimi.session import (
 __all__ = ["KimiSwarmStrategy"]
 
 logger = logging.getLogger(__name__)
-
-# Error codes (from architecture §40.6)
-KIMI_AUTH_MISSING: str = "BEDDEL-AGENT-800"
-KIMI_SESSION_TIMEOUT: str = "BEDDEL-AGENT-801"
-KIMI_RATE_LIMITED: str = "BEDDEL-AGENT-802"
-KIMI_SWARM_ALL_FAILED: str = "BEDDEL-AGENT-804"
-KIMI_SWARM_NONCOMPLIANT: str = "BEDDEL-AGENT-804"
 
 # Concurrency defaults
 _DEFAULT_CONCURRENCY: int = 8
@@ -154,7 +155,7 @@ class KimiSwarmStrategy:
             kimi_model = resolve_model(self._model)
         except ValueError as exc:
             raise AgentError(
-                code="BEDDEL-AGENT-821",
+                code=KIMI_INVALID_MODEL,
                 message=str(exc),
                 details={"model": self._model},
             ) from exc
