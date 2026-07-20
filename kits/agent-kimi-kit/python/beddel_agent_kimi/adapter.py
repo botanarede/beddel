@@ -29,6 +29,7 @@ from beddel_agent_kimi.errors import (
 )
 from beddel_agent_kimi.session import (
     DEFAULT_TIMEOUT,
+    build_kimi_config,
     get_api_key,
     resolve_model,
     resolve_sandbox,
@@ -208,22 +209,7 @@ class KimiAgentAdapter:
             ) from exc
 
         try:
-            config = Config(
-                default_model=kimi_model,
-                providers={
-                    "kimi": {
-                        "type": "kimi",
-                        "base_url": "https://api.moonshot.ai/v1",
-                        "api_key": self._api_key,
-                    }
-                },
-                models={
-                    kimi_model: {
-                        "provider": "kimi",
-                        "model": kimi_model,
-                    }
-                },
-            )
+            config = Config(**build_kimi_config(self._api_key, kimi_model))
 
             # Real kimi-agent-sdk lifecycle:
             # Session.create() -> session.prompt() -> collect -> cleanup
@@ -371,22 +357,7 @@ class KimiAgentAdapter:
                 details={"import_error": str(exc)},
             ) from exc
 
-        config = Config(
-            default_model=kimi_model,
-            providers={
-                "kimi": {
-                    "type": "kimi",
-                    "base_url": "https://api.moonshot.ai/v1",
-                    "api_key": self._api_key,
-                }
-            },
-            models={
-                kimi_model: {
-                    "provider": "kimi",
-                    "model": kimi_model,
-                }
-            },
-        )
+        config = Config(**build_kimi_config(self._api_key, kimi_model))
 
         output_parts: list[str] = []
 
