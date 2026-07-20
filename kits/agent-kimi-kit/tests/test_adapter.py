@@ -390,6 +390,7 @@ class TestStreamEvents:
         assert events[1] == {
             "type": "approval_request",
             "message": "Allow shell command?",
+            "approved": False,
         }
         assert events[2] == {"type": "text", "content": "Done"}
         assert events[3]["type"] == "complete"

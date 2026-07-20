@@ -19,6 +19,7 @@ from typing import Any
 from beddel.domain.errors import AgentError
 from beddel.domain.models import AgentResult
 
+from beddel_agent_kimi.approval import KIMI_APPROVAL_DENIED, KimiApprovalBridge
 from beddel_agent_kimi.session import (
     DEFAULT_TIMEOUT,
     get_api_key,
@@ -26,7 +27,7 @@ from beddel_agent_kimi.session import (
     resolve_sandbox,
 )
 
-__all__ = ["KimiAgentAdapter"]
+__all__ = ["KimiAgentAdapter", "KIMI_APPROVAL_DENIED"]
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,9 @@ class KimiAgentAdapter:
         timeout: int = DEFAULT_TIMEOUT,
         api_key: str | None = None,
         work_dir: str | Path | None = None,
+        approval_gate: Any | None = None,
+        approval_mode: str = "auto",
+        approval_timeout: float = 60.0,
     ) -> None:
         try:
             self._api_key = api_key if api_key else get_api_key()
@@ -79,6 +83,11 @@ class KimiAgentAdapter:
             ) from exc
         self._timeout = timeout
         self._work_dir = Path(work_dir) if work_dir else Path.cwd()
+        self._approval_bridge = KimiApprovalBridge(
+            gate=approval_gate,
+            mode=approval_mode,
+            timeout=approval_timeout,
+        )
 
     # ------------------------------------------------------------------
     # IAgentAdapter.execute
@@ -224,6 +233,7 @@ class KimiAgentAdapter:
                 work_dir=str(self._work_dir),
                 config=config,
                 sandbox_mode=kaos_mode,
+                yolo=self._approval_bridge.should_use_yolo(),
             ) as session:
                 try:
                     await asyncio.wait_for(
@@ -267,14 +277,18 @@ class KimiAgentAdapter:
             agent_id="kimi",
         )
 
-    @staticmethod
     async def _collect_messages(
+        self,
         session: Any,
         prompt: str,
         output_parts: list[str],
     ) -> None:
         """Collect messages from session.prompt() into output_parts."""
         async for wire_msg in session.prompt(prompt):
+            # ApprovalRequest — agent needs permission
+            if hasattr(wire_msg, "resolve"):
+                await self._approval_bridge.handle_approval(wire_msg)
+                continue
             # TextPart is the primary output message type
             if hasattr(wire_msg, "text"):
                 output_parts.append(wire_msg.text)
@@ -381,8 +395,18 @@ class KimiAgentAdapter:
                 work_dir=str(self._work_dir),
                 config=config,
                 sandbox_mode=kaos_mode,
+                yolo=self._approval_bridge.should_use_yolo(),
             ) as session:
                 async for wire_msg in session.prompt(prompt):
+                    # ApprovalRequest — handle via bridge
+                    if hasattr(wire_msg, "resolve"):
+                        approved = await self._approval_bridge.handle_approval(wire_msg)
+                        yield {
+                            "type": "approval_request",
+                            "message": getattr(wire_msg, "message", str(wire_msg)),
+                            "approved": approved,
+                        }
+                        continue
                     event = self._wire_msg_to_event(wire_msg, output_parts)
                     if event:
                         yield event
