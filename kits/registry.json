@@ -24,6 +24,12 @@
     "category": "agent"
   },
   {
+    "name": "agent-kimi-kit",
+    "version": "0.1.0",
+    "description": "Kimi K3 agent adapter via kimi-agent-sdk Session API",
+    "category": "agent"
+  },
+  {
     "name": "agent-kiro-kit",
     "version": "0.1.0",
     "description": "Kiro CLI subprocess-based agent adapter",
@@ -156,6 +162,12 @@
     "category": "provider"
   },
   {
+    "name": "provider-kimi-kit",
+    "version": "0.1.0",
+    "description": "Kimi K3 LLM provider adapter via OpenAI-compatible API",
+    "category": "provider"
+  },
+  {
     "name": "provider-litellm-kit",
     "version": "0.1.0",
     "description": "LiteLLM multi-provider LLM adapter",
@@ -204,6 +216,12 @@
     "category": "state"
   },
   {
+    "name": "tools-docker-kit",
+    "version": "0.1.0",
+    "description": "Docker Compose operations for containerized agent sessions",
+    "category": "tools"
+  },
+  {
     "name": "tools-file-kit",
     "version": "0.1.0",
     "description": "File I/O tools (read, write) with path validation",
@@ -216,9 +234,21 @@
     "category": "tools"
   },
   {
+    "name": "tools-git-kit",
+    "version": "0.1.0",
+    "description": "Typed Git operations for Beddel workflows",
+    "category": "tools"
+  },
+  {
     "name": "tools-http-kit",
     "version": "0.1.0",
     "description": "HTTP request tool via httpx",
+    "category": "tools"
+  },
+  {
+    "name": "tools-remote-exec-kit",
+    "version": "0.1.0",
+    "description": "Execute commands on remote/VM environments (Multipass, SSH, Docker)",
     "category": "tools"
   },
   {
