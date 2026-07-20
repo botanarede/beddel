@@ -6,6 +6,9 @@ adapters:
 - port: IAgentAdapter
   implementation: KimiAgentAdapter
   description: Agent adapter for Moonshot Kimi K3 via kimi-agent-sdk
+- port: ICoordinationStrategy
+  implementation: KimiSwarmStrategy
+  description: Multi-agent coordination via Kimi AgentSwarm tool
 targets:
   python:
     status: implemented
