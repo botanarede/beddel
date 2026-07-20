@@ -16,3 +16,6 @@ targets:
     - port: IAgentAdapter
       name: kimi
       target: beddel_agent_kimi.adapter:KimiAgentAdapter
+    - port: ICoordinationStrategy
+      name: kimi-agent-swarm
+      target: beddel_agent_kimi.swarm:KimiSwarmStrategy
