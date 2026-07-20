@@ -1,7 +1,8 @@
 """Unit tests for KimiApprovalBridge — agent-kimi-kit.
 
 Tests cover risk classification, auto/manual mode behavior,
-timeout handling, yolo detection, and adapter integration.
+timeout handling, yolo detection, validation, gate exception safety,
+and adapter integration.
 """
 
 from __future__ import annotations
@@ -69,6 +70,33 @@ class FakeGate:
         return self._status
 
 
+class ExplodingGate:
+    """Fake IApprovalGate that raises an exception."""
+
+    def __init__(self, exc: Exception) -> None:
+        self._exc = exc
+
+    async def request_approval(
+        self, action: str, risk_level: RiskLevel
+    ) -> ApprovalResult:
+        raise self._exc
+
+    async def check_status(self, request_id: str) -> ApprovalStatus:
+        return ApprovalStatus.DENIED
+
+
+class CancellingGate:
+    """Fake IApprovalGate that raises CancelledError."""
+
+    async def request_approval(
+        self, action: str, risk_level: RiskLevel
+    ) -> ApprovalResult:
+        raise asyncio.CancelledError()
+
+    async def check_status(self, request_id: str) -> ApprovalStatus:
+        return ApprovalStatus.DENIED
+
+
 # ---------------------------------------------------------------------------
 # Test: Risk Classification
 # ---------------------------------------------------------------------------
@@ -108,12 +136,36 @@ class TestRiskClassification:
 
 
 # ---------------------------------------------------------------------------
+# Test: Validation
+# ---------------------------------------------------------------------------
+
+
+class TestValidation:
+    """Test constructor validation for mode and timeout."""
+
+    def test_invalid_mode_raises(self) -> None:
+        """Invalid mode raises ValueError."""
+        with pytest.raises(ValueError, match="Invalid approval mode"):
+            KimiApprovalBridge(gate=None, mode="turbo")
+
+    def test_zero_timeout_raises(self) -> None:
+        """Zero timeout raises ValueError."""
+        with pytest.raises(ValueError, match="must be > 0"):
+            KimiApprovalBridge(gate=None, mode="auto", timeout=0)
+
+    def test_negative_timeout_raises(self) -> None:
+        """Negative timeout raises ValueError."""
+        with pytest.raises(ValueError, match="must be > 0"):
+            KimiApprovalBridge(gate=None, mode="auto", timeout=-5.0)
+
+
+# ---------------------------------------------------------------------------
 # Test: Auto Mode (gate=None)
 # ---------------------------------------------------------------------------
 
 
 class TestAutoMode:
-    """Test auto mode: gate=None, risk-based policy decisions."""
+    """Test auto mode: risk-based policy decisions (never delegates to gate)."""
 
     def setup_method(self) -> None:
         self.bridge = KimiApprovalBridge(gate=None, mode="auto")
@@ -128,27 +180,43 @@ class TestAutoMode:
 
     @pytest.mark.asyncio
     async def test_medium_risk_approved(self) -> None:
-        """MEDIUM risk is auto-approved in auto mode."""
+        """Recognized MEDIUM risk (file edit) is auto-approved in auto mode."""
         req = FakeApprovalRequest("edit file config.py")
         result = await self.bridge.handle_approval(req)
         assert result is True
         assert req.resolved_decision == "approve"
 
     @pytest.mark.asyncio
+    async def test_recognized_medium_approved(self) -> None:
+        """Recognized MEDIUM risk patterns (file edit) are approved."""
+        req = FakeApprovalRequest("modify existing module")
+        result = await self.bridge.handle_approval(req)
+        assert result is True
+        assert req.resolved_decision == "approve"
+
+    @pytest.mark.asyncio
     async def test_high_risk_denied(self) -> None:
-        """HIGH risk is denied in auto mode without gate."""
+        """HIGH risk is denied in auto mode."""
         req = FakeApprovalRequest("execute shell command rm -rf")
         result = await self.bridge.handle_approval(req)
         assert result is False
         assert req.resolved_decision == "deny"
 
     @pytest.mark.asyncio
-    async def test_unknown_risk_approved(self) -> None:
-        """Unknown messages (MEDIUM default) are approved in auto mode."""
+    async def test_unknown_risk_denied(self) -> None:
+        """Unknown/unrecognized actions (unrecognized MEDIUM) are denied in auto mode."""
         req = FakeApprovalRequest("some unknown action")
         result = await self.bridge.handle_approval(req)
-        assert result is True
-        assert req.resolved_decision == "approve"
+        assert result is False
+        assert req.resolved_decision == "deny"
+
+    @pytest.mark.asyncio
+    async def test_unrecognized_medium_denied(self) -> None:
+        """Unrecognized MEDIUM risk is explicitly denied (not approved)."""
+        req = FakeApprovalRequest("perform analysis on data")
+        result = await self.bridge.handle_approval(req)
+        assert result is False
+        assert req.resolved_decision == "deny"
 
 
 # ---------------------------------------------------------------------------
@@ -210,17 +278,19 @@ class TestManualMode:
         assert req.resolved_decision == "deny"
 
     @pytest.mark.asyncio
-    async def test_auto_mode_with_gate_delegates(self) -> None:
-        """Auto mode with gate provided delegates to gate."""
+    async def test_auto_mode_with_gate_applies_auto_policy(self) -> None:
+        """Auto mode with gate still applies deterministic policy (HIGH -> deny)."""
         gate = FakeGate(status=ApprovalStatus.APPROVED)
         bridge = KimiApprovalBridge(gate=gate, mode="auto")
         req = FakeApprovalRequest("execute bash script")
 
         result = await bridge.handle_approval(req)
 
-        assert result is True
-        assert req.resolved_decision == "approve"
-        assert gate.last_risk_level == RiskLevel.HIGH
+        # Auto mode ALWAYS applies deterministic policy, never delegates
+        assert result is False
+        assert req.resolved_decision == "deny"
+        # Gate should NOT have been called
+        assert gate.last_risk_level is None
 
     @pytest.mark.asyncio
     async def test_manual_mode_no_gate_denies(self) -> None:
@@ -232,6 +302,32 @@ class TestManualMode:
 
         assert result is False
         assert req.resolved_decision == "deny"
+
+
+# ---------------------------------------------------------------------------
+# Test: Yolo Mode
+# ---------------------------------------------------------------------------
+
+
+class TestYoloMode:
+    """Test yolo mode: approve everything."""
+
+    @pytest.mark.asyncio
+    async def test_yolo_approves_everything(self) -> None:
+        """Yolo mode auto-approves any request regardless of risk."""
+        bridge = KimiApprovalBridge(gate=None, mode="yolo")
+
+        # High risk
+        req = FakeApprovalRequest("execute bash rm -rf /")
+        result = await bridge.handle_approval(req)
+        assert result is True
+        assert req.resolved_decision == "approve"
+
+        # Unknown
+        req2 = FakeApprovalRequest("something unknown and scary")
+        result2 = await bridge.handle_approval(req2)
+        assert result2 is True
+        assert req2.resolved_decision == "approve"
 
 
 # ---------------------------------------------------------------------------
@@ -273,6 +369,41 @@ class TestTimeout:
 
 
 # ---------------------------------------------------------------------------
+# Test: Gate Exception Safety
+# ---------------------------------------------------------------------------
+
+
+class TestGateExceptionSafety:
+    """Test _delegate_to_gate exception safety paths."""
+
+    @pytest.mark.asyncio
+    async def test_gate_exception_resolves_deny(self) -> None:
+        """Gate raising RuntimeError -> resolve deny + raise BEDDEL-AGENT-805."""
+        gate = ExplodingGate(RuntimeError("connection lost"))
+        bridge = KimiApprovalBridge(gate=gate, mode="manual")
+        req = FakeApprovalRequest("edit file main.py")
+
+        with pytest.raises(AgentError) as exc_info:
+            await bridge.handle_approval(req)
+
+        assert exc_info.value.code == KIMI_APPROVAL_DENIED
+        assert "connection lost" in exc_info.value.message
+        assert req.resolved_decision == "deny"
+
+    @pytest.mark.asyncio
+    async def test_gate_cancellation_resolves_deny(self) -> None:
+        """Gate raising CancelledError -> resolve deny + re-raise CancelledError."""
+        gate = CancellingGate()
+        bridge = KimiApprovalBridge(gate=gate, mode="manual")
+        req = FakeApprovalRequest("create file output.txt")
+
+        with pytest.raises(asyncio.CancelledError):
+            await bridge.handle_approval(req)
+
+        assert req.resolved_decision == "deny"
+
+
+# ---------------------------------------------------------------------------
 # Test: Yolo Detection
 # ---------------------------------------------------------------------------
 
@@ -280,13 +411,18 @@ class TestTimeout:
 class TestYoloDetection:
     """Test should_use_yolo() logic."""
 
-    def test_no_gate_auto_mode_is_yolo(self) -> None:
-        """gate=None + mode='auto' -> yolo=True."""
+    def test_no_gate_auto_mode_not_yolo(self) -> None:
+        """gate=None + mode='auto' -> yolo=False (auto mode is not yolo)."""
         bridge = KimiApprovalBridge(gate=None, mode="auto")
+        assert bridge.should_use_yolo() is False
+
+    def test_yolo_mode_is_yolo(self) -> None:
+        """mode='yolo' -> yolo=True."""
+        bridge = KimiApprovalBridge(gate=None, mode="yolo")
         assert bridge.should_use_yolo() is True
 
-    def test_gate_provided_not_yolo(self) -> None:
-        """gate provided -> yolo=False regardless of mode."""
+    def test_gate_provided_auto_not_yolo(self) -> None:
+        """gate provided + auto mode -> yolo=False."""
         gate = FakeGate()
         bridge = KimiApprovalBridge(gate=gate, mode="auto")
         assert bridge.should_use_yolo() is False
@@ -362,12 +498,29 @@ class TestAdapterIntegration:
         monkeypatch.setenv("MOONSHOT_API_KEY", "test-key-abc123")
 
     @pytest.mark.asyncio
-    async def test_default_adapter_passes_yolo_true(self, mock_env: None) -> None:
-        """Default adapter (no gate, auto mode) passes yolo=True."""
+    async def test_default_adapter_passes_yolo_false(self, mock_env: None) -> None:
+        """Default adapter (no gate, auto mode) passes yolo=False."""
         adapter = KimiAgentAdapter(
             api_key="test-key",
             timeout=10,
             work_dir="/tmp/test",
+        )
+        session = _make_fake_session()
+        sdk_mock = _make_sdk_mock(session)
+
+        with patch.dict("sys.modules", {"kimi_agent_sdk": sdk_mock}):
+            await adapter.execute("task")
+
+        assert session._create_kwargs["yolo"] is False
+
+    @pytest.mark.asyncio
+    async def test_adapter_yolo_mode_passes_yolo_true(self, mock_env: None) -> None:
+        """Adapter with mode='yolo' passes yolo=True to Session.create()."""
+        adapter = KimiAgentAdapter(
+            api_key="test-key",
+            timeout=10,
+            work_dir="/tmp/test",
+            approval_mode="yolo",
         )
         session = _make_fake_session()
         sdk_mock = _make_sdk_mock(session)
