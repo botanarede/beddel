@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 
 from beddel.domain.errors import AgentError
 from beddel.domain.models import ApprovalResult, ApprovalStatus, RiskLevel
+from beddel_agent_kimi.errors import KIMI_APPROVAL_DENIED
 
 if TYPE_CHECKING:
     from beddel.domain.ports import IApprovalGate
@@ -23,9 +24,6 @@ if TYPE_CHECKING:
 __all__ = ["KimiApprovalBridge", "KIMI_APPROVAL_DENIED"]
 
 logger = logging.getLogger(__name__)
-
-# Error code for approval denial / timeout
-KIMI_APPROVAL_DENIED: str = "BEDDEL-AGENT-805"
 
 # Valid approval modes
 _VALID_MODES = ("auto", "manual", "yolo")

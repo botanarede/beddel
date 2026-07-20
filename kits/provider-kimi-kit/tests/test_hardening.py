@@ -450,6 +450,68 @@ async def test_stream_timeout_error(mock_openai_class):
     assert exc_info.value.code == ADAPT_TIMEOUT
 
 
+async def test_stream_iteration_timeout_error(mock_openai_class):
+    """Stream: APITimeoutError DURING iteration maps to ADAPT_TIMEOUT."""
+    _, client = mock_openai_class
+
+    class FailingStream:
+        """Stream that raises during iteration after yielding one chunk."""
+
+        def __init__(self) -> None:
+            self._yielded = False
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if not self._yielded:
+                self._yielded = True
+                return _make_chunk("partial")
+            raise APITimeoutError(request=MagicMock())
+
+        async def close(self):
+            pass
+
+    client.chat.completions.create.return_value = FailingStream()
+
+    provider = KimiLLMProvider(api_key="test")
+    with pytest.raises(AdapterError) as exc_info:
+        async for _ in provider.stream(
+            "kimi-k2.7", [{"role": "user", "content": "Hi"}]
+        ):
+            pass
+
+    assert exc_info.value.code == ADAPT_TIMEOUT
+
+
+async def test_stream_iteration_status_error(mock_openai_class):
+    """Stream: APIStatusError DURING iteration maps to appropriate error code."""
+    _, client = mock_openai_class
+
+    class FailingStream:
+        """Stream that raises APIStatusError during iteration."""
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            raise _make_api_status_error(500)
+
+        async def close(self):
+            pass
+
+    client.chat.completions.create.return_value = FailingStream()
+
+    provider = KimiLLMProvider(api_key="test")
+    with pytest.raises(AdapterError) as exc_info:
+        async for _ in provider.stream(
+            "kimi-k2.7", [{"role": "user", "content": "Hi"}]
+        ):
+            pass
+
+    assert exc_info.value.code == ADAPT_PROVIDER_ERROR
+
+
 async def test_stream_retry_on_429(mock_openai_class, monkeypatch):
     """Stream: 429 triggers retry; succeeds on second attempt."""
     _, client = mock_openai_class
@@ -475,6 +537,60 @@ async def test_stream_retry_on_429(mock_openai_class, monkeypatch):
 
     assert collected == ["Hello", " world"]
     assert client.chat.completions.create.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# Tests: Retry backoff schedule and non-retryable status codes
+# ---------------------------------------------------------------------------
+
+
+async def test_retry_backoff_schedule(mock_openai_class, monkeypatch):
+    """Verify exact backoff schedule: [2.0, 4.0, 8.0] on 3 consecutive failures."""
+    _, client = mock_openai_class
+    sleep_mock = AsyncMock()
+    monkeypatch.setattr(asyncio, "sleep", sleep_mock)
+
+    err_500 = _make_api_status_error(500)
+    # Fail all 4 attempts (1 initial + 3 retries)
+    client.chat.completions.create.side_effect = [
+        err_500,
+        err_500,
+        err_500,
+        err_500,
+    ]
+
+    provider = KimiLLMProvider(api_key="test")
+    with pytest.raises(AdapterError) as exc_info:
+        await provider.complete("kimi-k2.7", [{"role": "user", "content": "Hi"}])
+
+    assert exc_info.value.code == ADAPT_PROVIDER_ERROR
+    assert client.chat.completions.create.call_count == 4
+
+    # Verify exact backoff values: 2.0 * 2^0, 2.0 * 2^1, 2.0 * 2^2
+    sleep_calls = [call.args[0] for call in sleep_mock.call_args_list]
+    assert sleep_calls == [2.0, 4.0, 8.0]
+
+
+@pytest.mark.parametrize("status_code", [400, 401, 403, 404])
+async def test_non_retryable_status_no_retry(
+    mock_openai_class, monkeypatch, status_code
+):
+    """Non-retryable statuses (400/401/403/404) raise immediately without retry."""
+    _, client = mock_openai_class
+    sleep_mock = AsyncMock()
+    monkeypatch.setattr(asyncio, "sleep", sleep_mock)
+
+    err = _make_api_status_error(status_code)
+    client.chat.completions.create.side_effect = err
+
+    provider = KimiLLMProvider(api_key="test")
+    with pytest.raises(AdapterError):
+        await provider.complete("kimi-k2.7", [{"role": "user", "content": "Hi"}])
+
+    # Only 1 call — no retry
+    assert client.chat.completions.create.call_count == 1
+    # sleep never called
+    sleep_mock.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

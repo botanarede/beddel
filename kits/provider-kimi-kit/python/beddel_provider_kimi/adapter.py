@@ -419,5 +419,9 @@ class KimiLLMProvider(ILLMProvider):
                     delta = chunk.choices[0].delta
                     if delta.content:
                         yield delta.content
+        except (APITimeoutError, APIStatusError, RateLimitError) as exc:
+            raise self._handle_error(exc, model) from exc
+        except StopAsyncIteration:
+            pass
         finally:
             await stream.close()

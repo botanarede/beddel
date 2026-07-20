@@ -50,10 +50,13 @@ Bridges Kimi `ApprovalRequest` wire messages to Beddel's `IApprovalGate` port.
 ```python
 from beddel_agent_kimi import KimiApprovalBridge
 
-bridge = KimiApprovalBridge(gate=my_approval_gate, mode="gate", timeout=60.0)
+bridge = KimiApprovalBridge(gate=my_approval_gate, mode="manual", timeout=60.0)
 ```
 
-Modes: `auto` (always approve), `gate` (delegate to IApprovalGate), `deny` (always deny).
+Modes:
+- `auto` — risk-based policy: LOW and recognized MEDIUM actions are approved; unrecognized MEDIUM, HIGH, and CRITICAL are denied.
+- `manual` — delegates every decision to the provided `IApprovalGate` implementation.
+- `yolo` — approve all requests unconditionally (opt-in unsafe escape hatch).
 
 ## Configuration
 
