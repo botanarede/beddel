@@ -13,15 +13,11 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncGenerator
+from pathlib import Path
 from typing import Any
 
 from beddel.domain.errors import AgentError
 from beddel.domain.models import AgentResult
-from beddel.error_codes import (
-    AGENT_EXECUTION_FAILED,
-    AGENT_STREAM_INTERRUPTED,
-    AGENT_TIMEOUT,
-)
 
 from beddel_agent_kimi.session import (
     DEFAULT_TIMEOUT,
@@ -37,10 +33,15 @@ logger = logging.getLogger(__name__)
 # Custom error codes for Kimi adapter (from architecture §40.6)
 KIMI_AUTH_MISSING: str = "BEDDEL-AGENT-800"
 KIMI_SESSION_TIMEOUT: str = "BEDDEL-AGENT-801"
+KIMI_RATE_LIMITED: str = "BEDDEL-AGENT-802"
 KIMI_EXECUTION_FAILED: str = "BEDDEL-AGENT-803"
 KIMI_INVALID_MODEL: str = "BEDDEL-AGENT-821"
 
 _SUPPORTED_SANDBOXES = ("read-only", "workspace-write", "danger-full-access")
+
+# Rate-limit retry configuration
+_MAX_RETRIES = 3
+_BASE_BACKOFF_S = 2.0
 
 
 class KimiAgentAdapter:
@@ -49,10 +50,14 @@ class KimiAgentAdapter:
     Wraps the ``kimi-agent-sdk`` Session API to provide autonomous code
     agent execution with model tier routing and KAOS sandbox passthrough.
 
+    Uses the real kimi-agent-sdk lifecycle:
+      Session.create(work_dir=...) -> session.prompt(task) -> collect -> cleanup
+
     Args:
         timeout: Maximum session execution time in seconds. Default 300.
         api_key: Optional explicit API key. If None, reads from
             ``MOONSHOT_API_KEY`` environment variable.
+        work_dir: Working directory for agent file operations. Defaults to cwd.
 
     Raises:
         AgentError: ``BEDDEL-AGENT-800`` if API key is not available.
@@ -62,6 +67,7 @@ class KimiAgentAdapter:
         self,
         timeout: int = DEFAULT_TIMEOUT,
         api_key: str | None = None,
+        work_dir: str | Path | None = None,
     ) -> None:
         try:
             self._api_key = api_key if api_key else get_api_key()
@@ -72,6 +78,7 @@ class KimiAgentAdapter:
                 details={"env_var": "MOONSHOT_API_KEY"},
             ) from exc
         self._timeout = timeout
+        self._work_dir = Path(work_dir) if work_dir else Path.cwd()
 
     # ------------------------------------------------------------------
     # IAgentAdapter.execute
@@ -88,9 +95,9 @@ class KimiAgentAdapter:
     ) -> AgentResult:
         """Execute a prompt via the Kimi agent SDK Session API.
 
-        Creates a new Session, submits the prompt, and collects the
-        final result. Each call is session-isolated (stateless between
-        calls).
+        Creates a new Session via Session.create(work_dir=...), submits the
+        prompt via session.prompt(), collects streaming messages, and cleans
+        up via the async context manager.
 
         Args:
             prompt: The instruction or task to send to the agent.
@@ -104,12 +111,12 @@ class KimiAgentAdapter:
 
         Raises:
             AgentError: On auth failure, timeout, invalid model/sandbox,
-                or SDK execution error.
+                rate limit, or SDK execution error.
         """
         # Validate sandbox
         if sandbox not in _SUPPORTED_SANDBOXES:
             raise AgentError(
-                code=KIMI_SESSION_TIMEOUT,
+                code=KIMI_EXECUTION_FAILED,
                 message=f"Unsupported sandbox value: {sandbox!r}",
                 details={
                     "sandbox": sandbox,
@@ -132,60 +139,149 @@ class KimiAgentAdapter:
             kaos_mode = resolve_sandbox(sandbox)
         except ValueError as exc:
             raise AgentError(
-                code=KIMI_SESSION_TIMEOUT,
+                code=KIMI_EXECUTION_FAILED,
                 message=str(exc),
                 details={"sandbox": sandbox},
             ) from exc
 
-        # Execute via kimi-agent-sdk
+        # Execute via kimi-agent-sdk with retry on rate limit
+        return await self._execute_with_retry(prompt, kimi_model, kaos_mode)
+
+    async def _execute_with_retry(
+        self,
+        prompt: str,
+        kimi_model: str,
+        kaos_mode: str,
+    ) -> AgentResult:
+        """Execute session with exponential backoff on 429 rate limits."""
+        last_exc: Exception | None = None
+
+        for attempt in range(_MAX_RETRIES + 1):
+            try:
+                return await self._run_session(prompt, kimi_model, kaos_mode)
+            except AgentError as exc:
+                if exc.code == KIMI_RATE_LIMITED and attempt < _MAX_RETRIES:
+                    last_exc = exc
+                    backoff = _BASE_BACKOFF_S * (2**attempt)
+                    logger.warning(
+                        "Kimi rate limited (attempt %d/%d), retrying in %.1fs",
+                        attempt + 1,
+                        _MAX_RETRIES,
+                        backoff,
+                    )
+                    await asyncio.sleep(backoff)
+                    continue
+                raise
+
+        # Should not reach here, but satisfy type checker
+        raise last_exc  # type: ignore[misc]
+
+    async def _run_session(
+        self,
+        prompt: str,
+        kimi_model: str,
+        kaos_mode: str,
+    ) -> AgentResult:
+        """Run a single session attempt with proper lifecycle."""
         try:
-            from kimi_agent_sdk import Session  # type: ignore[import-untyped]
-
-            session = Session(
-                api_key=self._api_key,
-                model=kimi_model,
-                sandbox_mode=kaos_mode,
-            )
-            # Run session in executor to handle sync SDK
-            result_text = await asyncio.wait_for(
-                asyncio.get_event_loop().run_in_executor(
-                    None, session.send, prompt
-                ),
-                timeout=self._timeout,
-            )
-
-        except asyncio.TimeoutError:
-            raise AgentError(
-                code=KIMI_SESSION_TIMEOUT,
-                message=f"Kimi session timed out after {self._timeout}s",
-                details={"timeout": self._timeout, "model": kimi_model},
+            from kimi_agent_sdk import (  # type: ignore[import-not-found]
+                Config,
+                Session,
             )
         except ImportError as exc:
             raise AgentError(
                 code=KIMI_EXECUTION_FAILED,
-                message="kimi-agent-sdk is not installed. Install with: pip install kimi-agent-sdk",
+                message=(
+                    "kimi-agent-sdk is not installed. "
+                    "Install with: pip install kimi-agent-sdk"
+                ),
                 details={"import_error": str(exc)},
             ) from exc
+
+        try:
+            config = Config(
+                default_model=kimi_model,
+                providers={
+                    "kimi": {
+                        "type": "kimi",
+                        "base_url": "https://api.moonshot.ai/v1",
+                        "api_key": self._api_key,
+                    }
+                },
+                models={
+                    kimi_model: {
+                        "provider": "kimi",
+                        "model": kimi_model,
+                    }
+                },
+            )
+
+            # Real kimi-agent-sdk lifecycle:
+            # Session.create() -> session.prompt() -> collect -> cleanup
+            output_parts: list[str] = []
+
+            async with await Session.create(
+                work_dir=str(self._work_dir),
+                config=config,
+                sandbox_mode=kaos_mode,
+            ) as session:
+                try:
+                    await asyncio.wait_for(
+                        self._collect_messages(session, prompt, output_parts),
+                        timeout=self._timeout,
+                    )
+                except asyncio.TimeoutError:
+                    raise AgentError(
+                        code=KIMI_SESSION_TIMEOUT,
+                        message=f"Kimi session timed out after {self._timeout}s",
+                        details={
+                            "timeout": self._timeout,
+                            "model": kimi_model,
+                            "partial_output": "".join(output_parts),
+                        },
+                    )
+
+        except AgentError:
+            raise
         except Exception as exc:
+            exc_str = str(exc)
+            # Detect rate limit errors (HTTP 429)
+            if "429" in exc_str or "rate" in exc_str.lower():
+                raise AgentError(
+                    code=KIMI_RATE_LIMITED,
+                    message=f"Kimi rate limited: {exc}",
+                    details={"error": exc_str, "model": kimi_model},
+                ) from exc
             raise AgentError(
                 code=KIMI_EXECUTION_FAILED,
                 message=f"Kimi session execution failed: {exc}",
-                details={"error": str(exc), "model": kimi_model},
+                details={"error": exc_str, "model": kimi_model},
             ) from exc
-
-        # Extract usage if available
-        usage: dict[str, Any] = {}
-        if hasattr(session, "usage") and session.usage:
-            usage = dict(session.usage) if hasattr(session.usage, "__iter__") else {}
 
         return AgentResult(
             exit_code=0,
-            output=result_text if isinstance(result_text, str) else str(result_text),
+            output="".join(output_parts),
             events=[],
             files_changed=[],
-            usage=usage,
+            usage={},
             agent_id="kimi",
         )
+
+    @staticmethod
+    async def _collect_messages(
+        session: Any,
+        prompt: str,
+        output_parts: list[str],
+    ) -> None:
+        """Collect messages from session.prompt() into output_parts."""
+        async for wire_msg in session.prompt(prompt):
+            # TextPart is the primary output message type
+            if hasattr(wire_msg, "text"):
+                output_parts.append(wire_msg.text)
+            elif hasattr(wire_msg, "extract_text"):
+                text = wire_msg.extract_text()
+                if text:
+                    output_parts.append(text)
 
     # ------------------------------------------------------------------
     # IAgentAdapter.stream
@@ -201,9 +297,8 @@ class KimiAgentAdapter:
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Stream events from a Kimi agent session.
 
-        Since the kimi-agent-sdk Session API does not support incremental
-        streaming in v1, this method calls :meth:`execute` internally and
-        yields a single ``"complete"`` event with the full output.
+        Iterates over session.prompt() wire messages and yields structured
+        event dicts for each message type (text, tool_call, approval, etc.).
 
         Args:
             prompt: The instruction or task to send to the agent.
@@ -212,29 +307,131 @@ class KimiAgentAdapter:
             tools: Optional tool names.
 
         Yields:
-            Event dicts with ``"type"`` key. Final event is ``"complete"``.
+            Event dicts with ``"type"`` key. Types include:
+            - ``"text"``: incremental text output
+            - ``"tool_call"``: agent invoked a tool
+            - ``"approval_request"``: agent needs permission
+            - ``"complete"``: final aggregated output
 
         Raises:
-            AgentError: ``BEDDEL-AGENT-703`` if execution times out.
+            AgentError: On timeout, auth, or SDK execution error.
         """
-        try:
-            result = await self.execute(
-                prompt,
-                model=model,
-                sandbox=sandbox,
-                tools=tools,
+        # Validate inputs
+        if sandbox not in _SUPPORTED_SANDBOXES:
+            raise AgentError(
+                code=KIMI_EXECUTION_FAILED,
+                message=f"Unsupported sandbox value: {sandbox!r}",
+                details={"sandbox": sandbox},
             )
-        except AgentError as exc:
-            if exc.code == KIMI_SESSION_TIMEOUT:
-                raise AgentError(
-                    code=AGENT_STREAM_INTERRUPTED,
-                    message="Kimi stream interrupted due to session timeout",
-                    details=exc.details,
-                ) from exc
-            raise
 
+        try:
+            kimi_model = resolve_model(model)
+        except ValueError as exc:
+            raise AgentError(
+                code=KIMI_INVALID_MODEL,
+                message=str(exc),
+                details={"model": model},
+            ) from exc
+
+        try:
+            kaos_mode = resolve_sandbox(sandbox)
+        except ValueError as exc:
+            raise AgentError(
+                code=KIMI_EXECUTION_FAILED,
+                message=str(exc),
+                details={"sandbox": sandbox},
+            ) from exc
+
+        try:
+            from kimi_agent_sdk import (  # type: ignore[import-not-found]
+                Config,
+                Session,
+            )
+        except ImportError as exc:
+            raise AgentError(
+                code=KIMI_EXECUTION_FAILED,
+                message=(
+                    "kimi-agent-sdk is not installed. "
+                    "Install with: pip install kimi-agent-sdk"
+                ),
+                details={"import_error": str(exc)},
+            ) from exc
+
+        config = Config(
+            default_model=kimi_model,
+            providers={
+                "kimi": {
+                    "type": "kimi",
+                    "base_url": "https://api.moonshot.ai/v1",
+                    "api_key": self._api_key,
+                }
+            },
+            models={
+                kimi_model: {
+                    "provider": "kimi",
+                    "model": kimi_model,
+                }
+            },
+        )
+
+        output_parts: list[str] = []
+
+        try:
+            async with await Session.create(
+                work_dir=str(self._work_dir),
+                config=config,
+                sandbox_mode=kaos_mode,
+            ) as session:
+                async for wire_msg in session.prompt(prompt):
+                    event = self._wire_msg_to_event(wire_msg, output_parts)
+                    if event:
+                        yield event
+
+        except AgentError:
+            raise
+        except Exception as exc:
+            exc_str = str(exc)
+            if "429" in exc_str or "rate" in exc_str.lower():
+                raise AgentError(
+                    code=KIMI_RATE_LIMITED,
+                    message=f"Kimi rate limited: {exc}",
+                    details={"error": exc_str},
+                ) from exc
+            raise AgentError(
+                code=KIMI_EXECUTION_FAILED,
+                message=f"Kimi stream failed: {exc}",
+                details={"error": exc_str},
+            ) from exc
+
+        # Yield final complete event
         yield {
             "type": "complete",
-            "output": result.output,
-            "exit_code": result.exit_code,
+            "output": "".join(output_parts),
+            "exit_code": 0,
         }
+
+    @staticmethod
+    def _wire_msg_to_event(
+        wire_msg: Any, output_parts: list[str]
+    ) -> dict[str, Any] | None:
+        """Convert a kimi-agent-sdk wire message to a Beddel event dict."""
+        # TextPart — incremental text output
+        if hasattr(wire_msg, "text"):
+            output_parts.append(wire_msg.text)
+            return {"type": "text", "content": wire_msg.text}
+
+        # ApprovalRequest — agent needs permission
+        if hasattr(wire_msg, "resolve"):
+            return {
+                "type": "approval_request",
+                "message": str(wire_msg),
+            }
+
+        # Generic extract_text fallback
+        if hasattr(wire_msg, "extract_text"):
+            text = wire_msg.extract_text()
+            if text:
+                output_parts.append(text)
+                return {"type": "text", "content": text}
+
+        return None

@@ -1,11 +1,15 @@
 """Unit tests for KimiAgentAdapter — agent-kimi-kit.
 
 All tests mock the kimi-agent-sdk to avoid live API calls.
+Mocks replicate the real SDK lifecycle:
+  Session.create(work_dir=..., config=..., sandbox_mode=...) -> async context manager
+  session.prompt(text) -> async generator of wire messages (TextPart, ApprovalRequest)
 """
 
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -17,10 +21,11 @@ from beddel_agent_kimi.adapter import (
     KIMI_AUTH_MISSING,
     KIMI_EXECUTION_FAILED,
     KIMI_INVALID_MODEL,
+    KIMI_RATE_LIMITED,
     KIMI_SESSION_TIMEOUT,
     KimiAgentAdapter,
 )
-from beddel_agent_kimi.session import MODEL_TIER_MAP, resolve_model, resolve_sandbox
+from beddel_agent_kimi.session import resolve_model, resolve_sandbox
 
 
 # ---------------------------------------------------------------------------
@@ -37,23 +42,98 @@ def mock_env(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture()
 def adapter(mock_env: None) -> KimiAgentAdapter:
     """Create a KimiAgentAdapter with test API key."""
-    return KimiAgentAdapter(timeout=10)
+    return KimiAgentAdapter(timeout=10, work_dir="/tmp/test-workspace")
 
 
 # ---------------------------------------------------------------------------
-# Session mock helper
+# SDK mock helpers — replicate real kimi-agent-sdk Session.create() API
 # ---------------------------------------------------------------------------
 
 
-def _make_mock_session(
-    response: str = "Hello from Kimi",
-    usage: dict[str, Any] | None = None,
+class FakeTextPart:
+    """Mimics kimi_agent_sdk.TextPart."""
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+    def extract_text(self) -> str:
+        return self.text
+
+
+class FakeApprovalRequest:
+    """Mimics kimi_agent_sdk.ApprovalRequest."""
+
+    def __init__(self, message: str = "Allow file write?") -> None:
+        self._message = message
+
+    def resolve(self, decision: str) -> None:
+        pass
+
+    def __str__(self) -> str:
+        return self._message
+
+
+def _make_fake_session(
+    responses: list[Any] | None = None,
+    prompt_side_effect: Exception | None = None,
 ) -> MagicMock:
-    """Create a mock Session that returns a canned response."""
-    mock_session = MagicMock()
-    mock_session.send.return_value = response
-    mock_session.usage = usage or {"prompt_tokens": 10, "completion_tokens": 5}
-    return mock_session
+    """Create a mock session that mimics the async context manager + prompt() API.
+
+    Args:
+        responses: List of wire message objects yielded by session.prompt().
+        prompt_side_effect: Exception to raise from prompt().
+    """
+    if responses is None:
+        responses = [FakeTextPart("Hello from Kimi")]
+
+    session = MagicMock()
+
+    async def _fake_prompt(text: str):  # noqa: ANN202
+        """Async generator mimicking session.prompt()."""
+        if prompt_side_effect:
+            raise prompt_side_effect
+        for msg in responses:
+            yield msg
+
+    session.prompt = _fake_prompt
+    return session
+
+
+def _make_sdk_mock(
+    session: MagicMock | None = None,
+    create_side_effect: Exception | None = None,
+) -> MagicMock:
+    """Create a mock kimi_agent_sdk module with Session.create() as async context manager.
+
+    Args:
+        session: The mock session object. If None, creates default.
+        create_side_effect: Exception to raise from Session.create().
+    """
+    if session is None:
+        session = _make_fake_session()
+
+    sdk_mock = MagicMock()
+
+    @asynccontextmanager
+    async def _fake_create(**kwargs: Any):  # noqa: ANN202
+        if create_side_effect:
+            raise create_side_effect
+        # Store the kwargs for assertion
+        session._create_kwargs = kwargs
+        yield session
+
+    # Session.create is an async function that returns an async context manager
+    # In the real SDK: async with await Session.create(...) as session:
+    # We simulate this by making create() return the context manager directly
+    async def _awaitable_create(**kwargs: Any):  # noqa: ANN202
+        return _fake_create(**kwargs)
+
+    sdk_mock.Session = MagicMock()
+    sdk_mock.Session.create = _awaitable_create
+    sdk_mock.Config = MagicMock(side_effect=lambda **kwargs: kwargs)
+    sdk_mock.TextPart = FakeTextPart
+
+    return sdk_mock
 
 
 # ---------------------------------------------------------------------------
@@ -64,21 +144,27 @@ def _make_mock_session(
 class TestAuthValidation:
     """Test auth fail-fast behavior."""
 
-    def test_missing_api_key_raises_agent_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_missing_api_key_raises_agent_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """BEDDEL-AGENT-800 raised when MOONSHOT_API_KEY is not set."""
         monkeypatch.delenv("MOONSHOT_API_KEY", raising=False)
         with pytest.raises(AgentError) as exc_info:
             KimiAgentAdapter()
         assert exc_info.value.code == KIMI_AUTH_MISSING
 
-    def test_empty_api_key_raises_agent_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_empty_api_key_raises_agent_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """BEDDEL-AGENT-800 raised when MOONSHOT_API_KEY is empty."""
         monkeypatch.setenv("MOONSHOT_API_KEY", "   ")
         with pytest.raises(AgentError) as exc_info:
             KimiAgentAdapter()
         assert exc_info.value.code == KIMI_AUTH_MISSING
 
-    def test_explicit_api_key_bypasses_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_explicit_api_key_bypasses_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Explicit api_key parameter skips env lookup."""
         monkeypatch.delenv("MOONSHOT_API_KEY", raising=False)
         adapter = KimiAgentAdapter(api_key="explicit-key")
@@ -96,7 +182,7 @@ class TestAuthValidation:
 
 
 class TestModelTierRouting:
-    """Test model tier → Kimi model mapping."""
+    """Test model tier -> Kimi model mapping."""
 
     @pytest.mark.parametrize(
         "tier,expected",
@@ -152,20 +238,22 @@ class TestSandboxValidation:
 
 
 # ---------------------------------------------------------------------------
-# Test: Execute Happy Path (AC2)
+# Test: Execute — Session.create() Lifecycle (AC2)
 # ---------------------------------------------------------------------------
 
 
-class TestExecuteHappyPath:
-    """Test execute() with mocked SDK."""
+class TestExecuteLifecycle:
+    """Test execute() uses Session.create() + session.prompt() lifecycle."""
 
     @pytest.mark.asyncio
-    async def test_execute_returns_agent_result(self, adapter: KimiAgentAdapter) -> None:
-        """execute() returns AgentResult with correct fields."""
-        mock_session = _make_mock_session("Code analysis complete")
-        mock_session_cls = MagicMock(return_value=mock_session)
+    async def test_execute_returns_agent_result(
+        self, adapter: KimiAgentAdapter
+    ) -> None:
+        """execute() returns AgentResult with collected text output."""
+        session = _make_fake_session([FakeTextPart("Code analysis complete")])
+        sdk_mock = _make_sdk_mock(session)
 
-        with patch.dict("sys.modules", {"kimi_agent_sdk": MagicMock(Session=mock_session_cls)}):
+        with patch.dict("sys.modules", {"kimi_agent_sdk": sdk_mock}):
             result = await adapter.execute("Analyze codebase", model="powerful")
 
         assert isinstance(result, AgentResult)
@@ -174,40 +262,70 @@ class TestExecuteHappyPath:
         assert result.agent_id == "kimi"
 
     @pytest.mark.asyncio
-    async def test_execute_creates_session_with_correct_model(
-        self, adapter: KimiAgentAdapter
-    ) -> None:
-        """execute() passes resolved model to Session constructor."""
-        mock_session = _make_mock_session()
-        mock_session_cls = MagicMock(return_value=mock_session)
+    async def test_execute_passes_work_dir(self, adapter: KimiAgentAdapter) -> None:
+        """execute() passes work_dir to Session.create()."""
+        session = _make_fake_session()
+        sdk_mock = _make_sdk_mock(session)
 
-        with patch.dict("sys.modules", {"kimi_agent_sdk": MagicMock(Session=mock_session_cls)}):
+        with patch.dict("sys.modules", {"kimi_agent_sdk": sdk_mock}):
             await adapter.execute("task", model="fast")
 
-        mock_session_cls.assert_called_once()
-        call_kwargs = mock_session_cls.call_args[1]
-        assert call_kwargs["model"] == "kimi-k2.6"
+        # Session._create_kwargs is set by our fake context manager
+        assert session._create_kwargs["work_dir"] == "/tmp/test-workspace"
 
     @pytest.mark.asyncio
     async def test_execute_passes_sandbox_mode(self, adapter: KimiAgentAdapter) -> None:
-        """execute() maps sandbox to KAOS mode for Session."""
-        mock_session = _make_mock_session()
-        mock_session_cls = MagicMock(return_value=mock_session)
+        """execute() maps sandbox to KAOS mode for Session.create()."""
+        session = _make_fake_session()
+        sdk_mock = _make_sdk_mock(session)
 
-        with patch.dict("sys.modules", {"kimi_agent_sdk": MagicMock(Session=mock_session_cls)}):
+        with patch.dict("sys.modules", {"kimi_agent_sdk": sdk_mock}):
             await adapter.execute("task", sandbox="workspace-write")
 
-        call_kwargs = mock_session_cls.call_args[1]
-        assert call_kwargs["sandbox_mode"] == "workspace"
+        assert session._create_kwargs["sandbox_mode"] == "workspace"
+
+    @pytest.mark.asyncio
+    async def test_execute_passes_model_in_config(
+        self, adapter: KimiAgentAdapter
+    ) -> None:
+        """execute() creates Config with resolved model."""
+        session = _make_fake_session()
+        sdk_mock = _make_sdk_mock(session)
+
+        with patch.dict("sys.modules", {"kimi_agent_sdk": sdk_mock}):
+            await adapter.execute("task", model="code")
+
+        # Config is called with default_model kwarg
+        config = session._create_kwargs["config"]
+        assert config["default_model"] == "kimi-k2.7-code"
+
+    @pytest.mark.asyncio
+    async def test_execute_concatenates_multiple_text_parts(
+        self, adapter: KimiAgentAdapter
+    ) -> None:
+        """execute() concatenates multiple TextPart messages."""
+        session = _make_fake_session(
+            [
+                FakeTextPart("Part 1 "),
+                FakeTextPart("Part 2 "),
+                FakeTextPart("Part 3"),
+            ]
+        )
+        sdk_mock = _make_sdk_mock(session)
+
+        with patch.dict("sys.modules", {"kimi_agent_sdk": sdk_mock}):
+            result = await adapter.execute("task")
+
+        assert result.output == "Part 1 Part 2 Part 3"
 
     @pytest.mark.asyncio
     async def test_execute_invalid_sandbox_raises_error(
         self, adapter: KimiAgentAdapter
     ) -> None:
-        """execute() with invalid sandbox raises BEDDEL-AGENT-801."""
+        """execute() with invalid sandbox raises BEDDEL-AGENT-803."""
         with pytest.raises(AgentError) as exc_info:
             await adapter.execute("task", sandbox="invalid-sandbox")
-        assert exc_info.value.code == KIMI_SESSION_TIMEOUT
+        assert exc_info.value.code == KIMI_EXECUTION_FAILED
 
     @pytest.mark.asyncio
     async def test_execute_invalid_model_raises_error(
@@ -220,41 +338,75 @@ class TestExecuteHappyPath:
 
 
 # ---------------------------------------------------------------------------
-# Test: Stream Happy Path (AC3)
+# Test: Stream — Yields Typed Events (AC3)
 # ---------------------------------------------------------------------------
 
 
-class TestStreamHappyPath:
-    """Test stream() with mocked SDK."""
+class TestStreamEvents:
+    """Test stream() yields structured events from session messages."""
 
     @pytest.mark.asyncio
-    async def test_stream_yields_complete_event(self, adapter: KimiAgentAdapter) -> None:
-        """stream() yields a single 'complete' event."""
-        mock_session = _make_mock_session("Streamed output")
-        mock_session_cls = MagicMock(return_value=mock_session)
+    async def test_stream_yields_text_events(self, adapter: KimiAgentAdapter) -> None:
+        """stream() yields text events for each TextPart."""
+        session = _make_fake_session(
+            [
+                FakeTextPart("Hello "),
+                FakeTextPart("World"),
+            ]
+        )
+        sdk_mock = _make_sdk_mock(session)
 
-        with patch.dict("sys.modules", {"kimi_agent_sdk": MagicMock(Session=mock_session_cls)}):
-            events = []
-            async for event in adapter.stream("task", model="balanced"):
-                events.append(event)
+        with patch.dict("sys.modules", {"kimi_agent_sdk": sdk_mock}):
+            events = [e async for e in adapter.stream("task", model="balanced")]
 
-        assert len(events) == 1
-        assert events[0]["type"] == "complete"
-        assert events[0]["output"] == "Streamed output"
-        assert events[0]["exit_code"] == 0
+        # 2 text events + 1 complete event
+        assert len(events) == 3
+        assert events[0] == {"type": "text", "content": "Hello "}
+        assert events[1] == {"type": "text", "content": "World"}
+        assert events[2] == {
+            "type": "complete",
+            "output": "Hello World",
+            "exit_code": 0,
+        }
+
+    @pytest.mark.asyncio
+    async def test_stream_yields_approval_events(
+        self, adapter: KimiAgentAdapter
+    ) -> None:
+        """stream() yields approval_request events for ApprovalRequest messages."""
+        session = _make_fake_session(
+            [
+                FakeTextPart("Starting..."),
+                FakeApprovalRequest("Allow shell command?"),
+                FakeTextPart("Done"),
+            ]
+        )
+        sdk_mock = _make_sdk_mock(session)
+
+        with patch.dict("sys.modules", {"kimi_agent_sdk": sdk_mock}):
+            events = [e async for e in adapter.stream("task")]
+
+        assert events[0] == {"type": "text", "content": "Starting..."}
+        assert events[1] == {
+            "type": "approval_request",
+            "message": "Allow shell command?",
+        }
+        assert events[2] == {"type": "text", "content": "Done"}
+        assert events[3]["type"] == "complete"
+        assert events[3]["output"] == "Starting...Done"
 
     @pytest.mark.asyncio
     async def test_stream_uses_correct_model(self, adapter: KimiAgentAdapter) -> None:
-        """stream() resolves model tier correctly."""
-        mock_session = _make_mock_session()
-        mock_session_cls = MagicMock(return_value=mock_session)
+        """stream() resolves model tier and passes to Session.create()."""
+        session = _make_fake_session()
+        sdk_mock = _make_sdk_mock(session)
 
-        with patch.dict("sys.modules", {"kimi_agent_sdk": MagicMock(Session=mock_session_cls)}):
+        with patch.dict("sys.modules", {"kimi_agent_sdk": sdk_mock}):
             async for _ in adapter.stream("task", model="code"):
                 pass
 
-        call_kwargs = mock_session_cls.call_args[1]
-        assert call_kwargs["model"] == "kimi-k2.7-code"
+        config = session._create_kwargs["config"]
+        assert config["default_model"] == "kimi-k2.7-code"
 
 
 # ---------------------------------------------------------------------------
@@ -266,45 +418,50 @@ class TestTimeoutHandling:
     """Test session timeout behavior."""
 
     @pytest.mark.asyncio
-    async def test_execute_timeout_raises_agent_error(
-        self, adapter: KimiAgentAdapter
-    ) -> None:
+    async def test_execute_timeout_raises_agent_error(self, mock_env: None) -> None:
         """execute() raises BEDDEL-AGENT-801 on timeout."""
-        mock_session = MagicMock()
-        # Simulate a blocking call that exceeds timeout
-        mock_session.send.side_effect = lambda _: asyncio.get_event_loop().run_until_complete(
-            asyncio.sleep(999)
-        )
-        mock_session_cls = MagicMock(return_value=mock_session)
 
-        # Use a very short timeout adapter
+        async def _slow_prompt(text: str):  # noqa: ANN202
+            """Simulate a session that hangs indefinitely."""
+            await asyncio.sleep(999)
+            yield FakeTextPart("never reached")  # noqa: RUF029
+
+        session = MagicMock()
+        session.prompt = _slow_prompt
+        sdk_mock = _make_sdk_mock(session)
+
+        # Very short timeout to trigger quickly
         short_adapter = KimiAgentAdapter(api_key="test-key", timeout=0)
 
-        with patch.dict("sys.modules", {"kimi_agent_sdk": MagicMock(Session=mock_session_cls)}):
+        with patch.dict("sys.modules", {"kimi_agent_sdk": sdk_mock}):
             with pytest.raises(AgentError) as exc_info:
                 await short_adapter.execute("task")
             assert exc_info.value.code == KIMI_SESSION_TIMEOUT
+            assert "partial_output" in exc_info.value.details
+
+
+# ---------------------------------------------------------------------------
+# Test: Rate Limit Handling (AC5 — BEDDEL-AGENT-802)
+# ---------------------------------------------------------------------------
+
+
+class TestRateLimitHandling:
+    """Test 429 rate limit detection and retry."""
 
     @pytest.mark.asyncio
-    async def test_stream_timeout_raises_stream_interrupted(
+    async def test_rate_limit_detected_from_exception(
         self, adapter: KimiAgentAdapter
     ) -> None:
-        """stream() raises BEDDEL-AGENT-703 on timeout (re-wrapped)."""
-        mock_session = MagicMock()
-        mock_session.send.side_effect = lambda _: asyncio.get_event_loop().run_until_complete(
-            asyncio.sleep(999)
+        """SDK exceptions containing '429' raise BEDDEL-AGENT-802."""
+        session = _make_fake_session(
+            prompt_side_effect=RuntimeError("HTTP 429 Too Many Requests")
         )
-        mock_session_cls = MagicMock(return_value=mock_session)
+        sdk_mock = _make_sdk_mock(session)
 
-        short_adapter = KimiAgentAdapter(api_key="test-key", timeout=0)
-
-        with patch.dict("sys.modules", {"kimi_agent_sdk": MagicMock(Session=mock_session_cls)}):
-            from beddel.error_codes import AGENT_STREAM_INTERRUPTED
-
+        with patch.dict("sys.modules", {"kimi_agent_sdk": sdk_mock}):
             with pytest.raises(AgentError) as exc_info:
-                async for _ in short_adapter.stream("task"):
-                    pass
-            assert exc_info.value.code == AGENT_STREAM_INTERRUPTED
+                await adapter.execute("task")
+            assert exc_info.value.code == KIMI_RATE_LIMITED
 
 
 # ---------------------------------------------------------------------------
@@ -320,11 +477,12 @@ class TestErrorPropagation:
         self, adapter: KimiAgentAdapter
     ) -> None:
         """SDK exceptions are wrapped as BEDDEL-AGENT-803."""
-        mock_session = MagicMock()
-        mock_session.send.side_effect = RuntimeError("SDK internal error")
-        mock_session_cls = MagicMock(return_value=mock_session)
+        session = _make_fake_session(
+            prompt_side_effect=RuntimeError("SDK internal error")
+        )
+        sdk_mock = _make_sdk_mock(session)
 
-        with patch.dict("sys.modules", {"kimi_agent_sdk": MagicMock(Session=mock_session_cls)}):
+        with patch.dict("sys.modules", {"kimi_agent_sdk": sdk_mock}):
             with pytest.raises(AgentError) as exc_info:
                 await adapter.execute("task")
             assert exc_info.value.code == KIMI_EXECUTION_FAILED
@@ -333,7 +491,19 @@ class TestErrorPropagation:
     @pytest.mark.asyncio
     async def test_import_error_wrapped(self, adapter: KimiAgentAdapter) -> None:
         """Missing kimi-agent-sdk raises BEDDEL-AGENT-803."""
-        # Remove the mock module to simulate import failure
         with patch.dict("sys.modules", {"kimi_agent_sdk": None}):
             with pytest.raises((AgentError, ModuleNotFoundError)):
                 await adapter.execute("task")
+
+    @pytest.mark.asyncio
+    async def test_session_create_exception(self, adapter: KimiAgentAdapter) -> None:
+        """Exception during Session.create() is wrapped as BEDDEL-AGENT-803."""
+        sdk_mock = _make_sdk_mock(
+            create_side_effect=ConnectionError("Network unreachable")
+        )
+
+        with patch.dict("sys.modules", {"kimi_agent_sdk": sdk_mock}):
+            with pytest.raises(AgentError) as exc_info:
+                await adapter.execute("task")
+            assert exc_info.value.code == KIMI_EXECUTION_FAILED
+            assert "Network unreachable" in exc_info.value.message

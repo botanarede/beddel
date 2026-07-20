@@ -1,13 +1,12 @@
 """Kimi Session lifecycle helpers.
 
-Provides session creation, configuration mapping, and cleanup utilities
+Provides session configuration mapping and utility functions
 for the KimiAgentAdapter.
 """
 
 from __future__ import annotations
 
 import os
-from typing import Any
 
 
 # ---------------------------------------------------------------------------
@@ -55,8 +54,7 @@ def resolve_model(tier: str | None) -> str:
     if tier.startswith("kimi-"):
         return tier
     raise ValueError(
-        f"Unknown model tier: {tier!r}. "
-        f"Valid tiers: {list(MODEL_TIER_MAP.keys())}"
+        f"Unknown model tier: {tier!r}. Valid tiers: {list(MODEL_TIER_MAP.keys())}"
     )
 
 
@@ -74,8 +72,7 @@ def resolve_sandbox(sandbox: str) -> str:
     """
     if sandbox not in SANDBOX_MAP:
         raise ValueError(
-            f"Unsupported sandbox: {sandbox!r}. "
-            f"Valid: {list(SANDBOX_MAP.keys())}"
+            f"Unsupported sandbox: {sandbox!r}. Valid: {list(SANDBOX_MAP.keys())}"
         )
     return SANDBOX_MAP[sandbox]
 
