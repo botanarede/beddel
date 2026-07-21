@@ -1,0 +1,17 @@
+version: 1
+agent:
+  extend: "default"
+  name: "beddel-production"
+  tools:
+    - "kimi_cli.tools.file:ReadFile"
+    - "kimi_cli.tools.file:Glob"
+    - "kimi_cli.tools.file:Grep"
+    - "kimi_cli.tools.file:WriteFile"
+    - "kimi_cli.tools.file:StrReplaceFile"
+    - "kimi_cli.tools.todo:SetTodoList"
+    - "kimi_cli.tools.multiagent:Task"
+  # Disabled for production safety (can escape work_dir):
+  # - "kimi_cli.tools.shell:Shell"        # Arbitrary command execution
+  # - "kimi_cli.tools.file:ReadMediaFile"  # CVE-2026-25990 via Pillow
+  # - "kimi_cli.tools.web:FetchURL"        # Network exfiltration risk
+  # - "kimi_cli.tools.web:SearchWeb"       # Network access risk
