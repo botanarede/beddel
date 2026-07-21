@@ -11,7 +11,7 @@ targets:
     status: implemented
     module: beddel_observability_langfuse
     dependencies:
-    - langfuse>=2.0
+    - langfuse>=2.60.10,<3
     adapters:
     - port: ITracer
       name: langfuse

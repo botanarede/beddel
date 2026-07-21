@@ -11,7 +11,7 @@ targets:
     status: implemented
     module: beddel_provider_litellm
     dependencies:
-    - litellm>=1.40,<1.82.7
+    - litellm>=1.93,<2
     adapters:
     - port: ILLMProvider
       name: litellm
