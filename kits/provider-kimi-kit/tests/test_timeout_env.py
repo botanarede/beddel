@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 from beddel.domain.errors import AdapterError
@@ -93,3 +95,45 @@ class TestMoonshotTimeoutEnv:
             KimiLLMProvider(timeout=0)
 
         assert exc_info.value.code == ADAPT_KIMI_PARAM_REJECTED
+
+    def test_nan_env_raises_adapter_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """NaN MOONSHOT_TIMEOUT raises AdapterError (math.isfinite guard)."""
+        monkeypatch.setenv("MOONSHOT_API_KEY", "test-key")
+        monkeypatch.setenv("MOONSHOT_TIMEOUT", "NaN")
+
+        with pytest.raises(AdapterError) as exc_info:
+            KimiLLMProvider()
+
+        assert exc_info.value.code == ADAPT_KIMI_PARAM_REJECTED
+
+    def test_infinity_env_raises_adapter_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Infinity MOONSHOT_TIMEOUT raises AdapterError (math.isfinite guard)."""
+        monkeypatch.setenv("MOONSHOT_API_KEY", "test-key")
+        monkeypatch.setenv("MOONSHOT_TIMEOUT", "Infinity")
+
+        with pytest.raises(AdapterError) as exc_info:
+            KimiLLMProvider()
+
+        assert exc_info.value.code == ADAPT_KIMI_PARAM_REJECTED
+
+    def test_timeout_passed_to_async_openai(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Resolved timeout is forwarded as timeout= kwarg to AsyncOpenAI constructor."""
+        monkeypatch.setenv("MOONSHOT_API_KEY", "test-key")
+        monkeypatch.delenv("MOONSHOT_TIMEOUT", raising=False)
+
+        mock_client = MagicMock()
+        with patch(
+            "beddel_provider_kimi.adapter.AsyncOpenAI", return_value=mock_client
+        ) as mock_cls:
+            provider = KimiLLMProvider(timeout=45.0)
+
+        mock_cls.assert_called_once()
+        _args, kwargs = mock_cls.call_args
+        assert kwargs["timeout"] == 45.0
+        assert provider._timeout == 45.0

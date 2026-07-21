@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -95,10 +96,10 @@ class KimiLLMProvider(ILLMProvider):
                         message="MOONSHOT_TIMEOUT must be a positive number",
                         details={"value": raw_timeout},
                     ) from exc
-        if resolved_timeout <= 0:
+        if not math.isfinite(resolved_timeout) or resolved_timeout <= 0:
             raise AdapterError(
                 code=ADAPT_KIMI_PARAM_REJECTED,
-                message="Kimi timeout must be greater than zero",
+                message="Kimi timeout must be a finite positive number",
                 details={"timeout": resolved_timeout},
             )
         self._timeout = resolved_timeout
