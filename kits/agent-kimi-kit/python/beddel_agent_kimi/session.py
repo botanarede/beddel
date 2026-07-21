@@ -62,6 +62,13 @@ def resolve_model(tier: str | None) -> str:
 def resolve_sandbox(sandbox: str) -> str:
     """Map a Beddel sandbox level to a Kimi KAOS mode string.
 
+    .. deprecated:: 0.0.5
+        The returned KAOS mode string is no longer passed to
+        ``Session.create()`` since ``kimi-agent-sdk>=0.0.5`` removed
+        the ``sandbox_mode`` parameter. This function is retained for
+        input validation (ensuring sandbox level is recognized) and
+        backward compatibility.
+
     Args:
         sandbox: Beddel sandbox level.
 
