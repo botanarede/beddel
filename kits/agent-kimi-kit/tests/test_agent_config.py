@@ -88,3 +88,37 @@ class TestProductionAgentFile:
         with open(PRODUCTION_AGENT_FILE, encoding="utf-8") as f:
             data = yaml.safe_load(f)
         assert data["agent"]["name"] == "beddel-production"
+
+    def test_task_tool_not_in_production(self) -> None:
+        """Task tool is NOT in production config (subagent bypass risk)."""
+        with open(PRODUCTION_AGENT_FILE, encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        tools = set(data["agent"]["tools"])
+        assert "kimi_cli.tools.multiagent:Task" not in tools, (
+            "Task tool must not be in production config — "
+            "inherited subagent bypasses tool restrictions"
+        )
+
+    def test_subagents_is_null(self) -> None:
+        """Subagents is explicitly null/None (no inherited subagents)."""
+        with open(PRODUCTION_AGENT_FILE, encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        assert "subagents" in data["agent"], (
+            "subagents key must be explicitly set in production config"
+        )
+        assert data["agent"]["subagents"] is None, (
+            "subagents must be null to prevent inherited subagent configs"
+        )
+
+    def test_exclude_tools_contains_unsafe(self) -> None:
+        """exclude_tools contains all 4 unsafe tools as defense-in-depth."""
+        with open(PRODUCTION_AGENT_FILE, encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        assert "exclude_tools" in data["agent"], (
+            "exclude_tools must be present for defense-in-depth"
+        )
+        exclude_tools = set(data["agent"]["exclude_tools"])
+        for unsafe in _UNSAFE_TOOLS:
+            assert unsafe in exclude_tools, (
+                f"Unsafe tool {unsafe} missing from exclude_tools"
+            )

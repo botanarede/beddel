@@ -2,6 +2,7 @@ version: 1
 agent:
   extend: "default"
   name: "beddel-production"
+  subagents: null
   tools:
     - "kimi_cli.tools.file:ReadFile"
     - "kimi_cli.tools.file:Glob"
@@ -9,9 +10,14 @@ agent:
     - "kimi_cli.tools.file:WriteFile"
     - "kimi_cli.tools.file:StrReplaceFile"
     - "kimi_cli.tools.todo:SetTodoList"
-    - "kimi_cli.tools.multiagent:Task"
+  exclude_tools:
+    - "kimi_cli.tools.shell:Shell"
+    - "kimi_cli.tools.file:ReadMediaFile"
+    - "kimi_cli.tools.web:FetchURL"
+    - "kimi_cli.tools.web:SearchWeb"
   # Disabled for production safety (can escape work_dir):
   # - "kimi_cli.tools.shell:Shell"        # Arbitrary command execution
   # - "kimi_cli.tools.file:ReadMediaFile"  # CVE-2026-25990 via Pillow
   # - "kimi_cli.tools.web:FetchURL"        # Network exfiltration risk
   # - "kimi_cli.tools.web:SearchWeb"       # Network access risk
+  # Task tool removed: inherited subagent bypasses tool restrictions (Sol CRITICAL-1)

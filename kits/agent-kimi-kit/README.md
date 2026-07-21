@@ -103,11 +103,14 @@ The bundled `production-agent.yaml` disables these dangerous tools:
 | `ReadMediaFile` | CVE-2026-25990 via Pillow | **Disabled** |
 | `FetchURL` | Network exfiltration | **Disabled** |
 | `SearchWeb` | Network access | **Disabled** |
-| `ReadFile` | File read (gated by approval) | Enabled |
-| `Glob` | File discovery | Enabled |
-| `Grep` | File search | Enabled |
-| `WriteFile` | File write (gated by approval) | Enabled |
-| `StrReplaceFile` | File edit (gated by approval) | Enabled |
+| `Task` | Subagent bypasses tool restrictions | **Disabled** |
+| `ReadFile` | File read (container-isolated) | Enabled |
+| `Glob` | File discovery (container-isolated) | Enabled |
+| `Grep` | File search (container-isolated) | Enabled |
+| `WriteFile` | File write (**approval-gated**) | Enabled |
+| `StrReplaceFile` | File edit (**approval-gated**) | Enabled |
+
+> **Note on approval scope:** In manual mode, the SDK only emits `ApprovalRequest` for write operations (`WriteFile`, `StrReplaceFile`). Read operations (`ReadFile`, `Glob`, `Grep`) are allowed without approval — they accept absolute paths, so **container isolation is the actual filesystem boundary**, not the approval gate. The `work_dir` parameter is NOT a security boundary.
 
 ### Custom Agent Config
 
