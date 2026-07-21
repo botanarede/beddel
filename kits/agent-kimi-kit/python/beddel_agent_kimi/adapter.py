@@ -34,6 +34,7 @@ from beddel_agent_kimi.session import (
     resolve_model,
     resolve_sandbox,
 )
+from kaos.path import KaosPath
 
 __all__ = ["KimiAgentAdapter"]
 
@@ -144,9 +145,9 @@ class KimiAgentAdapter:
                 details={"model": model},
             ) from exc
 
-        # Resolve sandbox to KAOS mode
+        # Resolve sandbox to KAOS mode (validates input)
         try:
-            kaos_mode = resolve_sandbox(sandbox)
+            resolve_sandbox(sandbox)
         except ValueError as exc:
             raise AgentError(
                 code=KIMI_EXECUTION_FAILED,
@@ -155,20 +156,19 @@ class KimiAgentAdapter:
             ) from exc
 
         # Execute via kimi-agent-sdk with retry on rate limit
-        return await self._execute_with_retry(prompt, kimi_model, kaos_mode)
+        return await self._execute_with_retry(prompt, kimi_model)
 
     async def _execute_with_retry(
         self,
         prompt: str,
         kimi_model: str,
-        kaos_mode: str,
     ) -> AgentResult:
         """Execute session with exponential backoff on 429 rate limits."""
         last_exc: Exception | None = None
 
         for attempt in range(_MAX_RETRIES + 1):
             try:
-                return await self._run_session(prompt, kimi_model, kaos_mode)
+                return await self._run_session(prompt, kimi_model)
             except AgentError as exc:
                 if exc.code == KIMI_RATE_LIMITED and attempt < _MAX_RETRIES:
                     last_exc = exc
@@ -190,7 +190,6 @@ class KimiAgentAdapter:
         self,
         prompt: str,
         kimi_model: str,
-        kaos_mode: str,
     ) -> AgentResult:
         """Run a single session attempt with proper lifecycle."""
         try:
@@ -216,9 +215,8 @@ class KimiAgentAdapter:
             output_parts: list[str] = []
 
             async with await Session.create(
-                work_dir=str(self._work_dir),
+                work_dir=KaosPath(str(self._work_dir)),
                 config=config,
-                sandbox_mode=kaos_mode,
                 yolo=self._approval_bridge.should_use_yolo(),
             ) as session:
                 try:
@@ -334,7 +332,7 @@ class KimiAgentAdapter:
             ) from exc
 
         try:
-            kaos_mode = resolve_sandbox(sandbox)
+            resolve_sandbox(sandbox)
         except ValueError as exc:
             raise AgentError(
                 code=KIMI_EXECUTION_FAILED,
@@ -363,9 +361,8 @@ class KimiAgentAdapter:
 
         try:
             async with await Session.create(
-                work_dir=str(self._work_dir),
+                work_dir=KaosPath(str(self._work_dir)),
                 config=config,
-                sandbox_mode=kaos_mode,
                 yolo=self._approval_bridge.should_use_yolo(),
             ) as session:
                 async for wire_msg in session.prompt(prompt):

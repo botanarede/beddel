@@ -263,7 +263,7 @@ class TestExecuteLifecycle:
 
     @pytest.mark.asyncio
     async def test_execute_passes_work_dir(self, adapter: KimiAgentAdapter) -> None:
-        """execute() passes work_dir to Session.create()."""
+        """execute() passes work_dir to Session.create() as KaosPath."""
         session = _make_fake_session()
         sdk_mock = _make_sdk_mock(session)
 
@@ -271,18 +271,18 @@ class TestExecuteLifecycle:
             await adapter.execute("task", model="fast")
 
         # Session._create_kwargs is set by our fake context manager
-        assert session._create_kwargs["work_dir"] == "/tmp/test-workspace"
+        assert str(session._create_kwargs["work_dir"]) == "/tmp/test-workspace"
 
     @pytest.mark.asyncio
     async def test_execute_passes_sandbox_mode(self, adapter: KimiAgentAdapter) -> None:
-        """execute() maps sandbox to KAOS mode for Session.create()."""
+        """execute() no longer passes sandbox_mode to Session.create()."""
         session = _make_fake_session()
         sdk_mock = _make_sdk_mock(session)
 
         with patch.dict("sys.modules", {"kimi_agent_sdk": sdk_mock}):
             await adapter.execute("task", sandbox="workspace-write")
 
-        assert session._create_kwargs["sandbox_mode"] == "workspace"
+        assert "sandbox_mode" not in session._create_kwargs
 
     @pytest.mark.asyncio
     async def test_execute_passes_model_in_config(

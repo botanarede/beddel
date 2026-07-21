@@ -42,6 +42,7 @@ from beddel_agent_kimi.session import (
     get_api_key,
     resolve_model,
 )
+from kaos.path import KaosPath
 
 __all__ = ["KimiSwarmStrategy"]
 
@@ -367,9 +368,8 @@ class KimiSwarmStrategy:
         """Full session lifecycle: create + prompt + collect (HIGH-5)."""
         # HIGH-2: sandbox_mode="read_only" for swarm children
         async with await session_cls.create(
-            work_dir=str(task.context_data.get("work_dir", ".")),
+            work_dir=KaosPath(str(task.context_data.get("work_dir", "."))),
             config=config,
-            sandbox_mode="read_only",
         ) as session:
             await self._collect_swarm_messages(session, swarm_prompt, task, state)
 

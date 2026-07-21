@@ -739,7 +739,7 @@ class TestPromptConstruction:
 
 
 class TestSandboxMode:
-    """Test that Session.create() receives sandbox_mode='read_only'."""
+    """Test that Session.create() no longer receives sandbox_mode."""
 
     @pytest.mark.asyncio
     async def test_sandbox_mode_read_only(
@@ -748,15 +748,15 @@ class TestSandboxMode:
         task: CoordinationTask,
         context: ExecutionContext,
     ) -> None:
-        """Session.create() is called with sandbox_mode='read_only'."""
+        """Session.create() no longer passes sandbox_mode parameter."""
         session = _make_fake_session()
         sdk_mock = _make_sdk_mock(session)
 
         with patch.dict("sys.modules", {"kimi_agent_sdk": sdk_mock}):
             await strategy.coordinate({}, task, context)
 
-        # The _create_kwargs is set by our _fake_create mock
-        assert session._create_kwargs["sandbox_mode"] == "read_only"
+        # sandbox_mode should NOT be in kwargs (removed from SDK API)
+        assert "sandbox_mode" not in session._create_kwargs
 
 
 # ---------------------------------------------------------------------------
