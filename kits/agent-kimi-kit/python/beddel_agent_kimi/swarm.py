@@ -301,8 +301,6 @@ class KimiSwarmStrategy:
             ) from exc
 
         # Use shared config builder (returns validated Config object)
-        config = build_kimi_config(self._api_key, kimi_model)
-
         # Build the swarm instruction prompt
         swarm_prompt = self._build_swarm_prompt(task)
 
@@ -310,6 +308,7 @@ class KimiSwarmStrategy:
         collection_state = _SwarmCollectionState()
 
         try:
+            config = build_kimi_config(self._api_key, kimi_model)
             # Wrap ENTIRE lifecycle in timeout (HIGH-5)
             await asyncio.wait_for(
                 self._run_session_lifecycle(
