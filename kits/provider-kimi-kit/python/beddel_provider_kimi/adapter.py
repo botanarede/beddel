@@ -48,7 +48,7 @@ class KimiLLMProvider(ILLMProvider):
     Args:
         api_key: Moonshot API key. Falls back to MOONSHOT_API_KEY env var.
         base_url: API base URL. Defaults to "https://api.moonshot.ai/v1".
-        timeout: Request timeout in seconds. Defaults to 120.
+        timeout: Request timeout in seconds. Falls back to MOONSHOT_TIMEOUT env var, then 120.
     """
 
     _DEFAULT_BASE_URL = "https://api.moonshot.ai/v1"
@@ -80,7 +80,28 @@ class KimiLLMProvider(ILLMProvider):
                 details={"provider": "kimi"},
             )
         self._base_url = base_url or self._DEFAULT_BASE_URL
-        self._timeout = timeout if timeout is not None else self._DEFAULT_TIMEOUT
+        if timeout is not None:
+            resolved_timeout = timeout
+        else:
+            raw_timeout = os.environ.get("MOONSHOT_TIMEOUT")
+            if raw_timeout is None:
+                resolved_timeout = self._DEFAULT_TIMEOUT
+            else:
+                try:
+                    resolved_timeout = float(raw_timeout)
+                except (ValueError, TypeError) as exc:
+                    raise AdapterError(
+                        code=ADAPT_KIMI_PARAM_REJECTED,
+                        message="MOONSHOT_TIMEOUT must be a positive number",
+                        details={"value": raw_timeout},
+                    ) from exc
+        if resolved_timeout <= 0:
+            raise AdapterError(
+                code=ADAPT_KIMI_PARAM_REJECTED,
+                message="Kimi timeout must be greater than zero",
+                details={"timeout": resolved_timeout},
+            )
+        self._timeout = resolved_timeout
         self._client = AsyncOpenAI(
             api_key=resolved_key,
             base_url=self._base_url,
