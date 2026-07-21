@@ -544,3 +544,69 @@ class TestDefaultApprovalMode:
         approval_event = next(e for e in events if e.get("type") == "approval_request")
         assert approval_event["approved"] is False
         assert approval_event["message"] == "Allow file write?"
+
+
+# ---------------------------------------------------------------------------
+# Test: Agent File Parameter (AC4 — Story K10B.2)
+# ---------------------------------------------------------------------------
+
+
+class TestAgentFileParameter:
+    """Test agent_file parameter passthrough to Session.create()."""
+
+    @pytest.mark.asyncio
+    async def test_agent_file_passed_to_session_create(self, mock_env: None) -> None:
+        """agent_file is passed to Session.create() when provided."""
+        from pathlib import Path
+
+        agent_path = Path("/tmp/test-agent.yaml")
+        adapter = KimiAgentAdapter(
+            api_key="test-key",
+            work_dir="/tmp/test",
+            agent_file=agent_path,
+            approval_mode="auto",
+        )
+        session = _make_fake_session()
+        sdk_mock = _make_sdk_mock(session)
+
+        with patch.dict("sys.modules", {"kimi_agent_sdk": sdk_mock}):
+            await adapter.execute("task")
+
+        assert session._create_kwargs["agent_file"] == agent_path
+
+    @pytest.mark.asyncio
+    async def test_agent_file_not_in_kwargs_when_none(self, mock_env: None) -> None:
+        """agent_file is NOT passed to Session.create() when None."""
+        adapter = KimiAgentAdapter(
+            api_key="test-key",
+            work_dir="/tmp/test",
+            approval_mode="auto",
+        )
+        session = _make_fake_session()
+        sdk_mock = _make_sdk_mock(session)
+
+        with patch.dict("sys.modules", {"kimi_agent_sdk": sdk_mock}):
+            await adapter.execute("task")
+
+        assert "agent_file" not in session._create_kwargs
+
+    @pytest.mark.asyncio
+    async def test_agent_file_passed_in_stream(self, mock_env: None) -> None:
+        """agent_file is passed to Session.create() in stream path."""
+        from pathlib import Path
+
+        agent_path = Path("/tmp/stream-agent.yaml")
+        adapter = KimiAgentAdapter(
+            api_key="test-key",
+            work_dir="/tmp/test",
+            agent_file=agent_path,
+            approval_mode="auto",
+        )
+        session = _make_fake_session()
+        sdk_mock = _make_sdk_mock(session)
+
+        with patch.dict("sys.modules", {"kimi_agent_sdk": sdk_mock}):
+            async for _ in adapter.stream("task"):
+                pass
+
+        assert session._create_kwargs["agent_file"] == agent_path

@@ -74,6 +74,7 @@ class KimiAgentAdapter:
         approval_gate: Any | None = None,
         approval_mode: str = "manual",
         approval_timeout: float = 60.0,
+        agent_file: Path | None = None,
     ) -> None:
         try:
             self._api_key = api_key if api_key else get_api_key()
@@ -90,6 +91,7 @@ class KimiAgentAdapter:
             mode=approval_mode,
             timeout=approval_timeout,
         )
+        self._agent_file = agent_file
 
     # ------------------------------------------------------------------
     # IAgentAdapter.execute
@@ -214,11 +216,15 @@ class KimiAgentAdapter:
             # Session.create() -> session.prompt() -> collect -> cleanup
             output_parts: list[str] = []
 
-            async with await Session.create(
-                work_dir=KaosPath(str(self._work_dir)),
-                config=config,
-                yolo=self._approval_bridge.should_use_yolo(),
-            ) as session:
+            create_kwargs: dict[str, Any] = {
+                "work_dir": KaosPath(str(self._work_dir)),
+                "config": config,
+                "yolo": self._approval_bridge.should_use_yolo(),
+            }
+            if self._agent_file is not None:
+                create_kwargs["agent_file"] = self._agent_file
+
+            async with await Session.create(**create_kwargs) as session:
                 try:
                     await asyncio.wait_for(
                         self._collect_messages(session, prompt, output_parts),
@@ -360,11 +366,15 @@ class KimiAgentAdapter:
         output_parts: list[str] = []
 
         try:
-            async with await Session.create(
-                work_dir=KaosPath(str(self._work_dir)),
-                config=config,
-                yolo=self._approval_bridge.should_use_yolo(),
-            ) as session:
+            create_kwargs: dict[str, Any] = {
+                "work_dir": KaosPath(str(self._work_dir)),
+                "config": config,
+                "yolo": self._approval_bridge.should_use_yolo(),
+            }
+            if self._agent_file is not None:
+                create_kwargs["agent_file"] = self._agent_file
+
+            async with await Session.create(**create_kwargs) as session:
                 async for wire_msg in session.prompt(prompt):
                     # ApprovalRequest — handle via bridge
                     if hasattr(wire_msg, "resolve"):
