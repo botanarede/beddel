@@ -64,6 +64,74 @@ Modes:
 |----------|----------|-------------|
 | `MOONSHOT_API_KEY` | Yes | Moonshot platform API key |
 
+## Production Security
+
+### Default Approval Mode
+
+The default `approval_mode` is `"manual"`, which means **all agent actions are denied by default** unless an `IApprovalGate` implementation is provided to make decisions. This is the safest default for production deployments.
+
+| Mode | Behavior |
+|------|----------|
+| `manual` (default) | All requests denied unless gate approves. Timeout → deny. |
+| `auto` | Risk-based policy: LOW/recognized MEDIUM → approve; HIGH → deny. |
+| `yolo` | Approve everything (opt-in unsafe escape hatch). |
+
+### Container Isolation (MANDATORY)
+
+**Container isolation is MANDATORY for production deployments.** The Kimi agent's `work_dir` parameter is NOT a filesystem boundary — the agent can access files outside it via absolute paths. Deploy the adapter inside an isolated container (Docker, gVisor, etc.) to enforce actual filesystem boundaries.
+
+### Tool Restrictions (agent_file)
+
+Use the `agent_file` parameter to load a custom agent YAML config that restricts which tools the Kimi agent can use:
+
+```python
+from beddel_agent_kimi import KimiAgentAdapter
+from beddel_agent_kimi.agent_config import get_production_agent_file
+
+# Production-safe: dangerous tools disabled
+adapter = KimiAgentAdapter(
+    agent_file=get_production_agent_file(),
+    # approval_mode="manual" is already the default
+)
+```
+
+The bundled `production-agent.yaml` disables these dangerous tools:
+
+| Tool | Risk | Status |
+|------|------|--------|
+| `Shell` | Arbitrary command execution | **Disabled** |
+| `ReadMediaFile` | CVE-2026-25990 via Pillow | **Disabled** |
+| `FetchURL` | Network exfiltration | **Disabled** |
+| `SearchWeb` | Network access | **Disabled** |
+| `ReadFile` | File read (gated by approval) | Enabled |
+| `Glob` | File discovery | Enabled |
+| `Grep` | File search | Enabled |
+| `WriteFile` | File write (gated by approval) | Enabled |
+| `StrReplaceFile` | File edit (gated by approval) | Enabled |
+
+### Custom Agent Config
+
+Create your own agent YAML to customize available tools:
+
+```yaml
+version: 1
+agent:
+  extend: "default"
+  name: "my-custom-agent"
+  tools:
+    - "kimi_cli.tools.file:ReadFile"
+    - "kimi_cli.tools.file:WriteFile"
+    # Add only the tools you need
+```
+
+Pass it to the adapter:
+
+```python
+from pathlib import Path
+
+adapter = KimiAgentAdapter(agent_file=Path("my-agent.yaml"))
+```
+
 ## Model Tiers
 
 | Beddel Tier | Kimi Model | Use Case |
