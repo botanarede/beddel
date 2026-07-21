@@ -366,7 +366,6 @@ class KimiSwarmStrategy:
         state: "_SwarmCollectionState",
     ) -> None:
         """Full session lifecycle: create + prompt + collect (HIGH-5)."""
-        # HIGH-2: sandbox_mode="read_only" for swarm children
         async with await session_cls.create(
             work_dir=KaosPath(str(task.context_data.get("work_dir", "."))),
             config=config,

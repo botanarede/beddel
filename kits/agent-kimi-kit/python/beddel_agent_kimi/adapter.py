@@ -145,7 +145,7 @@ class KimiAgentAdapter:
                 details={"model": model},
             ) from exc
 
-        # Resolve sandbox to KAOS mode (validates input)
+        # Resolve sandbox to KAOS mode (validates input; mode no longer passed to Session.create)
         try:
             resolve_sandbox(sandbox)
         except ValueError as exc:
