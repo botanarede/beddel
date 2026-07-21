@@ -289,10 +289,7 @@ class KimiSwarmStrategy:
     ) -> CoordinationResult:
         """Execute the swarm session with timeout covering full lifecycle."""
         try:
-            from kimi_agent_sdk import (  # type: ignore[import-not-found]
-                Config,
-                Session,
-            )
+            from kimi_agent_sdk import Session  # type: ignore[import-not-found]
         except ImportError as exc:
             raise AgentError(
                 code=KIMI_SWARM_ALL_FAILED,
@@ -303,8 +300,8 @@ class KimiSwarmStrategy:
                 details={"import_error": str(exc)},
             ) from exc
 
-        # Use shared config builder (MEDIUM-7)
-        config = Config(**build_kimi_config(self._api_key, kimi_model))
+        # Use shared config builder (returns validated Config object)
+        config = build_kimi_config(self._api_key, kimi_model)
 
         # Build the swarm instruction prompt
         swarm_prompt = self._build_swarm_prompt(task)

@@ -77,3 +77,89 @@ class TestKaosPath:
         path = KaosPath("/tmp/test-workspace")
         assert path is not None
         assert str(path) == "/tmp/test-workspace"
+
+
+class TestBuildKimiConfigContract:
+    """Verify build_kimi_config() returns valid Config against real SDK."""
+
+    def test_returns_config_instance(self) -> None:
+        """build_kimi_config() must return a kimi_agent_sdk.Config instance."""
+        from kimi_agent_sdk import Config
+
+        from beddel_agent_kimi.session import build_kimi_config
+
+        result = build_kimi_config(api_key="test-key", model="kimi-k3")
+        assert isinstance(result, Config), (
+            f"Expected Config instance, got {type(result).__name__}"
+        )
+
+    def test_default_model_set_correctly(self) -> None:
+        """Returned config has default_model matching the passed model."""
+        from beddel_agent_kimi.session import build_kimi_config
+
+        result = build_kimi_config(api_key="test-key", model="kimi-k2.7-code")
+        assert result.default_model == "kimi-k2.7-code"
+
+    def test_max_context_size_default(self) -> None:
+        """Returned config models entry has max_context_size == 100_000."""
+        from beddel_agent_kimi.session import build_kimi_config
+
+        result = build_kimi_config(api_key="test-key", model="kimi-k3")
+        model_entry = result.models["kimi-k3"]
+        assert model_entry.max_context_size == 100_000
+
+    def test_max_context_size_override(self) -> None:
+        """max_context_size can be overridden via kwarg."""
+        from beddel_agent_kimi.session import build_kimi_config
+
+        result = build_kimi_config(
+            api_key="test-key", model="kimi-k3", max_context_size=200_000
+        )
+        model_entry = result.models["kimi-k3"]
+        assert model_entry.max_context_size == 200_000
+
+    def test_invalid_max_context_size_raises(self) -> None:
+        """max_context_size <= 0 raises ValueError."""
+        import pytest
+
+        from beddel_agent_kimi.session import build_kimi_config
+
+        with pytest.raises(ValueError, match="max_context_size must be > 0"):
+            build_kimi_config(api_key="test-key", model="kimi-k3", max_context_size=0)
+
+        with pytest.raises(ValueError, match="max_context_size must be > 0"):
+            build_kimi_config(api_key="test-key", model="kimi-k3", max_context_size=-1)
+
+
+class TestLLMModelFieldSnapshot:
+    """Snapshot required fields of SDK Config nested models.
+
+    These tests serve as an early-warning system: if kimi-agent-sdk adds
+    new required fields, these tests will fail before runtime does.
+    """
+
+    def test_llm_model_required_fields(self) -> None:
+        """LLMModel required fields == {provider, model, max_context_size}."""
+        from kimi_cli.config import LLMModel
+
+        required = {
+            name for name, field in LLMModel.model_fields.items() if field.is_required()
+        }
+        assert required == {"provider", "model", "max_context_size"}, (
+            f"LLMModel required fields changed! Expected "
+            f"{{provider, model, max_context_size}}, got {required}"
+        )
+
+    def test_llm_provider_required_fields(self) -> None:
+        """LLMProvider required fields == {type, base_url, api_key}."""
+        from kimi_cli.config import LLMProvider
+
+        required = {
+            name
+            for name, field in LLMProvider.model_fields.items()
+            if field.is_required()
+        }
+        assert required == {"type", "base_url", "api_key"}, (
+            f"LLMProvider required fields changed! Expected "
+            f"{{type, base_url, api_key}}, got {required}"
+        )

@@ -195,10 +195,7 @@ class KimiAgentAdapter:
     ) -> AgentResult:
         """Run a single session attempt with proper lifecycle."""
         try:
-            from kimi_agent_sdk import (  # type: ignore[import-not-found]
-                Config,
-                Session,
-            )
+            from kimi_agent_sdk import Session  # type: ignore[import-not-found]
         except ImportError as exc:
             raise AgentError(
                 code=KIMI_EXECUTION_FAILED,
@@ -210,7 +207,7 @@ class KimiAgentAdapter:
             ) from exc
 
         try:
-            config = Config(**build_kimi_config(self._api_key, kimi_model))
+            config = build_kimi_config(self._api_key, kimi_model)
 
             # Real kimi-agent-sdk lifecycle:
             # Session.create() -> session.prompt() -> collect -> cleanup
@@ -347,10 +344,7 @@ class KimiAgentAdapter:
             ) from exc
 
         try:
-            from kimi_agent_sdk import (  # type: ignore[import-not-found]
-                Config,
-                Session,
-            )
+            from kimi_agent_sdk import Session  # type: ignore[import-not-found]
         except ImportError as exc:
             raise AgentError(
                 code=KIMI_EXECUTION_FAILED,
@@ -361,11 +355,10 @@ class KimiAgentAdapter:
                 details={"import_error": str(exc)},
             ) from exc
 
-        config = Config(**build_kimi_config(self._api_key, kimi_model))
-
         output_parts: list[str] = []
 
         try:
+            config = build_kimi_config(self._api_key, kimi_model)
             create_kwargs: dict[str, Any] = {
                 "work_dir": KaosPath(str(self._work_dir)),
                 "config": config,

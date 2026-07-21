@@ -7,7 +7,10 @@ for the KimiAgentAdapter and KimiSwarmStrategy.
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from kimi_agent_sdk import Config
 
 
 # ---------------------------------------------------------------------------
@@ -28,6 +31,7 @@ SANDBOX_MAP: dict[str, str] = {
 }
 
 DEFAULT_TIMEOUT: int = 300
+DEFAULT_MAX_CONTEXT_SIZE: int = 100_000
 
 
 # ---------------------------------------------------------------------------
@@ -103,8 +107,10 @@ def get_api_key() -> str:
     return key
 
 
-def build_kimi_config(api_key: str, model: str) -> dict[str, Any]:
-    """Build a kimi-agent-sdk Config kwargs dict.
+def build_kimi_config(
+    api_key: str, model: str, *, max_context_size: int = DEFAULT_MAX_CONTEXT_SIZE
+) -> "Config":
+    """Build a validated kimi-agent-sdk Config object.
 
     Centralises the provider/model config structure so adapter and swarm
     share the same wiring without duplication.
@@ -112,23 +118,33 @@ def build_kimi_config(api_key: str, model: str) -> dict[str, Any]:
     Args:
         api_key: Moonshot platform API key.
         model: Resolved Kimi model identifier.
+        max_context_size: Maximum context window size in tokens. Must be > 0.
 
     Returns:
-        Dict suitable for unpacking into ``Config(**kwargs)``.
+        A validated ``Config`` instance ready for session creation.
+
+    Raises:
+        ValueError: If *max_context_size* is not positive.
     """
-    return {
-        "default_model": model,
-        "providers": {
+    from kimi_agent_sdk import Config
+
+    if max_context_size <= 0:
+        raise ValueError(f"max_context_size must be > 0, got {max_context_size}")
+
+    return Config(
+        default_model=model,
+        providers={
             "kimi": {
                 "type": "kimi",
                 "base_url": "https://api.moonshot.ai/v1",
                 "api_key": api_key,
             }
         },
-        "models": {
+        models={
             model: {
                 "provider": "kimi",
                 "model": model,
+                "max_context_size": max_context_size,
             }
         },
-    }
+    )
