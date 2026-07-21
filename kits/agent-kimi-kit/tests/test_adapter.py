@@ -41,8 +41,10 @@ def mock_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture()
 def adapter(mock_env: None) -> KimiAgentAdapter:
-    """Create a KimiAgentAdapter with test API key."""
-    return KimiAgentAdapter(timeout=10, work_dir="/tmp/test-workspace")
+    """Create a KimiAgentAdapter with test API key (auto-approve for execute tests)."""
+    return KimiAgentAdapter(
+        timeout=10, work_dir="/tmp/test-workspace", approval_mode="auto"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -508,3 +510,37 @@ class TestErrorPropagation:
                 await adapter.execute("task")
             assert exc_info.value.code == KIMI_EXECUTION_FAILED
             assert "Network unreachable" in exc_info.value.message
+
+
+# ---------------------------------------------------------------------------
+# Test: Default Approval Mode (manual)
+# ---------------------------------------------------------------------------
+
+
+class TestDefaultApprovalMode:
+    """Verify the default approval_mode is 'manual' (deny without explicit gate)."""
+
+    def test_default_approval_mode_is_manual(self, mock_env: None) -> None:
+        """KimiAgentAdapter() without explicit approval_mode uses 'manual'."""
+        adapter = KimiAgentAdapter(timeout=10, work_dir="/tmp/test-workspace")
+        assert adapter._approval_bridge._mode == "manual"
+
+    @pytest.mark.asyncio
+    async def test_manual_mode_no_gate_denies(self, mock_env: None) -> None:
+        """Manual mode with no gate denies ApprovalRequest."""
+        adapter = KimiAgentAdapter(timeout=10, work_dir="/tmp/test-workspace")
+        session = _make_fake_session(
+            [
+                FakeTextPart("Starting..."),
+                FakeApprovalRequest("Allow file write?"),
+                FakeTextPart("Done"),
+            ]
+        )
+        sdk_mock = _make_sdk_mock(session)
+
+        with patch.dict("sys.modules", {"kimi_agent_sdk": sdk_mock}):
+            events = [e async for e in adapter.stream("task")]
+
+        approval_event = next(e for e in events if e.get("type") == "approval_request")
+        assert approval_event["approved"] is False
+        assert approval_event["message"] == "Allow file write?"

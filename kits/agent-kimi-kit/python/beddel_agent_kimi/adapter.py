@@ -72,7 +72,7 @@ class KimiAgentAdapter:
         api_key: str | None = None,
         work_dir: str | Path | None = None,
         approval_gate: Any | None = None,
-        approval_mode: str = "auto",
+        approval_mode: str = "manual",
         approval_timeout: float = 60.0,
     ) -> None:
         try:
