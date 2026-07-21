@@ -11,7 +11,12 @@ adapters:
   description: Multi-agent coordination via Kimi AgentSwarm tool
 targets:
   python:
-    status: implemented
+    status: unavailable
+    unavailable_reason: >-
+      API incompatibility: adapter passes sandbox_mode (unsupported in SDK 0.0.5)
+      and work_dir as str (requires KaosPath). Security hardening needed before
+      production: Pillow CVE reachable via ReadMediaFile, approval auto-mode
+      insufficient, work_dir not a security boundary. Pending Epic K10B.
     module: beddel_agent_kimi
     dependencies:
     - kimi-agent-sdk==0.0.5
