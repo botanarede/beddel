@@ -135,6 +135,28 @@ from pathlib import Path
 adapter = KimiAgentAdapter(agent_file=Path("my-agent.yaml"))
 ```
 
+### Production Deployment Checklist
+
+Follow these steps before deploying agent-kimi-kit to production:
+
+1. **Container isolation** — Run the adapter inside Docker, Firecracker, or equivalent container runtime. The `work_dir` parameter is NOT a filesystem boundary.
+
+2. **Agent file configuration** — Use the bundled production config to disable dangerous tools:
+   ```python
+   from beddel_agent_kimi.agent_config import get_production_agent_file
+   adapter = KimiAgentAdapter(agent_file=get_production_agent_file())
+   ```
+
+3. **Approval mode verification** — Confirm `approval_mode="manual"` (the default). Inject an `IApprovalGate` implementation to handle write approval requests.
+
+4. **Environment variable** — Set `MOONSHOT_API_KEY` securely (secrets manager, not in code/env files committed to VCS).
+
+5. **Network egress restriction** — Restrict outbound network from the container to only `api.moonshot.ai` (port 443). Block all other egress to prevent data exfiltration even if agent config is bypassed.
+
+6. **Verify tool restrictions** — After deployment, confirm Shell, ReadMediaFile, FetchURL, SearchWeb, and Task are NOT available to the agent by checking logs on first session creation.
+
+7. **Monitor dependency** — `kimi-agent-sdk==0.0.5` has a transitive dev-only CVE (CVE-2026-25046 via kimi-cli). Monitor upstream for SDK ≥0.1.0 which should drop this dependency. Review by Q4 2026.
+
 ## Model Tiers
 
 | Beddel Tier | Kimi Model | Use Case |
