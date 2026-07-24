@@ -108,6 +108,11 @@ class BeddelA2AExecutor(AgentExecutor):
     them into :class:`TaskUpdater` calls that drive A2A task state
     transitions.
 
+    Conforms to the A2A v1.0 task-event state machine:
+    - Every execution begins with ``submit()`` (SUBMITTED state)
+    - Streaming uses a stable artifact ID with ``append`` / ``last_chunk``
+    - Every path reaches a terminal state (COMPLETED, FAILED, CANCELED)
+
     Args:
         registry: Mapping of workflow IDs to ``(Workflow, WorkflowExecutor)``
             tuples.  Typically built by the CLI ``connect`` command from
@@ -128,10 +133,15 @@ class BeddelA2AExecutor(AgentExecutor):
         message, looks up the workflow in the registry, streams execution
         events, and maps each :class:`BeddelEvent` to the appropriate
         :class:`TaskUpdater` method.
+
+        The v1.0 spec requires ``submit()`` before any other update.
         """
         task_id = context.task_id or ""
         context_id = context.context_id or ""
         updater = TaskUpdater(event_queue, task_id, context_id)
+
+        # v1.0 spec: Task MUST be submitted before any status/artifact update
+        await updater.submit()
 
         workflow_id, inputs = _extract_workflow_params(context)
 
@@ -152,9 +162,14 @@ class BeddelA2AExecutor(AgentExecutor):
 
         workflow, executor = entry
 
+        # Mutable state for stable artifact ID tracking across streaming chunks
+        artifact_state: dict[str, str | None] = {"id": None}
+
         try:
             async for event in executor.execute_stream(workflow, inputs):
-                await self._handle_event(updater, event)
+                terminal = await self._handle_event(updater, event, artifact_state)
+                if terminal:
+                    break
         except Exception as exc:  # noqa: BLE001
             logger.exception("Workflow %s failed unexpectedly", workflow_id)
             await updater.failed(message=_agent_message(str(exc)))
@@ -166,12 +181,14 @@ class BeddelA2AExecutor(AgentExecutor):
     ) -> None:
         """Cancel a running A2A task.
 
-        Creates a :class:`TaskUpdater` and transitions the task to the
-        cancelled state.
+        Creates a :class:`TaskUpdater`, submits the task, and transitions
+        it to the cancelled state.  The v1.0 spec requires task submission
+        before any state transition.
         """
         task_id = context.task_id or ""
         context_id = context.context_id or ""
         updater = TaskUpdater(event_queue, task_id, context_id)
+        await updater.submit()
         await updater.cancel()
 
     # ------------------------------------------------------------------
@@ -179,8 +196,24 @@ class BeddelA2AExecutor(AgentExecutor):
     # ------------------------------------------------------------------
 
     @staticmethod
-    async def _handle_event(updater: TaskUpdater, event: BeddelEvent) -> None:
-        """Map a single :class:`BeddelEvent` to a :class:`TaskUpdater` call."""
+    async def _handle_event(
+        updater: TaskUpdater,
+        event: BeddelEvent,
+        artifact_state: dict[str, str | None],
+    ) -> bool:
+        """Map a single :class:`BeddelEvent` to a :class:`TaskUpdater` call.
+
+        Args:
+            updater: The task updater for emitting A2A events.
+            event: The Beddel domain event to translate.
+            artifact_state: Mutable dict tracking the current streaming
+                artifact ID (``{"id": str | None}``).  Shared across
+                all calls within one execution to maintain a stable ID.
+
+        Returns:
+            ``True`` if a terminal state was reached (COMPLETED, FAILED,
+            CANCELED) and the event loop should stop.  ``False`` otherwise.
+        """
         et = event.event_type
 
         if et == EventType.WORKFLOW_START:
@@ -195,24 +228,52 @@ class BeddelA2AExecutor(AgentExecutor):
 
         elif et == EventType.TEXT_CHUNK:
             chunk = str(event.data.get("chunk", ""))
-            await updater.add_artifact(
-                parts=[Part(text=chunk)],
-                append=True,
-            )
+            if artifact_state["id"] is None:
+                # First chunk: create artifact with new stable ID
+                artifact_id = str(uuid.uuid4())
+                artifact_state["id"] = artifact_id
+                await updater.add_artifact(
+                    parts=[Part(text=chunk)],
+                    artifact_id=artifact_id,
+                    append=False,
+                )
+            else:
+                # Subsequent chunks: append to same artifact
+                await updater.add_artifact(
+                    parts=[Part(text=chunk)],
+                    artifact_id=artifact_state["id"],
+                    append=True,
+                )
 
         elif et == EventType.STEP_END:
+            # Step results are separate artifacts (not streaming chunks)
             result_data = event.data.get("result", "")
+            step_artifact_id = str(uuid.uuid4())
             await updater.add_artifact(
                 parts=[Part(text=str(result_data))],
+                artifact_id=step_artifact_id,
                 name=event.step_id,
+                append=False,
             )
 
         elif et == EventType.WORKFLOW_END:
+            # If streaming was active, emit final chunk marker
+            if artifact_state["id"] is not None:
+                await updater.add_artifact(
+                    parts=[Part(text="")],
+                    artifact_id=artifact_state["id"],
+                    append=True,
+                    last_chunk=True,
+                )
             await updater.complete()
+            return True  # Terminal state reached
 
         elif et == EventType.ERROR:
             error_msg = str(event.data.get("error", "Unknown error"))
             await updater.failed(message=_agent_message(error_msg))
+            return True  # Terminal state reached
+
+        return False  # Non-terminal, continue processing
 
 
 def build_agent_card(
