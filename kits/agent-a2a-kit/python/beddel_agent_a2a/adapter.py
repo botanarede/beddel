@@ -21,7 +21,11 @@ from uuid import uuid4
 
 import httpx
 from a2a.client import A2ACardResolver, ClientConfig, create_client
-from a2a.client.errors import A2AClientError, A2AClientTimeoutError
+from a2a.client.errors import (
+    A2AClientError,
+    A2AClientTimeoutError,
+    AgentCardResolutionError,
+)
 from a2a.types import (
     Message,
     Part,
@@ -103,20 +107,47 @@ class A2AAgentAdapter:
         prompt: str,
         *,
         model: str | None = None,
+        workflow_id: str | None = None,
+        inputs: dict[str, Any] | None = None,
     ) -> SendMessageRequest:
         """Build a SendMessageRequest for the a2a-sdk client.
 
         Args:
             prompt: The user message text.
             model: Optional model hint (forwarded as metadata).
+            workflow_id: Optional workflow identifier. When provided,
+                a DataPart is used instead of a TextPart.
+            inputs: Optional workflow inputs dict (used with workflow_id).
 
         Returns:
             A :class:`SendMessageRequest` proto message.
         """
+        if workflow_id is not None:
+            from google.protobuf.struct_pb2 import Value
+
+            value = Value()
+            struct = value.struct_value
+            struct.fields["workflow_id"].string_value = workflow_id
+            if inputs:
+                inputs_struct = struct.fields["inputs"].struct_value
+                for k, v in inputs.items():
+                    if isinstance(v, bool):
+                        inputs_struct.fields[k].bool_value = v
+                    elif isinstance(v, str):
+                        inputs_struct.fields[k].string_value = v
+                    elif isinstance(v, (int, float)):
+                        inputs_struct.fields[k].number_value = float(v)
+                    else:
+                        inputs_struct.fields[k].string_value = str(v)
+            part = Part()
+            part.data.CopyFrom(value)
+        else:
+            part = Part(text=prompt)
+
         message = Message(
             message_id=str(uuid4()),
             role=Role.ROLE_USER,
-            parts=[Part(text=prompt)],
+            parts=[part],
         )
 
         request = SendMessageRequest(message=message)
@@ -158,6 +189,8 @@ class A2AAgentAdapter:
         sandbox: str = "read-only",
         tools: list[str] | None = None,
         output_schema: dict[str, Any] | None = None,
+        workflow_id: str | None = None,
+        inputs: dict[str, Any] | None = None,
     ) -> AgentResult:
         """Execute a prompt via the A2A ``message/send`` protocol method.
 
@@ -171,31 +204,100 @@ class A2AAgentAdapter:
             sandbox: Sandbox access level (informational for A2A).
             tools: Optional list of tool names (informational for A2A).
             output_schema: Optional JSON Schema dict (informational for A2A).
+            workflow_id: Optional workflow identifier for DataPart mode.
+            inputs: Optional workflow inputs dict (used with workflow_id).
 
         Returns:
             An :class:`AgentResult` with the agent's text output.
 
         Raises:
             AgentError: ``BEDDEL-AGENT-720`` on protocol or server errors,
+                ``BEDDEL-AGENT-721`` on discovery failures,
                 ``BEDDEL-AGENT-722`` on timeout,
                 ``BEDDEL-AGENT-723`` on auth failures.
         """
-        request = self._build_send_message_request(prompt, model=model)
+        request = self._build_send_message_request(
+            prompt, model=model, workflow_id=workflow_id, inputs=inputs
+        )
 
+        client = None
+        httpx_client = httpx.AsyncClient(
+            headers=self._get_headers(),
+            timeout=self._timeout,
+        )
         try:
-            httpx_client = httpx.AsyncClient(
-                headers=self._get_headers(),
-                timeout=self._timeout,
-            )
             config = ClientConfig(
                 httpx_client=httpx_client,
                 streaming=False,
             )
             client = await create_client(
-                self._agent_url,
+                agent=self._agent_url,
                 client_config=config,
             )
+        except AgentCardResolutionError as exc:
+            await httpx_client.aclose()
+            if getattr(exc, "status_code", None) in (401, 403):
+                raise AgentError(
+                    code=A2A_AUTH_FAILED,
+                    message="A2A authentication failed during discovery",
+                    details={
+                        "error": str(exc),
+                        "url": self._agent_url,
+                        "status_code": exc.status_code,
+                    },
+                ) from exc
+            raise AgentError(
+                code=A2A_DISCOVERY_FAILED,
+                message="A2A agent card resolution failed",
+                details={"error": str(exc), "url": self._agent_url},
+            ) from exc
+        except A2AClientTimeoutError as exc:
+            await httpx_client.aclose()
+            raise AgentError(
+                code=A2A_TIMEOUT,
+                message=f"A2A client creation timed out after {self._timeout}s",
+                details={"timeout": self._timeout, "url": self._agent_url},
+            ) from exc
+        except A2AClientError as exc:
+            await httpx_client.aclose()
+            raise AgentError(
+                code=A2A_TASK_FAILED,
+                message="A2A client creation failed",
+                details={"error": str(exc), "url": self._agent_url},
+            ) from exc
+        except httpx.TimeoutException as exc:
+            await httpx_client.aclose()
+            raise AgentError(
+                code=A2A_TIMEOUT,
+                message=f"A2A client creation timed out after {self._timeout}s",
+                details={"timeout": self._timeout, "url": self._agent_url},
+            ) from exc
+        except httpx.HTTPStatusError as exc:
+            await httpx_client.aclose()
+            if exc.response.status_code in (401, 403):
+                raise AgentError(
+                    code=A2A_AUTH_FAILED,
+                    message="A2A authentication failed",
+                    details={
+                        "error": str(exc),
+                        "url": self._agent_url,
+                        "status_code": exc.response.status_code,
+                    },
+                ) from exc
+            raise AgentError(
+                code=A2A_TASK_FAILED,
+                message="A2A client creation failed",
+                details={"error": str(exc), "url": self._agent_url},
+            ) from exc
+        except httpx.HTTPError as exc:
+            await httpx_client.aclose()
+            raise AgentError(
+                code=A2A_TASK_FAILED,
+                message="A2A client creation failed",
+                details={"error": str(exc), "url": self._agent_url},
+            ) from exc
         except Exception as exc:
+            await httpx_client.aclose()
             raise AgentError(
                 code=A2A_TASK_FAILED,
                 message="A2A client creation failed",
@@ -247,6 +349,22 @@ class A2AAgentAdapter:
                         if part.text:
                             output_parts.append(part.text)
 
+        except AgentCardResolutionError as exc:
+            if getattr(exc, "status_code", None) in (401, 403):
+                raise AgentError(
+                    code=A2A_AUTH_FAILED,
+                    message="A2A authentication failed",
+                    details={
+                        "error": str(exc),
+                        "url": self._agent_url,
+                        "status_code": exc.status_code,
+                    },
+                ) from exc
+            raise AgentError(
+                code=A2A_DISCOVERY_FAILED,
+                message="A2A agent card resolution failed",
+                details={"error": str(exc), "url": self._agent_url},
+            ) from exc
         except A2AClientTimeoutError as exc:
             raise AgentError(
                 code=A2A_TIMEOUT,
@@ -265,6 +383,22 @@ class A2AAgentAdapter:
                 message=f"A2A request timed out after {self._timeout}s",
                 details={"timeout": self._timeout, "url": self._agent_url},
             ) from exc
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in (401, 403):
+                raise AgentError(
+                    code=A2A_AUTH_FAILED,
+                    message="A2A authentication failed",
+                    details={
+                        "error": str(exc),
+                        "url": self._agent_url,
+                        "status_code": exc.response.status_code,
+                    },
+                ) from exc
+            raise AgentError(
+                code=A2A_TASK_FAILED,
+                message="A2A connection failed",
+                details={"error": str(exc), "url": self._agent_url},
+            ) from exc
         except httpx.HTTPError as exc:
             raise AgentError(
                 code=A2A_TASK_FAILED,
@@ -272,6 +406,8 @@ class A2AAgentAdapter:
                 details={"error": str(exc), "url": self._agent_url},
             ) from exc
         finally:
+            if client is not None:
+                await client.close()
             await httpx_client.aclose()
 
         is_completed = task_state == TaskState.TASK_STATE_COMPLETED
@@ -296,6 +432,8 @@ class A2AAgentAdapter:
         model: str | None = None,
         sandbox: str = "read-only",
         tools: list[str] | None = None,
+        workflow_id: str | None = None,
+        inputs: dict[str, Any] | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Stream events from the A2A ``message/send`` method (streaming mode).
 
@@ -314,30 +452,100 @@ class A2AAgentAdapter:
             model: Optional model override (forwarded as metadata).
             sandbox: Sandbox access level (informational for A2A).
             tools: Optional list of tool names (informational for A2A).
+            workflow_id: Optional workflow identifier for DataPart mode.
+            inputs: Optional workflow inputs dict (used with workflow_id).
 
         Yields:
             Structured event dicts from the A2A stream.
 
         Raises:
             AgentError: ``BEDDEL-AGENT-720`` on connection failure,
-                ``BEDDEL-AGENT-722`` on timeout.
+                ``BEDDEL-AGENT-721`` on discovery failures,
+                ``BEDDEL-AGENT-722`` on timeout,
+                ``BEDDEL-AGENT-723`` on auth failures.
         """
-        request = self._build_send_message_request(prompt, model=model)
+        request = self._build_send_message_request(
+            prompt, model=model, workflow_id=workflow_id, inputs=inputs
+        )
 
+        client = None
+        httpx_client = httpx.AsyncClient(
+            headers=self._get_headers(),
+            timeout=self._timeout,
+        )
         try:
-            httpx_client = httpx.AsyncClient(
-                headers=self._get_headers(),
-                timeout=self._timeout,
-            )
             config = ClientConfig(
                 httpx_client=httpx_client,
                 streaming=True,
             )
             client = await create_client(
-                self._agent_url,
+                agent=self._agent_url,
                 client_config=config,
             )
+        except AgentCardResolutionError as exc:
+            await httpx_client.aclose()
+            if getattr(exc, "status_code", None) in (401, 403):
+                raise AgentError(
+                    code=A2A_AUTH_FAILED,
+                    message="A2A authentication failed during discovery",
+                    details={
+                        "error": str(exc),
+                        "url": self._agent_url,
+                        "status_code": exc.status_code,
+                    },
+                ) from exc
+            raise AgentError(
+                code=A2A_DISCOVERY_FAILED,
+                message="A2A agent card resolution failed",
+                details={"error": str(exc), "url": self._agent_url},
+            ) from exc
+        except A2AClientTimeoutError as exc:
+            await httpx_client.aclose()
+            raise AgentError(
+                code=A2A_TIMEOUT,
+                message=f"A2A client creation timed out after {self._timeout}s",
+                details={"timeout": self._timeout, "url": self._agent_url},
+            ) from exc
+        except A2AClientError as exc:
+            await httpx_client.aclose()
+            raise AgentError(
+                code=A2A_TASK_FAILED,
+                message="A2A client creation failed",
+                details={"error": str(exc), "url": self._agent_url},
+            ) from exc
+        except httpx.TimeoutException as exc:
+            await httpx_client.aclose()
+            raise AgentError(
+                code=A2A_TIMEOUT,
+                message=f"A2A client creation timed out after {self._timeout}s",
+                details={"timeout": self._timeout, "url": self._agent_url},
+            ) from exc
+        except httpx.HTTPStatusError as exc:
+            await httpx_client.aclose()
+            if exc.response.status_code in (401, 403):
+                raise AgentError(
+                    code=A2A_AUTH_FAILED,
+                    message="A2A authentication failed",
+                    details={
+                        "error": str(exc),
+                        "url": self._agent_url,
+                        "status_code": exc.response.status_code,
+                    },
+                ) from exc
+            raise AgentError(
+                code=A2A_TASK_FAILED,
+                message="A2A client creation failed",
+                details={"error": str(exc), "url": self._agent_url},
+            ) from exc
+        except httpx.HTTPError as exc:
+            await httpx_client.aclose()
+            raise AgentError(
+                code=A2A_TASK_FAILED,
+                message="A2A client creation failed",
+                details={"error": str(exc), "url": self._agent_url},
+            ) from exc
         except Exception as exc:
+            await httpx_client.aclose()
             raise AgentError(
                 code=A2A_TASK_FAILED,
                 message="A2A client creation failed",
@@ -404,6 +612,22 @@ class A2AAgentAdapter:
                             "parts": parts_text,
                         }
 
+        except AgentCardResolutionError as exc:
+            if getattr(exc, "status_code", None) in (401, 403):
+                raise AgentError(
+                    code=A2A_AUTH_FAILED,
+                    message="A2A authentication failed",
+                    details={
+                        "error": str(exc),
+                        "url": self._agent_url,
+                        "status_code": exc.status_code,
+                    },
+                ) from exc
+            raise AgentError(
+                code=A2A_DISCOVERY_FAILED,
+                message="A2A agent card resolution failed",
+                details={"error": str(exc), "url": self._agent_url},
+            ) from exc
         except A2AClientTimeoutError as exc:
             raise AgentError(
                 code=A2A_TIMEOUT,
@@ -422,6 +646,22 @@ class A2AAgentAdapter:
                 message=f"A2A stream timed out after {self._timeout}s",
                 details={"timeout": self._timeout, "url": self._agent_url},
             ) from exc
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in (401, 403):
+                raise AgentError(
+                    code=A2A_AUTH_FAILED,
+                    message="A2A authentication failed",
+                    details={
+                        "error": str(exc),
+                        "url": self._agent_url,
+                        "status_code": exc.response.status_code,
+                    },
+                ) from exc
+            raise AgentError(
+                code=A2A_TASK_FAILED,
+                message="A2A stream connection failed",
+                details={"error": str(exc), "url": self._agent_url},
+            ) from exc
         except httpx.HTTPError as exc:
             raise AgentError(
                 code=A2A_TASK_FAILED,
@@ -429,4 +669,6 @@ class A2AAgentAdapter:
                 details={"error": str(exc), "url": self._agent_url},
             ) from exc
         finally:
+            if client is not None:
+                await client.close()
             await httpx_client.aclose()
