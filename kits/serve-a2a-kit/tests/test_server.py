@@ -261,6 +261,38 @@ class TestBuildAgentCard:
         for pattern in ["token", "secret", "password", "api_key", "apikey"]:
             assert pattern not in json_lower, f"Found '{pattern}' in card JSON"
 
+    def test_empty_workflow_id_raises_value_error(self) -> None:
+        """Empty workflow ID raises ValueError."""
+        wf = _make_workflow(wf_id="", name="Valid Name")
+        registry: dict[str, tuple[Workflow, Any]] = {"": (wf, MagicMock())}
+
+        with pytest.raises(ValueError, match="workflow ID is empty"):
+            build_agent_card(registry)
+
+    def test_whitespace_workflow_id_raises_value_error(self) -> None:
+        """Whitespace-only workflow ID raises ValueError."""
+        wf = _make_workflow(wf_id="  ", name="Valid Name")
+        registry: dict[str, tuple[Workflow, Any]] = {"  ": (wf, MagicMock())}
+
+        with pytest.raises(ValueError, match="workflow ID is empty"):
+            build_agent_card(registry)
+
+    def test_empty_workflow_name_raises_value_error(self) -> None:
+        """Empty workflow name raises ValueError."""
+        wf = _make_workflow(wf_id="wf-valid", name="")
+        registry: dict[str, tuple[Workflow, Any]] = {"wf-valid": (wf, MagicMock())}
+
+        with pytest.raises(ValueError, match="workflow name is empty"):
+            build_agent_card(registry)
+
+    def test_whitespace_workflow_name_raises_value_error(self) -> None:
+        """Whitespace-only workflow name raises ValueError."""
+        wf = _make_workflow(wf_id="wf-valid", name="   ")
+        registry: dict[str, tuple[Workflow, Any]] = {"wf-valid": (wf, MagicMock())}
+
+        with pytest.raises(ValueError, match="workflow name is empty"):
+            build_agent_card(registry)
+
 
 # ---------------------------------------------------------------------------
 # BeddelA2AExecutor tests (Task 2)

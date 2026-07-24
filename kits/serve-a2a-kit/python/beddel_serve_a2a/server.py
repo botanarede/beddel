@@ -140,7 +140,9 @@ class BeddelA2AExecutor(AgentExecutor):
         entry = self._registry.get(workflow_id)
         if entry is None:
             await updater.failed(
-                message=_agent_message(f"Workflow '{workflow_id}' not found in registry."),
+                message=_agent_message(
+                    f"Workflow '{workflow_id}' not found in registry."
+                ),
             )
             return
 
@@ -234,15 +236,29 @@ def build_agent_card(
     skills: list[AgentSkill] = []
 
     for wf_id, (workflow, _executor) in workflows.items():
+        # Validate required fields — a2a-sdk rejects empty skill ID/name
+        skill_id = wf_id.strip()
+        skill_name = workflow.name.strip()
+        if not skill_id:
+            raise ValueError(
+                f"Cannot build Agent Card: workflow ID is empty "
+                f"(name={workflow.name!r})"
+            )
+        if not skill_name:
+            raise ValueError(
+                f"Cannot build Agent Card: workflow name is empty (id={wf_id!r})"
+            )
+
         tags = ["workflow"]
         if workflow.steps:
             tags.append(workflow.steps[0].primitive)
 
+        description = workflow.description.strip() or f"Execute workflow: {skill_name}"
         skills.append(
             AgentSkill(
-                id=wf_id,
-                name=workflow.name,
-                description=workflow.description or f"Execute workflow: {workflow.name}",
+                id=skill_id,
+                name=skill_name,
+                description=description,
                 tags=tags,
             ),
         )
