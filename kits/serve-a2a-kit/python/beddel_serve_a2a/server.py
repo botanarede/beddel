@@ -15,6 +15,7 @@ Public API:
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import uuid
 from typing import Any
@@ -208,17 +209,21 @@ class BeddelA2AExecutor(AgentExecutor):
         terminal_reached = False
 
         try:
-            async for event in executor.execute_stream(workflow, inputs):
-                terminal = await self._handle_event(updater, event, artifact_state)
-                if terminal:
-                    terminal_reached = True
-                    break
+            async with contextlib.aclosing(
+                executor.execute_stream(workflow, inputs)
+            ) as stream:
+                async for event in stream:
+                    terminal = await self._handle_event(updater, event, artifact_state)
+                    if terminal:
+                        terminal_reached = True
+                        break
         except Exception as exc:  # noqa: BLE001
             logger.exception("Workflow %s failed unexpectedly", workflow_id)
-            await updater.failed(message=_agent_message(str(exc)))
-            terminal_reached = True
+            if not terminal_reached:
+                await updater.failed(message=_agent_message(str(exc)))
+                terminal_reached = True
 
-        # F2 fix: if stream exhausted without terminal event, fail the task
+        # Fallback: if stream exhausted without terminal event, fail the task
         if not terminal_reached:
             await updater.failed(
                 message=_agent_message(
@@ -278,7 +283,7 @@ class BeddelA2AExecutor(AgentExecutor):
             )
 
         elif et == EventType.TEXT_CHUNK:
-            chunk = str(event.data.get("chunk", ""))
+            chunk = str(event.data.get("text", ""))
             if artifact_state["id"] is None:
                 # First chunk: create artifact with new stable ID
                 artifact_id = str(uuid.uuid4())
@@ -320,9 +325,15 @@ class BeddelA2AExecutor(AgentExecutor):
             return True  # Terminal state reached
 
         elif et == EventType.ERROR:
+            # ERROR events are informational (recoverable SKIP/RETRY attempts
+            # emit ERROR before continuing).  Only WORKFLOW_END is a normal
+            # terminal event; fatal failures propagate as exceptions caught by
+            # the outer try/except in execute().
             error_msg = str(event.data.get("error", "Unknown error"))
-            await updater.failed(message=_agent_message(error_msg))
-            return True  # Terminal state reached
+            await updater.update_status(
+                TaskState.TASK_STATE_WORKING,
+                message=_agent_message(f"Error (recoverable): {error_msg}"),
+            )
 
         return False  # Non-terminal, continue processing
 

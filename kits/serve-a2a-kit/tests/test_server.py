@@ -19,13 +19,16 @@ from unittest.mock import MagicMock
 import pytest
 from a2a.server.events import EventQueue
 from a2a.types import (
+    AgentCapabilities,
+    AgentCard,
     Message,
     Part,
     Role,
+    SendMessageConfiguration,
+    SendMessageRequest,
     Task,
     TaskArtifactUpdateEvent,
     TaskState,
-    TaskStatus,
     TaskStatusUpdateEvent,
 )
 
@@ -356,7 +359,7 @@ class TestBeddelA2AExecutor:
             BeddelEvent(
                 event_type=EventType.TEXT_CHUNK,
                 step_id="step-1",
-                data={"chunk": "Hello "},
+                data={"text": "Hello "},
             ),
             BeddelEvent(
                 event_type=EventType.STEP_END,
@@ -410,15 +413,22 @@ class TestBeddelA2AExecutor:
         # TEXT_CHUNK artifact
         assert artifact_events[0].append is False
         # STEP_END artifact has different ID from streaming artifact
-        assert artifact_events[1].artifact.artifact_id != artifact_events[0].artifact.artifact_id
+        assert (
+            artifact_events[1].artifact.artifact_id
+            != artifact_events[0].artifact.artifact_id
+        )
         assert artifact_events[1].append is False
         # last_chunk marker
         assert artifact_events[2].last_chunk is True
-        assert artifact_events[2].artifact.artifact_id == artifact_events[0].artifact.artifact_id
+        assert (
+            artifact_events[2].artifact.artifact_id
+            == artifact_events[0].artifact.artifact_id
+        )
 
         # F5: No events after terminal COMPLETED
         completed_idx = next(
-            i for i, ev in enumerate(collected)
+            i
+            for i, ev in enumerate(collected)
             if isinstance(ev, TaskStatusUpdateEvent)
             and ev.status.state == TaskState.TASK_STATE_COMPLETED
         )
@@ -501,8 +511,8 @@ class TestBeddelA2AExecutor:
         assert collected[0].status.state == TaskState.TASK_STATE_SUBMITTED
 
     @pytest.mark.asyncio
-    async def test_execute_error_event(self) -> None:
-        """ERROR event: Task → WORKING → FAILED (exact sequence)."""
+    async def test_execute_error_event_is_non_terminal(self) -> None:
+        """ERROR event is non-terminal (recoverable); task fails on stream end."""
         wf = _make_workflow()
         mock_executor = MagicMock()
 
@@ -513,6 +523,7 @@ class TestBeddelA2AExecutor:
                 step_id="step-1",
                 data={"error": "LLM timeout"},
             ),
+            # Stream exhausts without WORKFLOW_END — fallback fails the task
         ]
         mock_executor.execute_stream = MagicMock(
             return_value=_mock_execute_stream(events),
@@ -527,14 +538,18 @@ class TestBeddelA2AExecutor:
         await executor.execute(ctx, eq)
 
         collected = _collect_events(eq)
-        # F5: Exact sequence: Task(SUBMITTED) → WORKING → FAILED
-        assert len(collected) == 3
+        # Sequence: Task(SUBMITTED) → WORKING → WORKING(diagnostic) → FAILED
+        assert len(collected) == 4
         assert isinstance(collected[0], Task)
         assert collected[0].status.state == TaskState.TASK_STATE_SUBMITTED
         assert isinstance(collected[1], TaskStatusUpdateEvent)
         assert collected[1].status.state == TaskState.TASK_STATE_WORKING
+        # ERROR diagnostic (non-terminal)
         assert isinstance(collected[2], TaskStatusUpdateEvent)
-        assert collected[2].status.state == TaskState.TASK_STATE_FAILED
+        assert collected[2].status.state == TaskState.TASK_STATE_WORKING
+        # Stream exhaustion fallback
+        assert isinstance(collected[3], TaskStatusUpdateEvent)
+        assert collected[3].status.state == TaskState.TASK_STATE_FAILED
 
     @pytest.mark.asyncio
     async def test_execute_exception_in_stream(self) -> None:
@@ -600,17 +615,17 @@ class TestBeddelA2AExecutor:
             BeddelEvent(
                 event_type=EventType.TEXT_CHUNK,
                 step_id="step-1",
-                data={"chunk": "Hello "},
+                data={"text": "Hello "},
             ),
             BeddelEvent(
                 event_type=EventType.TEXT_CHUNK,
                 step_id="step-1",
-                data={"chunk": "World"},
+                data={"text": "World"},
             ),
             BeddelEvent(
                 event_type=EventType.TEXT_CHUNK,
                 step_id="step-1",
-                data={"chunk": "!"},
+                data={"text": "!"},
             ),
             BeddelEvent(event_type=EventType.WORKFLOW_END, data={}),
         ]
@@ -653,7 +668,8 @@ class TestBeddelA2AExecutor:
 
         # F5: No events after terminal COMPLETED
         completed_idx = next(
-            i for i, ev in enumerate(collected)
+            i
+            for i, ev in enumerate(collected)
             if isinstance(ev, TaskStatusUpdateEvent)
             and ev.status.state == TaskState.TASK_STATE_COMPLETED
         )
@@ -670,7 +686,7 @@ class TestBeddelA2AExecutor:
             BeddelEvent(
                 event_type=EventType.TEXT_CHUNK,
                 step_id="step-1",
-                data={"chunk": "content"},
+                data={"text": "content"},
             ),
             BeddelEvent(event_type=EventType.WORKFLOW_END, data={}),
         ]
@@ -735,19 +751,24 @@ class TestBeddelA2AExecutor:
 
     @pytest.mark.asyncio
     async def test_no_events_after_terminal(self) -> None:
-        """After ERROR (terminal), WORKFLOW_END is NOT processed."""
+        """After WORKFLOW_END (terminal), further events are NOT processed."""
         wf = _make_workflow()
         mock_executor = MagicMock()
 
         events = [
             BeddelEvent(event_type=EventType.WORKFLOW_START, data={}),
-            BeddelEvent(
-                event_type=EventType.ERROR,
-                step_id="step-1",
-                data={"error": "Something broke"},
-            ),
-            # This should NOT be processed because ERROR is terminal
             BeddelEvent(event_type=EventType.WORKFLOW_END, data={}),
+            # These should NOT be processed because WORKFLOW_END is terminal
+            BeddelEvent(
+                event_type=EventType.TEXT_CHUNK,
+                step_id="step-1",
+                data={"text": "ghost"},
+            ),
+            BeddelEvent(
+                event_type=EventType.STEP_END,
+                step_id="step-1",
+                data={"result": "ghost"},
+            ),
         ]
         mock_executor.execute_stream = MagicMock(
             return_value=_mock_execute_stream(events),
@@ -762,20 +783,19 @@ class TestBeddelA2AExecutor:
         await executor.execute(ctx, eq)
 
         collected = _collect_events(eq)
-        # F5: Exact sequence: Task(SUBMITTED) → WORKING → FAILED
+        # Exact sequence: Task(SUBMITTED) → WORKING → COMPLETED
         assert len(collected) == 3
         assert isinstance(collected[0], Task)
+        assert collected[0].status.state == TaskState.TASK_STATE_SUBMITTED
         assert isinstance(collected[1], TaskStatusUpdateEvent)
         assert collected[1].status.state == TaskState.TASK_STATE_WORKING
         assert isinstance(collected[2], TaskStatusUpdateEvent)
-        assert collected[2].status.state == TaskState.TASK_STATE_FAILED
-        # No COMPLETED event from WORKFLOW_END
-        states = [
-            ev.status.state
-            for ev in collected
-            if isinstance(ev, TaskStatusUpdateEvent)
+        assert collected[2].status.state == TaskState.TASK_STATE_COMPLETED
+        # No artifact events from ghost events after terminal
+        artifact_events = [
+            ev for ev in collected if isinstance(ev, TaskArtifactUpdateEvent)
         ]
-        assert TaskState.TASK_STATE_COMPLETED not in states
+        assert len(artifact_events) == 0
 
     @pytest.mark.asyncio
     async def test_step_end_artifact_distinct_from_streaming(self) -> None:
@@ -788,7 +808,7 @@ class TestBeddelA2AExecutor:
             BeddelEvent(
                 event_type=EventType.TEXT_CHUNK,
                 step_id="step-1",
-                data={"chunk": "streamed text"},
+                data={"text": "streamed text"},
             ),
             BeddelEvent(
                 event_type=EventType.STEP_END,
@@ -866,7 +886,7 @@ class TestBeddelA2AExecutor:
             BeddelEvent(
                 event_type=EventType.TEXT_CHUNK,
                 step_id="step-1",
-                data={"chunk": "partial"},
+                data={"text": "partial"},
             ),
             # No WORKFLOW_END or ERROR — stream just ends
         ]
@@ -889,11 +909,227 @@ class TestBeddelA2AExecutor:
 
         # Should NOT have COMPLETED
         states = [
-            ev.status.state
-            for ev in collected
-            if isinstance(ev, TaskStatusUpdateEvent)
+            ev.status.state for ev in collected if isinstance(ev, TaskStatusUpdateEvent)
         ]
         assert TaskState.TASK_STATE_COMPLETED not in states
+
+    @pytest.mark.asyncio
+    async def test_recoverable_skip_error_continues_to_completion(self) -> None:
+        """SKIP strategy: ERROR is non-terminal, workflow completes (F2 regression)."""
+        wf = _make_workflow()
+        mock_executor = MagicMock()
+
+        # Simulates SKIP strategy: ERROR emitted, then stream continues
+        events = [
+            BeddelEvent(event_type=EventType.WORKFLOW_START, data={}),
+            BeddelEvent(
+                event_type=EventType.STEP_START,
+                step_id="skip-step",
+                data={"primitive": "llm"},
+            ),
+            BeddelEvent(
+                event_type=EventType.ERROR,
+                step_id="skip-step",
+                data={"error": "LLM timeout — skipping"},
+            ),
+            # Stream continues after ERROR (SKIP strategy)
+            BeddelEvent(
+                event_type=EventType.STEP_START,
+                step_id="step-2",
+                data={"primitive": "tool"},
+            ),
+            BeddelEvent(
+                event_type=EventType.STEP_END,
+                step_id="step-2",
+                data={"result": "tool output"},
+            ),
+            BeddelEvent(event_type=EventType.WORKFLOW_END, data={}),
+        ]
+        mock_executor.execute_stream = MagicMock(
+            return_value=_mock_execute_stream(events),
+        )
+
+        registry: WorkflowRegistry = {"wf-test": (wf, mock_executor)}
+        executor = BeddelA2AExecutor(registry)
+
+        ctx = _make_request_context(workflow_id="wf-test")
+        eq = EventQueue()
+
+        await executor.execute(ctx, eq)
+
+        collected = _collect_events(eq)
+
+        # First event is Task(SUBMITTED)
+        assert isinstance(collected[0], Task)
+        assert collected[0].status.state == TaskState.TASK_STATE_SUBMITTED
+
+        # Last status event must be COMPLETED (not FAILED)
+        status_events = [
+            ev for ev in collected if isinstance(ev, TaskStatusUpdateEvent)
+        ]
+        assert status_events[-1].status.state == TaskState.TASK_STATE_COMPLETED
+
+        # FAILED should NOT appear anywhere
+        states = [ev.status.state for ev in status_events]
+        assert TaskState.TASK_STATE_FAILED not in states
+
+    @pytest.mark.asyncio
+    async def test_recoverable_retry_error_continues_to_completion(self) -> None:
+        """RETRY strategy: ERROR+RETRY then success, workflow completes (F2)."""
+        wf = _make_workflow()
+        mock_executor = MagicMock()
+
+        # Simulates RETRY strategy: ERROR → RETRY → success → WORKFLOW_END
+        events = [
+            BeddelEvent(event_type=EventType.WORKFLOW_START, data={}),
+            BeddelEvent(
+                event_type=EventType.STEP_START,
+                step_id="retry-step",
+                data={"primitive": "llm"},
+            ),
+            BeddelEvent(
+                event_type=EventType.ERROR,
+                step_id="retry-step",
+                data={"error": "transient failure attempt 1"},
+            ),
+            BeddelEvent(
+                event_type=EventType.RETRY,
+                step_id="retry-step",
+                data={"attempt": 2},
+            ),
+            BeddelEvent(
+                event_type=EventType.ERROR,
+                step_id="retry-step",
+                data={"error": "transient failure attempt 2"},
+            ),
+            BeddelEvent(
+                event_type=EventType.RETRY,
+                step_id="retry-step",
+                data={"attempt": 3},
+            ),
+            BeddelEvent(
+                event_type=EventType.STEP_END,
+                step_id="retry-step",
+                data={"result": "success on attempt 3"},
+            ),
+            BeddelEvent(event_type=EventType.WORKFLOW_END, data={}),
+        ]
+        mock_executor.execute_stream = MagicMock(
+            return_value=_mock_execute_stream(events),
+        )
+
+        registry: WorkflowRegistry = {"wf-test": (wf, mock_executor)}
+        executor = BeddelA2AExecutor(registry)
+
+        ctx = _make_request_context(workflow_id="wf-test")
+        eq = EventQueue()
+
+        await executor.execute(ctx, eq)
+
+        collected = _collect_events(eq)
+
+        # First event is Task(SUBMITTED)
+        assert isinstance(collected[0], Task)
+        assert collected[0].status.state == TaskState.TASK_STATE_SUBMITTED
+
+        # Last status event must be COMPLETED
+        status_events = [
+            ev for ev in collected if isinstance(ev, TaskStatusUpdateEvent)
+        ]
+        assert status_events[-1].status.state == TaskState.TASK_STATE_COMPLETED
+
+        # FAILED should NOT appear
+        states = [ev.status.state for ev in status_events]
+        assert TaskState.TASK_STATE_FAILED not in states
+
+        # Verify STEP_END artifact is present
+        artifact_events = [
+            ev for ev in collected if isinstance(ev, TaskArtifactUpdateEvent)
+        ]
+        assert len(artifact_events) >= 1
+        # Step result artifact should contain the success text
+        step_artifact = artifact_events[0]
+        assert step_artifact.artifact.parts[0].text == "success on attempt 3"
+
+    @pytest.mark.asyncio
+    async def test_fatal_exception_after_error_fails_task(self) -> None:
+        """FAIL strategy: ERROR emitted then exception raised → FAILED (F2)."""
+        wf = _make_workflow()
+        mock_executor = MagicMock()
+
+        async def _fail_strategy_stream(
+            _wf: Any, _inputs: Any
+        ) -> AsyncGenerator[BeddelEvent, None]:
+            yield BeddelEvent(event_type=EventType.WORKFLOW_START, data={})
+            yield BeddelEvent(
+                event_type=EventType.ERROR,
+                step_id="fail-step",
+                data={"error": "fatal failure"},
+            )
+            # FAIL strategy raises exception after ERROR event
+            from beddel.domain.errors import ExecutionError
+
+            raise ExecutionError("fatal failure")
+
+        mock_executor.execute_stream = MagicMock(
+            side_effect=lambda wf, inputs: _fail_strategy_stream(wf, inputs),
+        )
+
+        registry: WorkflowRegistry = {"wf-test": (wf, mock_executor)}
+        executor = BeddelA2AExecutor(registry)
+
+        ctx = _make_request_context(workflow_id="wf-test")
+        eq = EventQueue()
+
+        await executor.execute(ctx, eq)
+
+        collected = _collect_events(eq)
+
+        # First event is Task(SUBMITTED)
+        assert isinstance(collected[0], Task)
+        assert collected[0].status.state == TaskState.TASK_STATE_SUBMITTED
+
+        # Last event must be FAILED (from exception handler)
+        status_events = [
+            ev for ev in collected if isinstance(ev, TaskStatusUpdateEvent)
+        ]
+        assert status_events[-1].status.state == TaskState.TASK_STATE_FAILED
+
+    @pytest.mark.asyncio
+    async def test_text_chunk_uses_text_key(self) -> None:
+        """TEXT_CHUNK reads 'text' key from event data (F1 regression)."""
+        wf = _make_workflow()
+        mock_executor = MagicMock()
+
+        events = [
+            BeddelEvent(event_type=EventType.WORKFLOW_START, data={}),
+            BeddelEvent(
+                event_type=EventType.TEXT_CHUNK,
+                step_id="step-1",
+                data={"text": "real content from executor"},
+            ),
+            BeddelEvent(event_type=EventType.WORKFLOW_END, data={}),
+        ]
+        mock_executor.execute_stream = MagicMock(
+            return_value=_mock_execute_stream(events),
+        )
+
+        registry: WorkflowRegistry = {"wf-test": (wf, mock_executor)}
+        executor = BeddelA2AExecutor(registry)
+
+        ctx = _make_request_context(workflow_id="wf-test")
+        eq = EventQueue()
+
+        await executor.execute(ctx, eq)
+
+        collected = _collect_events(eq)
+        artifact_events = [
+            ev for ev in collected if isinstance(ev, TaskArtifactUpdateEvent)
+        ]
+        # First artifact has the actual text content (not empty)
+        assert len(artifact_events) >= 1
+        first_artifact = artifact_events[0]
+        assert first_artifact.artifact.parts[0].text == "real content from executor"
 
 
 # ---------------------------------------------------------------------------
@@ -901,10 +1137,8 @@ class TestBeddelA2AExecutor:
 # ---------------------------------------------------------------------------
 
 
-def _build_agent_card_for_test() -> "AgentCard":
+def _build_agent_card_for_test() -> AgentCard:
     """Build a minimal AgentCard for handler tests."""
-    from a2a.types import AgentCard, AgentCapabilities
-
     return AgentCard(
         name="Test Agent",
         description="Test",
@@ -917,11 +1151,10 @@ def _build_agent_card_for_test() -> "AgentCard":
 
 def _build_send_request(
     workflow_id: str | None = None, text_only: bool = False
-) -> "SendMessageRequest":
+) -> SendMessageRequest:
     """Build a SendMessageRequest for handler tests."""
     from google.protobuf.struct_pb2 import Value
     from google.protobuf import json_format as pbjf
-    from a2a.types import SendMessageRequest, SendMessageConfiguration
 
     if text_only:
         return SendMessageRequest(
@@ -973,7 +1206,7 @@ class TestExecutorWithDefaultHandler:
             BeddelEvent(
                 event_type=EventType.TEXT_CHUNK,
                 step_id="step-1",
-                data={"chunk": "Hello"},
+                data={"text": "Hello"},
             ),
             BeddelEvent(event_type=EventType.WORKFLOW_END, data={}),
         ]
@@ -1077,7 +1310,7 @@ class TestExecutorWithDefaultHandler:
 
     @pytest.mark.asyncio
     async def test_send_message_streaming_via_handler(self) -> None:
-        """Streaming through handler persists artifacts correctly."""
+        """Streaming via on_message_send_stream() validates SSE event sequence."""
         from a2a.server.request_handlers.default_request_handler_v2 import (
             DefaultRequestHandlerV2,
         )
@@ -1092,12 +1325,12 @@ class TestExecutorWithDefaultHandler:
             BeddelEvent(
                 event_type=EventType.TEXT_CHUNK,
                 step_id="step-1",
-                data={"chunk": "chunk1"},
+                data={"text": "chunk1"},
             ),
             BeddelEvent(
                 event_type=EventType.TEXT_CHUNK,
                 step_id="step-1",
-                data={"chunk": "chunk2"},
+                data={"text": "chunk2"},
             ),
             BeddelEvent(event_type=EventType.WORKFLOW_END, data={}),
         ]
@@ -1118,15 +1351,43 @@ class TestExecutorWithDefaultHandler:
         request = _build_send_request(workflow_id="wf-test")
         call_context = ServerCallContext()
 
-        result = await handler.on_message_send(request, call_context)
+        # F4: Use on_message_send_stream() — the actual SSE path
+        sse_events: list[Any] = []
+        async for event in handler.on_message_send_stream(request, call_context):
+            sse_events.append(event)
 
-        # Task should be complete
-        assert isinstance(result, Task)
-        assert result.status.state == TaskState.TASK_STATE_COMPLETED
+        # First SSE event should be the initial Task (SUBMITTED)
+        assert isinstance(sse_events[0], Task)
+        assert sse_events[0].status.state == TaskState.TASK_STATE_SUBMITTED
 
-        # Verify stored task has artifacts
-        stored = await task_store.get(result.id, call_context)
+        # Last event should be terminal (Task with COMPLETED state)
+        last_event = sse_events[-1]
+        assert isinstance(last_event, Task)
+        assert last_event.status.state == TaskState.TASK_STATE_COMPLETED
+
+        # Verify artifact events are present with stable IDs
+        artifact_events = [
+            ev for ev in sse_events if isinstance(ev, TaskArtifactUpdateEvent)
+        ]
+        assert len(artifact_events) >= 2  # At least 2 chunks + last_chunk marker
+
+        # All artifact events share one stable artifact ID
+        artifact_ids = {ev.artifact.artifact_id for ev in artifact_events}
+        assert len(artifact_ids) == 1
+
+        # Verify chunk content is actually present (F1 regression)
+        text_parts = []
+        for aev in artifact_events:
+            for part in aev.artifact.parts:
+                if part.HasField("text") and part.text:
+                    text_parts.append(part.text)
+        assert "chunk1" in text_parts
+        assert "chunk2" in text_parts
+
+        # Verify stored task also has artifacts
+        stored = await task_store.get(sse_events[0].id, call_context)
         assert stored is not None
+        assert stored.status.state == TaskState.TASK_STATE_COMPLETED
         assert len(stored.artifacts) >= 1
 
     @pytest.mark.asyncio
