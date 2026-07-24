@@ -35,7 +35,9 @@ from a2a.types import (
     SecurityRequirement,
     SecurityScheme,
     StringList,
+    Task,
     TaskState,
+    TaskStatus,
 )
 
 from beddel.domain.executor import WorkflowExecutor
@@ -99,17 +101,47 @@ def _extract_workflow_params(
     return workflow_id, inputs
 
 
+def _create_initial_task(
+    task_id: str,
+    context_id: str,
+    message: Message | None = None,
+) -> Task:
+    """Create an initial A2A :class:`Task` with SUBMITTED status.
+
+    Per the A2A v1.0 spec and a2a-sdk ``AgentExecutor`` contract, the
+    first event enqueued for task-mode execution MUST be a ``Task`` object.
+    ``TaskStatusUpdateEvent`` events may only follow after the initial Task
+    is established in the store.
+
+    Args:
+        task_id: The task identifier.
+        context_id: The context identifier.
+        message: Optional initial message to include in task history.
+
+    Returns:
+        A :class:`Task` proto with SUBMITTED state.
+    """
+    task = Task(
+        id=task_id,
+        context_id=context_id,
+        status=TaskStatus(state=TaskState.TASK_STATE_SUBMITTED),
+    )
+    if message is not None:
+        task.history.append(message)
+    return task
+
+
 class BeddelA2AExecutor(AgentExecutor):
     """Executes Beddel workflows via the A2A task lifecycle.
 
     The executor bridges the Beddel streaming execution model to the A2A
     protocol by consuming :class:`~beddel.domain.models.BeddelEvent`
     instances from :meth:`WorkflowExecutor.execute_stream` and translating
-    them into :class:`TaskUpdater` calls that drive A2A task state
-    transitions.
+    them into task lifecycle events.
 
     Conforms to the A2A v1.0 task-event state machine:
-    - Every execution begins with ``submit()`` (SUBMITTED state)
+    - Every new execution begins by enqueuing a ``Task`` object (SUBMITTED)
+    - Subsequent updates use ``TaskUpdater`` for status/artifact events
     - Streaming uses a stable artifact ID with ``append`` / ``last_chunk``
     - Every path reaches a terminal state (COMPLETED, FAILED, CANCELED)
 
@@ -132,16 +164,25 @@ class BeddelA2AExecutor(AgentExecutor):
         Extracts ``workflow_id`` and ``inputs`` from the incoming A2A
         message, looks up the workflow in the registry, streams execution
         events, and maps each :class:`BeddelEvent` to the appropriate
-        :class:`TaskUpdater` method.
+        task lifecycle call.
 
-        The v1.0 spec requires ``submit()`` before any other update.
+        Per the A2A v1.0 spec and SDK contract, the first event enqueued
+        is always a ``Task`` object.  Subsequent updates use
+        ``TaskUpdater`` methods.
         """
         task_id = context.task_id or ""
         context_id = context.context_id or ""
-        updater = TaskUpdater(event_queue, task_id, context_id)
 
-        # v1.0 spec: Task MUST be submitted before any status/artifact update
-        await updater.submit()
+        # A2A v1.0 spec: first event MUST be a Task object (not TaskStatusUpdateEvent).
+        # The SDK's ActiveTask/EventConsumer rejects TaskStatusUpdateEvent if no Task
+        # exists yet (raises InvalidAgentResponseError).
+        initial_task = _create_initial_task(
+            task_id, context_id, message=context.message
+        )
+        await event_queue.enqueue_event(initial_task)
+
+        # After the initial Task is enqueued, use TaskUpdater for subsequent events.
+        updater = TaskUpdater(event_queue, task_id, context_id)
 
         workflow_id, inputs = _extract_workflow_params(context)
 
@@ -164,15 +205,26 @@ class BeddelA2AExecutor(AgentExecutor):
 
         # Mutable state for stable artifact ID tracking across streaming chunks
         artifact_state: dict[str, str | None] = {"id": None}
+        terminal_reached = False
 
         try:
             async for event in executor.execute_stream(workflow, inputs):
                 terminal = await self._handle_event(updater, event, artifact_state)
                 if terminal:
+                    terminal_reached = True
                     break
         except Exception as exc:  # noqa: BLE001
             logger.exception("Workflow %s failed unexpectedly", workflow_id)
             await updater.failed(message=_agent_message(str(exc)))
+            terminal_reached = True
+
+        # F2 fix: if stream exhausted without terminal event, fail the task
+        if not terminal_reached:
+            await updater.failed(
+                message=_agent_message(
+                    "Workflow stream ended without a terminal event."
+                ),
+            )
 
     async def cancel(
         self,
@@ -181,14 +233,13 @@ class BeddelA2AExecutor(AgentExecutor):
     ) -> None:
         """Cancel a running A2A task.
 
-        Creates a :class:`TaskUpdater`, submits the task, and transitions
-        it to the cancelled state.  The v1.0 spec requires task submission
-        before any state transition.
+        Per the A2A v1.0 spec, cancellation emits a CANCELED status update
+        for the existing task.  The task already exists (created during the
+        original ``execute()`` call), so no initial Task enqueue is needed.
         """
         task_id = context.task_id or ""
         context_id = context.context_id or ""
         updater = TaskUpdater(event_queue, task_id, context_id)
-        await updater.submit()
         await updater.cancel()
 
     # ------------------------------------------------------------------

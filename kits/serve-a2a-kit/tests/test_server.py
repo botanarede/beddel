@@ -4,6 +4,8 @@ Tests cover:
     - ``build_agent_card``: Agent Card generation from mock workflows.
     - ``BeddelA2AExecutor.execute``: Event mapping with mock workflow executor.
     - ``BeddelA2AExecutor.cancel``: Task cancellation.
+    - ``DefaultRequestHandlerV2`` integration: real handler validation (F4).
+    - Exact event sequence assertions (F5).
 """
 
 from __future__ import annotations
@@ -20,8 +22,10 @@ from a2a.types import (
     Message,
     Part,
     Role,
+    Task,
     TaskArtifactUpdateEvent,
     TaskState,
+    TaskStatus,
     TaskStatusUpdateEvent,
 )
 
@@ -100,7 +104,7 @@ def _make_request_context(
 
 
 # ---------------------------------------------------------------------------
-# build_agent_card tests (Task 3)
+# build_agent_card tests
 # ---------------------------------------------------------------------------
 
 
@@ -303,7 +307,7 @@ class TestBuildAgentCard:
 
 
 # ---------------------------------------------------------------------------
-# BeddelA2AExecutor tests (Task 2)
+# BeddelA2AExecutor tests — direct EventQueue validation
 # ---------------------------------------------------------------------------
 
 
@@ -319,14 +323,7 @@ def _collect_events(eq: EventQueue) -> list[Any]:
     """Drain all events from an EventQueue (non-blocking).
 
     Accesses the underlying ``asyncio.Queue`` directly via ``get_nowait()``
-    to avoid calling the async ``dequeue_event`` method.  This is the
-    standard Python pattern for synchronously draining an asyncio queue
-    and matches how the upstream a2a-sdk tests access ``event_queue.queue``.
-
-    The previous implementation called ``eq.dequeue_event(no_wait=True)``
-    **without** ``await``, which returned a coroutine object (always truthy,
-    never raises) instead of the actual event — causing an infinite loop
-    that pinned the CPU and exhausted memory.
+    to avoid calling the async ``dequeue_event`` method.
     """
     collected: list[Any] = []
     while True:
@@ -339,11 +336,11 @@ def _collect_events(eq: EventQueue) -> list[Any]:
 
 
 class TestBeddelA2AExecutor:
-    """Tests for :class:`BeddelA2AExecutor`."""
+    """Tests for :class:`BeddelA2AExecutor` — direct event queue assertions."""
 
     @pytest.mark.asyncio
     async def test_execute_happy_path(self) -> None:
-        """Full workflow lifecycle emits correct A2A events."""
+        """Full workflow lifecycle: Task → WORKING → artifacts → COMPLETED."""
         wf = _make_workflow()
         mock_executor = MagicMock()
 
@@ -382,26 +379,60 @@ class TestBeddelA2AExecutor:
 
         await executor.execute(ctx, eq)
 
-        # Verify execute_stream was called with the workflow and None inputs
         mock_executor.execute_stream.assert_called_once_with(wf, None)
 
-        # Drain events and verify lifecycle
         collected = _collect_events(eq)
-        assert len(collected) >= 4  # status updates + artifacts + completion
-        # First event must be Task (from submit())
-        assert isinstance(collected[0], TaskStatusUpdateEvent)
+
+        # F1/F5: First event MUST be a Task object with SUBMITTED state
+        assert isinstance(collected[0], Task)
+        assert collected[0].id == ctx.task_id
+        assert collected[0].context_id == ctx.context_id
         assert collected[0].status.state == TaskState.TASK_STATE_SUBMITTED
+
+        # Extract status and artifact events
+        status_events = [
+            ev for ev in collected[1:] if isinstance(ev, TaskStatusUpdateEvent)
+        ]
+        artifact_events = [
+            ev for ev in collected[1:] if isinstance(ev, TaskArtifactUpdateEvent)
+        ]
+
+        # F5: Verify exact status sequence: WORKING, WORKING, COMPLETED
+        status_states = [ev.status.state for ev in status_events]
+        assert status_states == [
+            TaskState.TASK_STATE_WORKING,  # WORKFLOW_START → start_work
+            TaskState.TASK_STATE_WORKING,  # STEP_START → update_status(WORKING)
+            TaskState.TASK_STATE_COMPLETED,  # WORKFLOW_END → complete
+        ]
+
+        # F5: Verify artifacts: TEXT_CHUNK + STEP_END + last_chunk marker
+        assert len(artifact_events) == 3
+        # TEXT_CHUNK artifact
+        assert artifact_events[0].append is False
+        # STEP_END artifact has different ID from streaming artifact
+        assert artifact_events[1].artifact.artifact_id != artifact_events[0].artifact.artifact_id
+        assert artifact_events[1].append is False
+        # last_chunk marker
+        assert artifact_events[2].last_chunk is True
+        assert artifact_events[2].artifact.artifact_id == artifact_events[0].artifact.artifact_id
+
+        # F5: No events after terminal COMPLETED
+        completed_idx = next(
+            i for i, ev in enumerate(collected)
+            if isinstance(ev, TaskStatusUpdateEvent)
+            and ev.status.state == TaskState.TASK_STATE_COMPLETED
+        )
+        assert completed_idx == len(collected) - 1
 
     @pytest.mark.asyncio
     async def test_execute_missing_workflow_id(self) -> None:
-        """Missing workflow_id in message triggers failed status."""
+        """Missing workflow_id: Task → FAILED (exactly 2 events)."""
         registry: WorkflowRegistry = {}
         executor = BeddelA2AExecutor(registry)
 
         ctx = MagicMock()
         ctx.task_id = str(uuid.uuid4())
         ctx.context_id = str(uuid.uuid4())
-        # Message with no data Part containing workflow_id — just text
         ctx.message = Message(
             role=Role.ROLE_USER,
             parts=[Part(text="just text")],
@@ -412,16 +443,16 @@ class TestBeddelA2AExecutor:
         await executor.execute(ctx, eq)
 
         collected = _collect_events(eq)
-        # Should have submit (Task) + failed status event
-        assert len(collected) >= 2
-        assert isinstance(collected[0], TaskStatusUpdateEvent)
+        # F5: Exact sequence: Task(SUBMITTED) → TaskStatusUpdateEvent(FAILED)
+        assert len(collected) == 2
+        assert isinstance(collected[0], Task)
         assert collected[0].status.state == TaskState.TASK_STATE_SUBMITTED
         assert isinstance(collected[1], TaskStatusUpdateEvent)
         assert collected[1].status.state == TaskState.TASK_STATE_FAILED
 
     @pytest.mark.asyncio
     async def test_execute_unknown_workflow(self) -> None:
-        """Unknown workflow_id triggers failed status."""
+        """Unknown workflow_id: Task → FAILED (exactly 2 events)."""
         registry: WorkflowRegistry = {}
         executor = BeddelA2AExecutor(registry)
 
@@ -431,8 +462,9 @@ class TestBeddelA2AExecutor:
         await executor.execute(ctx, eq)
 
         collected = _collect_events(eq)
-        assert len(collected) >= 2
-        assert isinstance(collected[0], TaskStatusUpdateEvent)
+        # F5: Exact sequence: Task(SUBMITTED) → TaskStatusUpdateEvent(FAILED)
+        assert len(collected) == 2
+        assert isinstance(collected[0], Task)
         assert collected[0].status.state == TaskState.TASK_STATE_SUBMITTED
         assert isinstance(collected[1], TaskStatusUpdateEvent)
         assert collected[1].status.state == TaskState.TASK_STATE_FAILED
@@ -465,12 +497,12 @@ class TestBeddelA2AExecutor:
         mock_executor.execute_stream.assert_called_once_with(wf, {"topic": "AI agents"})
 
         collected = _collect_events(eq)
-        assert isinstance(collected[0], TaskStatusUpdateEvent)
+        assert isinstance(collected[0], Task)
         assert collected[0].status.state == TaskState.TASK_STATE_SUBMITTED
 
     @pytest.mark.asyncio
     async def test_execute_error_event(self) -> None:
-        """ERROR event maps to updater.failed()."""
+        """ERROR event: Task → WORKING → FAILED (exact sequence)."""
         wf = _make_workflow()
         mock_executor = MagicMock()
 
@@ -495,14 +527,18 @@ class TestBeddelA2AExecutor:
         await executor.execute(ctx, eq)
 
         collected = _collect_events(eq)
-        # Should have submit (Task) + start_work + failed events
-        assert len(collected) >= 3
-        assert isinstance(collected[0], TaskStatusUpdateEvent)
+        # F5: Exact sequence: Task(SUBMITTED) → WORKING → FAILED
+        assert len(collected) == 3
+        assert isinstance(collected[0], Task)
         assert collected[0].status.state == TaskState.TASK_STATE_SUBMITTED
+        assert isinstance(collected[1], TaskStatusUpdateEvent)
+        assert collected[1].status.state == TaskState.TASK_STATE_WORKING
+        assert isinstance(collected[2], TaskStatusUpdateEvent)
+        assert collected[2].status.state == TaskState.TASK_STATE_FAILED
 
     @pytest.mark.asyncio
     async def test_execute_exception_in_stream(self) -> None:
-        """Exception during streaming maps to updater.failed()."""
+        """Exception during streaming: Task → WORKING → FAILED (exact)."""
         wf = _make_workflow()
         mock_executor = MagicMock()
 
@@ -525,14 +561,18 @@ class TestBeddelA2AExecutor:
         await executor.execute(ctx, eq)
 
         collected = _collect_events(eq)
-        # Should have submit (Task) + start_work + failed events
-        assert len(collected) >= 3
-        assert isinstance(collected[0], TaskStatusUpdateEvent)
+        # F5: Exact sequence: Task(SUBMITTED) → WORKING → FAILED
+        assert len(collected) == 3
+        assert isinstance(collected[0], Task)
         assert collected[0].status.state == TaskState.TASK_STATE_SUBMITTED
+        assert isinstance(collected[1], TaskStatusUpdateEvent)
+        assert collected[1].status.state == TaskState.TASK_STATE_WORKING
+        assert isinstance(collected[2], TaskStatusUpdateEvent)
+        assert collected[2].status.state == TaskState.TASK_STATE_FAILED
 
     @pytest.mark.asyncio
     async def test_cancel(self) -> None:
-        """Cancel creates a TaskUpdater and cancels the task."""
+        """Cancel emits only CANCELED (no SUBMITTED — task already exists)."""
         registry: WorkflowRegistry = {}
         executor = BeddelA2AExecutor(registry)
 
@@ -544,14 +584,14 @@ class TestBeddelA2AExecutor:
         await executor.cancel(ctx, eq)
 
         collected = _collect_events(eq)
-        assert len(collected) >= 2
+        # F3/F5: Cancel emits exactly one event: CANCELED
+        assert len(collected) == 1
         assert isinstance(collected[0], TaskStatusUpdateEvent)
-        assert collected[0].status.state == TaskState.TASK_STATE_SUBMITTED
-        assert isinstance(collected[1], TaskStatusUpdateEvent)
+        assert collected[0].status.state == TaskState.TASK_STATE_CANCELED
 
     @pytest.mark.asyncio
     async def test_streaming_stable_artifact_id(self) -> None:
-        """All TEXT_CHUNK events share one stable artifact ID."""
+        """All TEXT_CHUNK events share one stable artifact ID with correct flags."""
         wf = _make_workflow()
         mock_executor = MagicMock()
 
@@ -587,30 +627,41 @@ class TestBeddelA2AExecutor:
         await executor.execute(ctx, eq)
 
         collected = _collect_events(eq)
-        assert isinstance(collected[0], TaskStatusUpdateEvent)
+        # First event is Task
+        assert isinstance(collected[0], Task)
         assert collected[0].status.state == TaskState.TASK_STATE_SUBMITTED
 
         # Filter artifact events
         artifact_events = [
             ev for ev in collected if isinstance(ev, TaskArtifactUpdateEvent)
         ]
-        # At least 3 TEXT_CHUNK artifacts + 1 last_chunk marker = 4
-        assert len(artifact_events) >= 3
+        # F5: Exactly 3 TEXT_CHUNKs + 1 last_chunk marker = 4 artifact events
+        assert len(artifact_events) == 4
 
-        # All artifact events should share the same artifact_id
+        # All artifact events share the same artifact_id
         artifact_ids = {ev.artifact.artifact_id for ev in artifact_events}
         assert len(artifact_ids) == 1, (
             f"Expected single stable artifact ID, got {artifact_ids}"
         )
 
-        # First artifact event has append=False, subsequent have append=True
+        # F5: First has append=False, middle have append=True, last has last_chunk=True
         assert artifact_events[0].append is False
-        for ev in artifact_events[1:]:
-            assert ev.append is True
+        assert artifact_events[1].append is True
+        assert artifact_events[2].append is True
+        assert artifact_events[3].append is True
+        assert artifact_events[3].last_chunk is True
+
+        # F5: No events after terminal COMPLETED
+        completed_idx = next(
+            i for i, ev in enumerate(collected)
+            if isinstance(ev, TaskStatusUpdateEvent)
+            and ev.status.state == TaskState.TASK_STATE_COMPLETED
+        )
+        assert completed_idx == len(collected) - 1
 
     @pytest.mark.asyncio
     async def test_workflow_end_emits_last_chunk(self) -> None:
-        """WORKFLOW_END emits last_chunk=True if streaming was active."""
+        """WORKFLOW_END emits last_chunk=True marker when streaming was active."""
         wf = _make_workflow()
         mock_executor = MagicMock()
 
@@ -636,17 +687,51 @@ class TestBeddelA2AExecutor:
         await executor.execute(ctx, eq)
 
         collected = _collect_events(eq)
-        assert isinstance(collected[0], TaskStatusUpdateEvent)
+        assert isinstance(collected[0], Task)
         assert collected[0].status.state == TaskState.TASK_STATE_SUBMITTED
 
-        # Filter artifact events
         artifact_events = [
             ev for ev in collected if isinstance(ev, TaskArtifactUpdateEvent)
         ]
-        # Last artifact event should have last_chunk=True
-        assert len(artifact_events) >= 2
-        last_artifact = artifact_events[-1]
-        assert last_artifact.last_chunk is True
+        # F5: Exactly 2 artifacts: initial chunk (append=False) + final marker (last_chunk=True)
+        assert len(artifact_events) == 2
+        assert artifact_events[0].append is False
+        assert artifact_events[1].last_chunk is True
+        assert artifact_events[1].append is True
+
+        # Same artifact ID
+        assert (
+            artifact_events[0].artifact.artifact_id
+            == artifact_events[1].artifact.artifact_id
+        )
+
+    @pytest.mark.asyncio
+    async def test_workflow_end_no_streaming_no_last_chunk(self) -> None:
+        """WORKFLOW_END without prior streaming does NOT emit last_chunk artifact."""
+        wf = _make_workflow()
+        mock_executor = MagicMock()
+
+        events = [
+            BeddelEvent(event_type=EventType.WORKFLOW_START, data={}),
+            BeddelEvent(event_type=EventType.WORKFLOW_END, data={}),
+        ]
+        mock_executor.execute_stream = MagicMock(
+            return_value=_mock_execute_stream(events),
+        )
+
+        registry: WorkflowRegistry = {"wf-test": (wf, mock_executor)}
+        executor = BeddelA2AExecutor(registry)
+
+        ctx = _make_request_context(workflow_id="wf-test")
+        eq = EventQueue()
+
+        await executor.execute(ctx, eq)
+
+        collected = _collect_events(eq)
+        artifact_events = [
+            ev for ev in collected if isinstance(ev, TaskArtifactUpdateEvent)
+        ]
+        assert len(artifact_events) == 0
 
     @pytest.mark.asyncio
     async def test_no_events_after_terminal(self) -> None:
@@ -677,15 +762,404 @@ class TestBeddelA2AExecutor:
         await executor.execute(ctx, eq)
 
         collected = _collect_events(eq)
-        assert isinstance(collected[0], TaskStatusUpdateEvent)
-        assert collected[0].status.state == TaskState.TASK_STATE_SUBMITTED
-
-        # Filter status events (excluding the initial Task)
-        status_events = [
-            ev for ev in collected if isinstance(ev, TaskStatusUpdateEvent)
+        # F5: Exact sequence: Task(SUBMITTED) → WORKING → FAILED
+        assert len(collected) == 3
+        assert isinstance(collected[0], Task)
+        assert isinstance(collected[1], TaskStatusUpdateEvent)
+        assert collected[1].status.state == TaskState.TASK_STATE_WORKING
+        assert isinstance(collected[2], TaskStatusUpdateEvent)
+        assert collected[2].status.state == TaskState.TASK_STATE_FAILED
+        # No COMPLETED event from WORKFLOW_END
+        states = [
+            ev.status.state
+            for ev in collected
+            if isinstance(ev, TaskStatusUpdateEvent)
         ]
-        # Should have: start_work (WORKING) + failed (FAILED)
-        # Should NOT have: complete (COMPLETED) from WORKFLOW_END
-        states = [ev.status.state for ev in status_events]
-        assert TaskState.TASK_STATE_FAILED in states
         assert TaskState.TASK_STATE_COMPLETED not in states
+
+    @pytest.mark.asyncio
+    async def test_step_end_artifact_distinct_from_streaming(self) -> None:
+        """STEP_END artifact ID is distinct from streaming TEXT_CHUNK artifact ID."""
+        wf = _make_workflow()
+        mock_executor = MagicMock()
+
+        events = [
+            BeddelEvent(event_type=EventType.WORKFLOW_START, data={}),
+            BeddelEvent(
+                event_type=EventType.TEXT_CHUNK,
+                step_id="step-1",
+                data={"chunk": "streamed text"},
+            ),
+            BeddelEvent(
+                event_type=EventType.STEP_END,
+                step_id="step-1",
+                data={"result": "step result"},
+            ),
+            BeddelEvent(event_type=EventType.WORKFLOW_END, data={}),
+        ]
+        mock_executor.execute_stream = MagicMock(
+            return_value=_mock_execute_stream(events),
+        )
+
+        registry: WorkflowRegistry = {"wf-test": (wf, mock_executor)}
+        executor = BeddelA2AExecutor(registry)
+
+        ctx = _make_request_context(workflow_id="wf-test")
+        eq = EventQueue()
+
+        await executor.execute(ctx, eq)
+
+        collected = _collect_events(eq)
+        artifact_events = [
+            ev for ev in collected if isinstance(ev, TaskArtifactUpdateEvent)
+        ]
+
+        # TEXT_CHUNK artifact, STEP_END artifact, last_chunk marker
+        assert len(artifact_events) == 3
+
+        stream_id = artifact_events[0].artifact.artifact_id
+        step_id = artifact_events[1].artifact.artifact_id
+        marker_id = artifact_events[2].artifact.artifact_id
+
+        # STEP_END has distinct ID from streaming
+        assert step_id != stream_id
+        # last_chunk marker shares the streaming ID
+        assert marker_id == stream_id
+        # STEP_END artifact has name set to step_id
+        assert artifact_events[1].artifact.name == "step-1"
+
+    @pytest.mark.asyncio
+    async def test_empty_stream_fails_task(self) -> None:
+        """Empty stream (no events) results in FAILED terminal state (F2)."""
+        wf = _make_workflow()
+        mock_executor = MagicMock()
+
+        events: list[BeddelEvent] = []
+        mock_executor.execute_stream = MagicMock(
+            return_value=_mock_execute_stream(events),
+        )
+
+        registry: WorkflowRegistry = {"wf-test": (wf, mock_executor)}
+        executor = BeddelA2AExecutor(registry)
+
+        ctx = _make_request_context(workflow_id="wf-test")
+        eq = EventQueue()
+
+        await executor.execute(ctx, eq)
+
+        collected = _collect_events(eq)
+        # F2: Task(SUBMITTED) → FAILED (stream ended without terminal)
+        assert len(collected) == 2
+        assert isinstance(collected[0], Task)
+        assert collected[0].status.state == TaskState.TASK_STATE_SUBMITTED
+        assert isinstance(collected[1], TaskStatusUpdateEvent)
+        assert collected[1].status.state == TaskState.TASK_STATE_FAILED
+
+    @pytest.mark.asyncio
+    async def test_nonterminal_stream_exhaustion_fails_task(self) -> None:
+        """Stream with only nonterminal events results in FAILED (F2)."""
+        wf = _make_workflow()
+        mock_executor = MagicMock()
+
+        events = [
+            BeddelEvent(event_type=EventType.WORKFLOW_START, data={}),
+            BeddelEvent(
+                event_type=EventType.TEXT_CHUNK,
+                step_id="step-1",
+                data={"chunk": "partial"},
+            ),
+            # No WORKFLOW_END or ERROR — stream just ends
+        ]
+        mock_executor.execute_stream = MagicMock(
+            return_value=_mock_execute_stream(events),
+        )
+
+        registry: WorkflowRegistry = {"wf-test": (wf, mock_executor)}
+        executor = BeddelA2AExecutor(registry)
+
+        ctx = _make_request_context(workflow_id="wf-test")
+        eq = EventQueue()
+
+        await executor.execute(ctx, eq)
+
+        collected = _collect_events(eq)
+        # Last event must be FAILED
+        assert isinstance(collected[-1], TaskStatusUpdateEvent)
+        assert collected[-1].status.state == TaskState.TASK_STATE_FAILED
+
+        # Should NOT have COMPLETED
+        states = [
+            ev.status.state
+            for ev in collected
+            if isinstance(ev, TaskStatusUpdateEvent)
+        ]
+        assert TaskState.TASK_STATE_COMPLETED not in states
+
+
+# ---------------------------------------------------------------------------
+# DefaultRequestHandlerV2 integration tests (F4)
+# ---------------------------------------------------------------------------
+
+
+def _build_agent_card_for_test() -> "AgentCard":
+    """Build a minimal AgentCard for handler tests."""
+    from a2a.types import AgentCard, AgentCapabilities
+
+    return AgentCard(
+        name="Test Agent",
+        description="Test",
+        version="1.0.0",
+        capabilities=AgentCapabilities(streaming=True),
+        default_input_modes=["text/plain"],
+        default_output_modes=["text/plain"],
+    )
+
+
+def _build_send_request(
+    workflow_id: str | None = None, text_only: bool = False
+) -> "SendMessageRequest":
+    """Build a SendMessageRequest for handler tests."""
+    from google.protobuf.struct_pb2 import Value
+    from google.protobuf import json_format as pbjf
+    from a2a.types import SendMessageRequest, SendMessageConfiguration
+
+    if text_only:
+        return SendMessageRequest(
+            message=Message(
+                role=Role.ROLE_USER,
+                parts=[Part(text="no data part")],
+                message_id=str(uuid.uuid4()),
+            ),
+            configuration=SendMessageConfiguration(),
+        )
+
+    data_value = Value()
+    pbjf.ParseDict({"workflow_id": workflow_id or "wf-test"}, data_value)
+
+    return SendMessageRequest(
+        message=Message(
+            role=Role.ROLE_USER,
+            parts=[Part(data=data_value)],
+            message_id=str(uuid.uuid4()),
+        ),
+        configuration=SendMessageConfiguration(),
+    )
+
+
+class TestExecutorWithDefaultHandler:
+    """Integration tests running BeddelA2AExecutor through the real SDK handler.
+
+    These tests verify that the executor's event stream does NOT trigger
+    ``InvalidAgentResponseError`` when processed by the SDK's
+    ``DefaultRequestHandlerV2`` → ``ActiveTask`` → ``EventConsumer`` pipeline.
+
+    This addresses Sol review finding F4.
+    """
+
+    @pytest.mark.asyncio
+    async def test_send_message_happy_path_no_invalid_agent_error(self) -> None:
+        """Full workflow through DefaultRequestHandlerV2 completes without error."""
+        from a2a.server.request_handlers.default_request_handler_v2 import (
+            DefaultRequestHandlerV2,
+        )
+        from a2a.server.tasks import InMemoryTaskStore
+        from a2a.server.agent_execution.context import ServerCallContext
+
+        wf = _make_workflow()
+        mock_wf_executor = MagicMock()
+
+        events = [
+            BeddelEvent(event_type=EventType.WORKFLOW_START, data={}),
+            BeddelEvent(
+                event_type=EventType.TEXT_CHUNK,
+                step_id="step-1",
+                data={"chunk": "Hello"},
+            ),
+            BeddelEvent(event_type=EventType.WORKFLOW_END, data={}),
+        ]
+        mock_wf_executor.execute_stream = MagicMock(
+            return_value=_mock_execute_stream(events),
+        )
+
+        registry: WorkflowRegistry = {"wf-test": (wf, mock_wf_executor)}
+        executor = BeddelA2AExecutor(registry)
+        task_store = InMemoryTaskStore()
+
+        handler = DefaultRequestHandlerV2(
+            agent_executor=executor,
+            task_store=task_store,
+            agent_card=_build_agent_card_for_test(),
+        )
+
+        request = _build_send_request(workflow_id="wf-test")
+        call_context = ServerCallContext()
+
+        # This should NOT raise InvalidAgentResponseError
+        result = await handler.on_message_send(request, call_context)
+
+        # Result should be a Task in terminal state
+        assert isinstance(result, Task)
+        assert result.status.state == TaskState.TASK_STATE_COMPLETED
+
+        # Verify task is persisted in store
+        stored_task = await task_store.get(result.id, call_context)
+        assert stored_task is not None
+        assert stored_task.status.state == TaskState.TASK_STATE_COMPLETED
+
+    @pytest.mark.asyncio
+    async def test_send_message_error_path_no_invalid_agent_error(self) -> None:
+        """Error workflow through DefaultRequestHandlerV2 reaches FAILED cleanly."""
+        from a2a.server.request_handlers.default_request_handler_v2 import (
+            DefaultRequestHandlerV2,
+        )
+        from a2a.server.tasks import InMemoryTaskStore
+        from a2a.server.agent_execution.context import ServerCallContext
+
+        wf = _make_workflow()
+        mock_wf_executor = MagicMock()
+
+        events = [
+            BeddelEvent(event_type=EventType.WORKFLOW_START, data={}),
+            BeddelEvent(
+                event_type=EventType.ERROR,
+                step_id="step-1",
+                data={"error": "timeout"},
+            ),
+        ]
+        mock_wf_executor.execute_stream = MagicMock(
+            return_value=_mock_execute_stream(events),
+        )
+
+        registry: WorkflowRegistry = {"wf-test": (wf, mock_wf_executor)}
+        executor = BeddelA2AExecutor(registry)
+        task_store = InMemoryTaskStore()
+
+        handler = DefaultRequestHandlerV2(
+            agent_executor=executor,
+            task_store=task_store,
+            agent_card=_build_agent_card_for_test(),
+        )
+
+        request = _build_send_request(workflow_id="wf-test")
+        call_context = ServerCallContext()
+
+        result = await handler.on_message_send(request, call_context)
+
+        assert isinstance(result, Task)
+        assert result.status.state == TaskState.TASK_STATE_FAILED
+
+    @pytest.mark.asyncio
+    async def test_send_message_missing_workflow_no_invalid_agent_error(self) -> None:
+        """Missing workflow_id through handler reaches FAILED cleanly."""
+        from a2a.server.request_handlers.default_request_handler_v2 import (
+            DefaultRequestHandlerV2,
+        )
+        from a2a.server.tasks import InMemoryTaskStore
+        from a2a.server.agent_execution.context import ServerCallContext
+
+        registry: WorkflowRegistry = {}
+        executor = BeddelA2AExecutor(registry)
+        task_store = InMemoryTaskStore()
+
+        handler = DefaultRequestHandlerV2(
+            agent_executor=executor,
+            task_store=task_store,
+            agent_card=_build_agent_card_for_test(),
+        )
+
+        request = _build_send_request(text_only=True)
+        call_context = ServerCallContext()
+
+        result = await handler.on_message_send(request, call_context)
+
+        assert isinstance(result, Task)
+        assert result.status.state == TaskState.TASK_STATE_FAILED
+
+    @pytest.mark.asyncio
+    async def test_send_message_streaming_via_handler(self) -> None:
+        """Streaming through handler persists artifacts correctly."""
+        from a2a.server.request_handlers.default_request_handler_v2 import (
+            DefaultRequestHandlerV2,
+        )
+        from a2a.server.tasks import InMemoryTaskStore
+        from a2a.server.agent_execution.context import ServerCallContext
+
+        wf = _make_workflow()
+        mock_wf_executor = MagicMock()
+
+        events = [
+            BeddelEvent(event_type=EventType.WORKFLOW_START, data={}),
+            BeddelEvent(
+                event_type=EventType.TEXT_CHUNK,
+                step_id="step-1",
+                data={"chunk": "chunk1"},
+            ),
+            BeddelEvent(
+                event_type=EventType.TEXT_CHUNK,
+                step_id="step-1",
+                data={"chunk": "chunk2"},
+            ),
+            BeddelEvent(event_type=EventType.WORKFLOW_END, data={}),
+        ]
+        mock_wf_executor.execute_stream = MagicMock(
+            return_value=_mock_execute_stream(events),
+        )
+
+        registry: WorkflowRegistry = {"wf-test": (wf, mock_wf_executor)}
+        executor = BeddelA2AExecutor(registry)
+        task_store = InMemoryTaskStore()
+
+        handler = DefaultRequestHandlerV2(
+            agent_executor=executor,
+            task_store=task_store,
+            agent_card=_build_agent_card_for_test(),
+        )
+
+        request = _build_send_request(workflow_id="wf-test")
+        call_context = ServerCallContext()
+
+        result = await handler.on_message_send(request, call_context)
+
+        # Task should be complete
+        assert isinstance(result, Task)
+        assert result.status.state == TaskState.TASK_STATE_COMPLETED
+
+        # Verify stored task has artifacts
+        stored = await task_store.get(result.id, call_context)
+        assert stored is not None
+        assert len(stored.artifacts) >= 1
+
+    @pytest.mark.asyncio
+    async def test_empty_stream_via_handler_fails(self) -> None:
+        """Empty stream through handler reaches FAILED (F2 regression test)."""
+        from a2a.server.request_handlers.default_request_handler_v2 import (
+            DefaultRequestHandlerV2,
+        )
+        from a2a.server.tasks import InMemoryTaskStore
+        from a2a.server.agent_execution.context import ServerCallContext
+
+        wf = _make_workflow()
+        mock_wf_executor = MagicMock()
+
+        events: list[BeddelEvent] = []
+        mock_wf_executor.execute_stream = MagicMock(
+            return_value=_mock_execute_stream(events),
+        )
+
+        registry: WorkflowRegistry = {"wf-test": (wf, mock_wf_executor)}
+        executor = BeddelA2AExecutor(registry)
+        task_store = InMemoryTaskStore()
+
+        handler = DefaultRequestHandlerV2(
+            agent_executor=executor,
+            task_store=task_store,
+            agent_card=_build_agent_card_for_test(),
+        )
+
+        request = _build_send_request(workflow_id="wf-test")
+        call_context = ServerCallContext()
+
+        result = await handler.on_message_send(request, call_context)
+
+        assert isinstance(result, Task)
+        assert result.status.state == TaskState.TASK_STATE_FAILED
