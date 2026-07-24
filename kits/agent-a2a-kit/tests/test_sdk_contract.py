@@ -61,30 +61,48 @@ def test_import_create_client():
     assert callable(create_client)
 
 
-def test_create_client_accepts_agent_as_str():
-    """AC3: create_client signature accepts agent= as a string parameter.
-
-    We verify via signature inspection that agent is the first parameter
-    and accepts str type (URL form).
-    """
+def test_create_client_signature_accepts_agent_str():
+    """AC3: create_client signature declares agent parameter accepting str."""
     from a2a.client import create_client
 
     sig = inspect.signature(create_client)
     params = list(sig.parameters.keys())
 
-    # 'agent' should be a parameter
     assert "agent" in params, (
         f"create_client does not have 'agent' parameter. "
         f"Parameters: {params}"
     )
 
-    # Verify the annotation allows str
+    # Verify the annotation allows str (str | AgentCard)
     agent_param = sig.parameters["agent"]
-    annotation = agent_param.annotation
-
-    # The annotation should include str (could be str | AgentCard or similar)
-    annotation_str = str(annotation)
+    annotation_str = str(agent_param.annotation)
     assert "str" in annotation_str, (
         f"create_client 'agent' parameter does not accept str. "
         f"Annotation: {annotation_str}"
     )
+
+
+async def test_create_client_url_form_invokes_resolver():
+    """AC3: create_client(agent=<url>) triggers URL-based card resolution.
+
+    Behaviorally proves that passing a string URL to create_client causes
+    the factory to resolve the agent card via HTTP (mocked here).
+    """
+    from unittest.mock import AsyncMock, patch
+
+    from a2a.client import create_client
+
+    # Mock the ClientFactory.create_from_url to avoid real HTTP calls
+    with patch(
+        "a2a.client.client_factory.ClientFactory.create_from_url",
+        new_callable=AsyncMock,
+    ) as mock_create_from_url:
+        mock_create_from_url.return_value = AsyncMock(name="MockClient")
+
+        result = await create_client(agent="http://example.test/.well-known/agent.json")
+
+        # Proves: string URL is dispatched to create_from_url (not create)
+        mock_create_from_url.assert_called_once()
+        call_args = mock_create_from_url.call_args
+        assert call_args[0][0] == "http://example.test/.well-known/agent.json"
+        assert result is mock_create_from_url.return_value
