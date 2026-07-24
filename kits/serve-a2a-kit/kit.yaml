@@ -1,0 +1,19 @@
+name: serve-a2a-kit
+version: 0.1.0
+description: A2A protocol server — exposes Beddel workflows as A2A-compliant agents
+author: Beddel Team
+integrations:
+- name: BeddelA2AExecutor
+  module: server
+  description: Executes Beddel workflows via A2A task lifecycle
+- name: build_agent_card
+  module: server
+  description: Generates A2A Agent Card from discovered workflows
+targets:
+  python:
+    status: implemented
+    module: beddel_serve_a2a
+    dependencies:
+    - a2a-sdk[http-server]==1.1.2
+  typescript:
+    status: planned

@@ -1,4 +1,4 @@
-"""Unit tests for beddel_agent_a2a.server module (agent-a2a-kit).
+"""Unit tests for beddel_serve_a2a.server module (serve-a2a-kit).
 
 Tests cover:
     - ``build_agent_card``: Agent Card generation from mock workflows.
@@ -18,7 +18,7 @@ import pytest
 from a2a.server.events import EventQueue
 from a2a.types import Message, Part, Role
 
-from beddel_agent_a2a.server import (
+from beddel_serve_a2a.server import (
     BeddelA2AExecutor,
     WorkflowRegistry,
     build_agent_card,

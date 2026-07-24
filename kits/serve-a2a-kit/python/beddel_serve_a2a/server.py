@@ -1,6 +1,6 @@
 """A2A protocol server adapter for Beddel workflows.
 
-Part of agent-a2a-kit — the bidirectional A2A protocol kit.
+Part of serve-a2a-kit — the A2A protocol server kit.
 Migrated from core adapters/ per ADR-0012 (Kit Boundary Rule).
 
 Exposes Beddel workflows as A2A-compliant agents with Agent Card discovery
