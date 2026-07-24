@@ -132,12 +132,14 @@ class TestBuildAgentCard:
             "wf-b": (wf2, MagicMock()),
         }
 
-        card = build_agent_card(registry, host="0.0.0.0", port=9000)
+        card = build_agent_card(registry, public_base_url="http://0.0.0.0:9000")
 
         assert len(card.skills) == 2
-        # URL is now in supported_interfaces
+        # URL is now in supported_interfaces with /a2a suffix
         assert len(card.supported_interfaces) == 1
-        assert card.supported_interfaces[0].url == "http://0.0.0.0:9000"
+        assert card.supported_interfaces[0].url == "http://0.0.0.0:9000/a2a"
+        assert card.supported_interfaces[0].protocol_binding == "JSONRPC"
+        assert card.supported_interfaces[0].protocol_version == "1.0"
         ids = {s.id for s in card.skills}
         assert ids == {"wf-a", "wf-b"}
 
@@ -154,8 +156,107 @@ class TestBuildAgentCard:
         """Card has correct version and output modes."""
         card = build_agent_card({})
         assert card.version == "1.0.0"
-        assert "application/json" in card.default_input_modes
-        assert "application/json" in card.default_output_modes
+        assert "text/plain" in card.default_input_modes
+        assert "text/plain" in card.default_output_modes
+
+    def test_protocol_binding_and_version(self) -> None:
+        """Card interface has correct protocol binding and version."""
+        card = build_agent_card({})
+        iface = card.supported_interfaces[0]
+        assert iface.protocol_binding == "JSONRPC"
+        assert iface.protocol_version == "1.0"
+
+    def test_interface_url_uses_public_base_url(self) -> None:
+        """Interface URL is public_base_url + /a2a."""
+        card = build_agent_card({}, public_base_url="http://myhost:9000")
+        assert card.supported_interfaces[0].url == "http://myhost:9000/a2a"
+
+    def test_interface_url_strips_trailing_slash(self) -> None:
+        """Trailing slash in public_base_url is stripped before /a2a."""
+        card = build_agent_card({}, public_base_url="http://example.com/")
+        assert card.supported_interfaces[0].url == "http://example.com/a2a"
+
+    def test_provider_field(self) -> None:
+        """Card has provider with organization and URL."""
+        card = build_agent_card({})
+        assert card.provider is not None
+        assert card.provider.organization == "Beddel"
+        assert card.provider.url == "https://github.com/botanarede/beddel"
+
+    def test_proto_json_serialization_camel_case(self) -> None:
+        """ProtoJSON serialization uses camelCase field names."""
+        import json
+
+        from google.protobuf.json_format import MessageToJson
+
+        wf = _make_workflow(wf_id="wf-1", name="Test")
+        registry: dict[str, tuple[Workflow, Any]] = {"wf-1": (wf, MagicMock())}
+        card = build_agent_card(registry)
+
+        json_str = MessageToJson(card)
+        data = json.loads(json_str)
+
+        # Check camelCase keys
+        assert "supportedInterfaces" in data
+        iface = data["supportedInterfaces"][0]
+        assert "protocolBinding" in iface
+        assert "protocolVersion" in iface
+        assert iface["protocolBinding"] == "JSONRPC"
+        assert iface["protocolVersion"] == "1.0"
+
+    @pytest.mark.asyncio
+    async def test_a2a_card_resolver_parses_card(self) -> None:
+        """A2ACardResolver can parse the card served as JSON."""
+        import json
+        from unittest.mock import AsyncMock
+
+        import httpx
+        from a2a.client import A2ACardResolver
+        from a2a.types import AgentCard as A2AAgentCard
+        from google.protobuf.json_format import MessageToJson, ParseDict
+
+        wf = _make_workflow(wf_id="wf-resolver", name="Resolver Test")
+        registry: dict[str, tuple[Workflow, Any]] = {"wf-resolver": (wf, MagicMock())}
+        card = build_agent_card(registry, public_base_url="http://localhost:8000")
+
+        # Serialize to ProtoJSON (camelCase) then parse back as dict
+        card_json_str = MessageToJson(card)
+        card_dict = json.loads(card_json_str)
+
+        # Mock httpx response with .json() returning the dict
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = card_dict
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = MagicMock(spec=httpx.AsyncClient)
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        resolver = A2ACardResolver(
+            httpx_client=mock_client,
+            base_url="http://localhost:8000",
+        )
+        parsed = await resolver.get_agent_card()
+
+        assert parsed.name == "Beddel Agent"
+        assert parsed.supported_interfaces[0].protocol_binding == "JSONRPC"
+        assert parsed.supported_interfaces[0].url == "http://localhost:8000/a2a"
+        assert len(parsed.skills) == 1
+        assert parsed.skills[0].id == "wf-resolver"
+
+    def test_no_secrets_in_card(self) -> None:
+        """Card JSON does not contain common secret patterns."""
+        from google.protobuf.json_format import MessageToJson
+
+        wf = _make_workflow(wf_id="wf-sec", name="Secure")
+        registry: dict[str, tuple[Workflow, Any]] = {"wf-sec": (wf, MagicMock())}
+        card = build_agent_card(registry)
+
+        json_str = MessageToJson(card)
+        json_lower = json_str.lower()
+
+        for pattern in ["token", "secret", "password", "api_key", "apikey"]:
+            assert pattern not in json_lower, f"Found '{pattern}' in card JSON"
 
 
 # ---------------------------------------------------------------------------
