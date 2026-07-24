@@ -232,7 +232,9 @@ class TestExecute:
         mock_httpx.aclose = AsyncMock()
 
         with (
-            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx
+            ),
             patch("beddel_agent_a2a.adapter.create_client", return_value=mock_client),
         ):
             adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
@@ -255,7 +257,9 @@ class TestExecute:
         mock_httpx.aclose = AsyncMock()
 
         with (
-            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx
+            ),
             patch("beddel_agent_a2a.adapter.create_client", return_value=mock_client),
         ):
             adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
@@ -275,7 +279,9 @@ class TestExecute:
         mock_httpx.aclose = AsyncMock()
 
         with (
-            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx
+            ),
             patch("beddel_agent_a2a.adapter.create_client", return_value=mock_client),
         ):
             adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
@@ -299,7 +305,9 @@ class TestExecute:
         mock_httpx.aclose = AsyncMock()
 
         with (
-            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx
+            ),
             patch("beddel_agent_a2a.adapter.create_client", return_value=mock_client),
         ):
             adapter = A2AAgentAdapter(agent_url="http://agent.example.com", timeout=5.0)
@@ -324,7 +332,9 @@ class TestExecute:
         mock_httpx.aclose = AsyncMock()
 
         with (
-            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx
+            ),
             patch("beddel_agent_a2a.adapter.create_client", return_value=mock_client),
         ):
             adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
@@ -348,7 +358,9 @@ class TestExecute:
         mock_httpx.aclose = AsyncMock()
 
         with (
-            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx
+            ),
             patch("beddel_agent_a2a.adapter.create_client", return_value=mock_client),
         ):
             adapter = A2AAgentAdapter(agent_url="http://agent.example.com", timeout=5.0)
@@ -372,7 +384,9 @@ class TestExecute:
         mock_httpx.aclose = AsyncMock()
 
         with (
-            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx
+            ),
             patch("beddel_agent_a2a.adapter.create_client", return_value=mock_client),
         ):
             adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
@@ -387,7 +401,9 @@ class TestExecute:
         mock_httpx.aclose = AsyncMock()
 
         with (
-            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx
+            ),
             patch(
                 "beddel_agent_a2a.adapter.create_client",
                 side_effect=Exception("card not found"),
@@ -421,7 +437,9 @@ class TestStream:
         mock_httpx.aclose = AsyncMock()
 
         with (
-            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx
+            ),
             patch("beddel_agent_a2a.adapter.create_client", return_value=mock_client),
             patch("beddel_agent_a2a.adapter.TaskState") as mock_task_state,
         ):
@@ -445,7 +463,9 @@ class TestStream:
         mock_httpx.aclose = AsyncMock()
 
         with (
-            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx
+            ),
             patch("beddel_agent_a2a.adapter.create_client", return_value=mock_client),
         ):
             adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
@@ -466,7 +486,9 @@ class TestStream:
         mock_httpx.aclose = AsyncMock()
 
         with (
-            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx
+            ),
             patch("beddel_agent_a2a.adapter.create_client", return_value=mock_client),
         ):
             adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
@@ -492,7 +514,9 @@ class TestStream:
         mock_httpx.aclose = AsyncMock()
 
         with (
-            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx
+            ),
             patch("beddel_agent_a2a.adapter.create_client", return_value=mock_client),
         ):
             adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
@@ -518,7 +542,9 @@ class TestStream:
         mock_httpx.aclose = AsyncMock()
 
         with (
-            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx
+            ),
             patch("beddel_agent_a2a.adapter.create_client", return_value=mock_client),
         ):
             adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
@@ -548,7 +574,9 @@ class TestCreateClientKwarg:
         mock_httpx.aclose = AsyncMock()
 
         with (
-            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx
+            ),
             patch(
                 "beddel_agent_a2a.adapter.create_client", return_value=mock_client
             ) as mock_create,
@@ -572,7 +600,9 @@ class TestCreateClientKwarg:
         mock_httpx.aclose = AsyncMock()
 
         with (
-            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx
+            ),
             patch(
                 "beddel_agent_a2a.adapter.create_client", return_value=mock_client
             ) as mock_create,
@@ -606,7 +636,9 @@ class TestResourceCleanup:
         mock_httpx.aclose = AsyncMock()
 
         with (
-            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx
+            ),
             patch("beddel_agent_a2a.adapter.create_client", return_value=mock_client),
         ):
             adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
@@ -631,7 +663,9 @@ class TestResourceCleanup:
         mock_httpx.aclose = AsyncMock()
 
         with (
-            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx
+            ),
             patch("beddel_agent_a2a.adapter.create_client", return_value=mock_client),
         ):
             adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
@@ -647,7 +681,9 @@ class TestResourceCleanup:
         mock_httpx.aclose = AsyncMock()
 
         with (
-            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx
+            ),
             patch(
                 "beddel_agent_a2a.adapter.create_client",
                 side_effect=Exception("card not found"),
@@ -670,7 +706,9 @@ class TestResourceCleanup:
         mock_httpx.aclose = AsyncMock()
 
         with (
-            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx
+            ),
             patch("beddel_agent_a2a.adapter.create_client", return_value=mock_client),
         ):
             adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
@@ -696,7 +734,9 @@ class TestResourceCleanup:
         mock_httpx.aclose = AsyncMock()
 
         with (
-            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx
+            ),
             patch("beddel_agent_a2a.adapter.create_client", return_value=mock_client),
         ):
             adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
@@ -723,7 +763,9 @@ class TestResourceCleanup:
         mock_httpx.aclose = AsyncMock()
 
         with (
-            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx
+            ),
             patch("beddel_agent_a2a.adapter.create_client", return_value=mock_client),
         ):
             adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
@@ -754,7 +796,9 @@ class TestErrorMapping:
         mock_httpx.aclose = AsyncMock()
 
         with (
-            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx
+            ),
             patch(
                 "beddel_agent_a2a.adapter.create_client",
                 side_effect=AgentCardResolutionError("not found", status_code=404),
@@ -774,7 +818,9 @@ class TestErrorMapping:
         mock_httpx.aclose = AsyncMock()
 
         with (
-            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx
+            ),
             patch(
                 "beddel_agent_a2a.adapter.create_client",
                 side_effect=AgentCardResolutionError("unauthorized", status_code=401),
@@ -794,7 +840,9 @@ class TestErrorMapping:
         mock_httpx.aclose = AsyncMock()
 
         with (
-            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx
+            ),
             patch(
                 "beddel_agent_a2a.adapter.create_client",
                 side_effect=AgentCardResolutionError("forbidden", status_code=403),
@@ -825,7 +873,9 @@ class TestErrorMapping:
         mock_httpx.aclose = AsyncMock()
 
         with (
-            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx
+            ),
             patch("beddel_agent_a2a.adapter.create_client", return_value=mock_client),
         ):
             adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
@@ -853,7 +903,9 @@ class TestErrorMapping:
         mock_httpx.aclose = AsyncMock()
 
         with (
-            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx
+            ),
             patch("beddel_agent_a2a.adapter.create_client", return_value=mock_client),
         ):
             adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
@@ -881,7 +933,9 @@ class TestErrorMapping:
         mock_httpx.aclose = AsyncMock()
 
         with (
-            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx
+            ),
             patch("beddel_agent_a2a.adapter.create_client", return_value=mock_client),
         ):
             adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
@@ -898,7 +952,9 @@ class TestErrorMapping:
         mock_httpx.aclose = AsyncMock()
 
         with (
-            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx
+            ),
             patch(
                 "beddel_agent_a2a.adapter.create_client",
                 side_effect=AgentCardResolutionError("not found", status_code=404),
@@ -919,7 +975,9 @@ class TestErrorMapping:
         mock_httpx.aclose = AsyncMock()
 
         with (
-            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx
+            ),
             patch(
                 "beddel_agent_a2a.adapter.create_client",
                 side_effect=AgentCardResolutionError("unauthorized", status_code=401),
@@ -957,7 +1015,9 @@ class TestDataPartMode:
         mock_httpx.aclose = AsyncMock()
 
         with (
-            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx
+            ),
             patch(
                 "beddel_agent_a2a.adapter.create_client",
                 side_effect=_capture_create_client,
@@ -1001,7 +1061,9 @@ class TestDataPartMode:
         mock_httpx.aclose = AsyncMock()
 
         with (
-            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx
+            ),
             patch("beddel_agent_a2a.adapter.create_client", return_value=mock_client),
         ):
             adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
@@ -1029,7 +1091,9 @@ class TestDataPartMode:
         mock_httpx.aclose = AsyncMock()
 
         with (
-            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx
+            ),
             patch("beddel_agent_a2a.adapter.create_client", return_value=mock_client),
         ):
             adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
@@ -1062,7 +1126,9 @@ class TestDataPartMode:
         mock_httpx.aclose = AsyncMock()
 
         with (
-            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx
+            ),
             patch("beddel_agent_a2a.adapter.create_client", return_value=mock_client),
         ):
             adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
@@ -1095,7 +1161,9 @@ class TestDataPartMode:
         mock_httpx.aclose = AsyncMock()
 
         with (
-            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx
+            ),
             patch("beddel_agent_a2a.adapter.create_client", return_value=mock_client),
         ):
             adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
@@ -1127,7 +1195,9 @@ class TestDataPartMode:
         mock_httpx.aclose = AsyncMock()
 
         with (
-            patch("beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx),
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient", return_value=mock_httpx
+            ),
             patch("beddel_agent_a2a.adapter.create_client", return_value=mock_client),
         ):
             adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
@@ -1159,3 +1229,293 @@ class TestProtocolConformance:
         """A2AAgentAdapter satisfies IAgentAdapter structurally."""
         adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
         assert isinstance(adapter, IAgentAdapter)
+
+
+# ---------------------------------------------------------------------------
+# Sol K1A.2 review fix — additional tests
+# ---------------------------------------------------------------------------
+
+
+class TestSolReviewFixes:
+    """Tests added per Sol K1A.2 code review findings."""
+
+    # --- F1: SDK-wrapped auth (A2AClientError with HTTPStatusError cause) ---
+
+    async def test_execute_sdk_wrapped_401_maps_to_auth_error(self) -> None:
+        """A2AClientError wrapping HTTPStatusError 401 → BEDDEL-AGENT-723."""
+        from a2a.client.errors import A2AClientError
+
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 401
+        http_exc = httpx.HTTPStatusError(
+            "401 Unauthorized",
+            request=MagicMock(),
+            response=mock_response,
+        )
+        sdk_exc = A2AClientError("HTTP Error 401 Unauthorized")
+        sdk_exc.__cause__ = http_exc
+
+        async def _raise_sdk_wrapped(*args: Any, **kwargs: Any) -> Any:
+            raise sdk_exc
+            yield  # noqa: unreachable
+
+        mock_client = AsyncMock()
+        mock_client.send_message = _raise_sdk_wrapped
+        mock_client.close = AsyncMock()
+
+        mock_httpx = AsyncMock()
+        mock_httpx.aclose = AsyncMock()
+
+        with (
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient",
+                return_value=mock_httpx,
+            ),
+            patch(
+                "beddel_agent_a2a.adapter.create_client",
+                return_value=mock_client,
+            ),
+        ):
+            adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
+            with pytest.raises(AgentError) as exc_info:
+                await adapter.execute("test")
+
+        assert exc_info.value.code == A2A_AUTH_FAILED
+        assert exc_info.value.details["status_code"] == 401
+
+    async def test_stream_sdk_wrapped_403_maps_to_auth_error(self) -> None:
+        """A2AClientError wrapping HTTPStatusError 403 → BEDDEL-AGENT-723 in stream."""
+        from a2a.client.errors import A2AClientError
+
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 403
+        http_exc = httpx.HTTPStatusError(
+            "403 Forbidden",
+            request=MagicMock(),
+            response=mock_response,
+        )
+        sdk_exc = A2AClientError("HTTP Error 403 Forbidden")
+        sdk_exc.__cause__ = http_exc
+
+        async def _raise_sdk_wrapped(*args: Any, **kwargs: Any) -> Any:
+            raise sdk_exc
+            yield  # noqa: unreachable
+
+        mock_client = AsyncMock()
+        mock_client.send_message = _raise_sdk_wrapped
+        mock_client.close = AsyncMock()
+
+        mock_httpx = AsyncMock()
+        mock_httpx.aclose = AsyncMock()
+
+        with (
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient",
+                return_value=mock_httpx,
+            ),
+            patch(
+                "beddel_agent_a2a.adapter.create_client",
+                return_value=mock_client,
+            ),
+        ):
+            adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
+            with pytest.raises(AgentError) as exc_info:
+                async for _ in adapter.stream("test"):
+                    pass
+
+        assert exc_info.value.code == A2A_AUTH_FAILED
+        assert exc_info.value.details["status_code"] == 403
+
+    # --- F2: Cancellation during create_client still closes httpx ---
+
+    async def test_execute_cancellation_during_discovery_closes_httpx(self) -> None:
+        """CancelledError during create_client still closes httpx_client."""
+        import asyncio
+
+        mock_httpx = AsyncMock()
+        mock_httpx.aclose = AsyncMock()
+
+        with (
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient",
+                return_value=mock_httpx,
+            ),
+            patch(
+                "beddel_agent_a2a.adapter.create_client",
+                side_effect=asyncio.CancelledError(),
+            ),
+        ):
+            adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
+            with pytest.raises(asyncio.CancelledError):
+                await adapter.execute("test")
+
+        mock_httpx.aclose.assert_awaited_once()
+
+    async def test_stream_cancellation_during_discovery_closes_httpx(self) -> None:
+        """CancelledError during create_client still closes httpx_client in stream."""
+        import asyncio
+
+        mock_httpx = AsyncMock()
+        mock_httpx.aclose = AsyncMock()
+
+        with (
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient",
+                return_value=mock_httpx,
+            ),
+            patch(
+                "beddel_agent_a2a.adapter.create_client",
+                side_effect=asyncio.CancelledError(),
+            ),
+        ):
+            adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
+            with pytest.raises(asyncio.CancelledError):
+                async for _ in adapter.stream("test"):
+                    pass
+
+        mock_httpx.aclose.assert_awaited_once()
+
+    # --- F4: client.close() failure still runs httpx_client.aclose() ---
+
+    async def test_execute_client_close_failure_still_closes_httpx(self) -> None:
+        """If client.close() raises, httpx_client.aclose() is still called."""
+        mock_responses = [_mock_stream_response_task(state=3, artifact_text="OK")]
+        mock_client = AsyncMock()
+        mock_client.send_message = lambda req, **kw: _async_iter(mock_responses)
+        mock_client.close = AsyncMock(side_effect=RuntimeError("close failed"))
+
+        mock_httpx = AsyncMock()
+        mock_httpx.aclose = AsyncMock()
+
+        with (
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient",
+                return_value=mock_httpx,
+            ),
+            patch(
+                "beddel_agent_a2a.adapter.create_client",
+                return_value=mock_client,
+            ),
+        ):
+            adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
+            # Should not raise — close failure is logged, not propagated
+            result = await adapter.execute("test")
+
+        assert result.output == "OK"
+        mock_httpx.aclose.assert_awaited_once()
+
+    async def test_stream_client_close_failure_still_closes_httpx(self) -> None:
+        """If client.close() raises in stream, httpx_client.aclose() is still called."""
+        mock_responses = [_mock_stream_response_task(state=3, artifact_text="OK")]
+        mock_client = AsyncMock()
+        mock_client.send_message = lambda req, **kw: _async_iter(mock_responses)
+        mock_client.close = AsyncMock(side_effect=RuntimeError("close failed"))
+
+        mock_httpx = AsyncMock()
+        mock_httpx.aclose = AsyncMock()
+
+        with (
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient",
+                return_value=mock_httpx,
+            ),
+            patch(
+                "beddel_agent_a2a.adapter.create_client",
+                return_value=mock_client,
+            ),
+        ):
+            adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
+            events = []
+            async for ev in adapter.stream("test"):
+                events.append(ev)
+
+        assert len(events) > 0
+        mock_httpx.aclose.assert_awaited_once()
+
+    # --- F3: Nested/list/null DataPart inputs preserved ---
+
+    async def test_datapart_nested_dict_preserved(self) -> None:
+        """DataPart mode preserves nested dicts via ParseDict."""
+        from google.protobuf.json_format import MessageToDict
+
+        mock_responses = [_mock_stream_response_task(state=3, artifact_text="OK")]
+        mock_client = AsyncMock()
+        mock_client.close = AsyncMock()
+
+        mock_httpx = AsyncMock()
+        mock_httpx.aclose = AsyncMock()
+
+        with (
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient",
+                return_value=mock_httpx,
+            ),
+            patch(
+                "beddel_agent_a2a.adapter.create_client",
+                return_value=mock_client,
+            ),
+        ):
+            adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
+            requests_seen: list[Any] = []
+
+            def _capture_send(req: Any, **kw: Any) -> Any:
+                requests_seen.append(req)
+                return _async_iter(mock_responses)
+
+            mock_client.send_message = _capture_send
+            await adapter.execute(
+                "test",
+                workflow_id="nested-wf",
+                inputs={
+                    "config": {"nested_key": "nested_val"},
+                    "tags": ["a", "b"],
+                    "empty": None,
+                },
+            )
+
+        req = requests_seen[0]
+        part = req.message.parts[0]
+        data = MessageToDict(part.data)
+        assert data["workflow_id"] == "nested-wf"
+        assert data["inputs"]["config"] == {"nested_key": "nested_val"}
+        assert data["inputs"]["tags"] == ["a", "b"]
+        assert data["inputs"]["empty"] is None
+
+    async def test_datapart_empty_inputs_includes_inputs_key(self) -> None:
+        """DataPart mode with empty inputs dict still includes 'inputs' key."""
+        from google.protobuf.json_format import MessageToDict
+
+        mock_responses = [_mock_stream_response_task(state=3, artifact_text="OK")]
+        mock_client = AsyncMock()
+        mock_client.close = AsyncMock()
+
+        mock_httpx = AsyncMock()
+        mock_httpx.aclose = AsyncMock()
+
+        with (
+            patch(
+                "beddel_agent_a2a.adapter.httpx.AsyncClient",
+                return_value=mock_httpx,
+            ),
+            patch(
+                "beddel_agent_a2a.adapter.create_client",
+                return_value=mock_client,
+            ),
+        ):
+            adapter = A2AAgentAdapter(agent_url="http://agent.example.com")
+            requests_seen: list[Any] = []
+
+            def _capture_send(req: Any, **kw: Any) -> Any:
+                requests_seen.append(req)
+                return _async_iter(mock_responses)
+
+            mock_client.send_message = _capture_send
+            await adapter.execute("test", workflow_id="empty-wf", inputs={})
+
+        req = requests_seen[0]
+        part = req.message.parts[0]
+        data = MessageToDict(part.data)
+        assert data["workflow_id"] == "empty-wf"
+        # Empty inputs should still be present as empty dict
+        assert "inputs" in data
+        assert data["inputs"] == {}

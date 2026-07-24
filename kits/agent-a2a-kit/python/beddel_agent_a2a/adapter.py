@@ -20,7 +20,7 @@ from typing import Any
 from uuid import uuid4
 
 import httpx
-from a2a.client import A2ACardResolver, ClientConfig, create_client
+from a2a.client import ClientConfig, create_client
 from a2a.client.errors import (
     A2AClientError,
     A2AClientTimeoutError,
@@ -54,6 +54,24 @@ A2A_TIMEOUT: str = "BEDDEL-AGENT-722"
 
 A2A_AUTH_FAILED: str = "BEDDEL-AGENT-723"
 """A2A authentication failed."""
+
+
+def _extract_http_status_from_cause(exc: BaseException) -> int | None:
+    """Walk the exception __cause__ chain looking for httpx.HTTPStatusError.
+
+    The a2a-sdk wraps httpx.HTTPStatusError into A2AClientError via its
+    handle_http_exceptions() context manager. This helper recovers the
+    original HTTP status code from the chained cause.
+
+    Returns:
+        The HTTP status code if found, else ``None``.
+    """
+    cause: BaseException | None = exc.__cause__
+    while cause is not None:
+        if isinstance(cause, httpx.HTTPStatusError):
+            return cause.response.status_code
+        cause = cause.__cause__
+    return None
 
 
 class A2AAgentAdapter:
@@ -123,22 +141,16 @@ class A2AAgentAdapter:
             A :class:`SendMessageRequest` proto message.
         """
         if workflow_id is not None:
+            from google.protobuf.json_format import ParseDict
             from google.protobuf.struct_pb2 import Value
 
-            value = Value()
-            struct = value.struct_value
-            struct.fields["workflow_id"].string_value = workflow_id
-            if inputs:
-                inputs_struct = struct.fields["inputs"].struct_value
-                for k, v in inputs.items():
-                    if isinstance(v, bool):
-                        inputs_struct.fields[k].bool_value = v
-                    elif isinstance(v, str):
-                        inputs_struct.fields[k].string_value = v
-                    elif isinstance(v, (int, float)):
-                        inputs_struct.fields[k].number_value = float(v)
-                    else:
-                        inputs_struct.fields[k].string_value = str(v)
+            # Build the full payload as a plain dict and let ParseDict
+            # handle recursive conversion (nested dicts, lists, nulls).
+            payload: dict[str, Any] = {
+                "workflow_id": workflow_id,
+                "inputs": inputs if inputs is not None else {},
+            }
+            value = ParseDict(payload, Value())
             part = Part()
             part.data.CopyFrom(value)
         else:
@@ -226,188 +238,203 @@ class A2AAgentAdapter:
             timeout=self._timeout,
         )
         try:
-            config = ClientConfig(
-                httpx_client=httpx_client,
-                streaming=False,
-            )
-            client = await create_client(
-                agent=self._agent_url,
-                client_config=config,
-            )
-        except AgentCardResolutionError as exc:
-            await httpx_client.aclose()
-            if getattr(exc, "status_code", None) in (401, 403):
+            try:
+                config = ClientConfig(
+                    httpx_client=httpx_client,
+                    streaming=False,
+                )
+                client = await create_client(
+                    agent=self._agent_url,
+                    client_config=config,
+                )
+            except AgentCardResolutionError as exc:
+                if getattr(exc, "status_code", None) in (401, 403):
+                    raise AgentError(
+                        code=A2A_AUTH_FAILED,
+                        message="A2A authentication failed during discovery",
+                        details={
+                            "error": str(exc),
+                            "url": self._agent_url,
+                            "status_code": exc.status_code,
+                        },
+                    ) from exc
                 raise AgentError(
-                    code=A2A_AUTH_FAILED,
-                    message="A2A authentication failed during discovery",
-                    details={
-                        "error": str(exc),
-                        "url": self._agent_url,
-                        "status_code": exc.status_code,
-                    },
+                    code=A2A_DISCOVERY_FAILED,
+                    message="A2A agent card resolution failed",
+                    details={"error": str(exc), "url": self._agent_url},
                 ) from exc
-            raise AgentError(
-                code=A2A_DISCOVERY_FAILED,
-                message="A2A agent card resolution failed",
-                details={"error": str(exc), "url": self._agent_url},
-            ) from exc
-        except A2AClientTimeoutError as exc:
-            await httpx_client.aclose()
-            raise AgentError(
-                code=A2A_TIMEOUT,
-                message=f"A2A client creation timed out after {self._timeout}s",
-                details={"timeout": self._timeout, "url": self._agent_url},
-            ) from exc
-        except A2AClientError as exc:
-            await httpx_client.aclose()
-            raise AgentError(
-                code=A2A_TASK_FAILED,
-                message="A2A client creation failed",
-                details={"error": str(exc), "url": self._agent_url},
-            ) from exc
-        except httpx.TimeoutException as exc:
-            await httpx_client.aclose()
-            raise AgentError(
-                code=A2A_TIMEOUT,
-                message=f"A2A client creation timed out after {self._timeout}s",
-                details={"timeout": self._timeout, "url": self._agent_url},
-            ) from exc
-        except httpx.HTTPStatusError as exc:
-            await httpx_client.aclose()
-            if exc.response.status_code in (401, 403):
+            except A2AClientTimeoutError as exc:
                 raise AgentError(
-                    code=A2A_AUTH_FAILED,
-                    message="A2A authentication failed",
-                    details={
-                        "error": str(exc),
-                        "url": self._agent_url,
-                        "status_code": exc.response.status_code,
-                    },
+                    code=A2A_TIMEOUT,
+                    message=f"A2A client creation timed out after {self._timeout}s",
+                    details={"timeout": self._timeout, "url": self._agent_url},
                 ) from exc
-            raise AgentError(
-                code=A2A_TASK_FAILED,
-                message="A2A client creation failed",
-                details={"error": str(exc), "url": self._agent_url},
-            ) from exc
-        except httpx.HTTPError as exc:
-            await httpx_client.aclose()
-            raise AgentError(
-                code=A2A_TASK_FAILED,
-                message="A2A client creation failed",
-                details={"error": str(exc), "url": self._agent_url},
-            ) from exc
-        except Exception as exc:
-            await httpx_client.aclose()
-            raise AgentError(
-                code=A2A_TASK_FAILED,
-                message="A2A client creation failed",
-                details={"error": str(exc), "url": self._agent_url},
-            ) from exc
+            except A2AClientError as exc:
+                raise AgentError(
+                    code=A2A_TASK_FAILED,
+                    message="A2A client creation failed",
+                    details={"error": str(exc), "url": self._agent_url},
+                ) from exc
+            except httpx.TimeoutException as exc:
+                raise AgentError(
+                    code=A2A_TIMEOUT,
+                    message=f"A2A client creation timed out after {self._timeout}s",
+                    details={"timeout": self._timeout, "url": self._agent_url},
+                ) from exc
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code in (401, 403):
+                    raise AgentError(
+                        code=A2A_AUTH_FAILED,
+                        message="A2A authentication failed",
+                        details={
+                            "error": str(exc),
+                            "url": self._agent_url,
+                            "status_code": exc.response.status_code,
+                        },
+                    ) from exc
+                raise AgentError(
+                    code=A2A_TASK_FAILED,
+                    message="A2A client creation failed",
+                    details={"error": str(exc), "url": self._agent_url},
+                ) from exc
+            except httpx.HTTPError as exc:
+                raise AgentError(
+                    code=A2A_TASK_FAILED,
+                    message="A2A client creation failed",
+                    details={"error": str(exc), "url": self._agent_url},
+                ) from exc
+            except Exception as exc:
+                raise AgentError(
+                    code=A2A_TASK_FAILED,
+                    message="A2A client creation failed",
+                    details={"error": str(exc), "url": self._agent_url},
+                ) from exc
 
-        try:
             # send_message returns an AsyncIterator[StreamResponse]
             # Collect all responses
             output_parts: list[str] = []
             task_state = TaskState.TASK_STATE_UNSPECIFIED
             events: list[dict[str, Any]] = []
 
-            async for response in client.send_message(request):
-                # StreamResponse has oneof payload: task, message, status_update, artifact_update
-                if response.HasField("task"):
-                    task = response.task
-                    task_state = task.status.state
-                    for artifact in task.artifacts:
+            try:
+                async for response in client.send_message(request):
+                    # StreamResponse has oneof payload: task, message, status_update, artifact_update
+                    if response.HasField("task"):
+                        task = response.task
+                        task_state = task.status.state
+                        for artifact in task.artifacts:
+                            for part in artifact.parts:
+                                if part.text:
+                                    output_parts.append(part.text)
+                        # Collect history as events
+                        for msg in task.history:
+                            events.append(
+                                {
+                                    "role": "user"
+                                    if msg.role == Role.ROLE_USER
+                                    else "agent",
+                                    "text": self._extract_text_from_parts(msg.parts),
+                                }
+                            )
+
+                    elif response.HasField("message"):
+                        msg = response.message
+                        text = self._extract_text_from_parts(msg.parts)
+                        if text:
+                            output_parts.append(text)
+                        # If message arrives, consider it completed
+                        task_state = TaskState.TASK_STATE_COMPLETED
+
+                    elif response.HasField("status_update"):
+                        status_update = response.status_update
+                        task_state = status_update.status.state
+
+                    elif response.HasField("artifact_update"):
+                        artifact = response.artifact_update.artifact
                         for part in artifact.parts:
                             if part.text:
                                 output_parts.append(part.text)
-                    # Collect history as events
-                    for msg in task.history:
-                        events.append(
-                            {
-                                "role": "user"
-                                if msg.role == Role.ROLE_USER
-                                else "agent",
-                                "text": self._extract_text_from_parts(msg.parts),
-                            }
-                        )
 
-                elif response.HasField("message"):
-                    msg = response.message
-                    text = self._extract_text_from_parts(msg.parts)
-                    if text:
-                        output_parts.append(text)
-                    # If message arrives, consider it completed
-                    task_state = TaskState.TASK_STATE_COMPLETED
-
-                elif response.HasField("status_update"):
-                    status_update = response.status_update
-                    task_state = status_update.status.state
-
-                elif response.HasField("artifact_update"):
-                    artifact = response.artifact_update.artifact
-                    for part in artifact.parts:
-                        if part.text:
-                            output_parts.append(part.text)
-
-        except AgentCardResolutionError as exc:
-            if getattr(exc, "status_code", None) in (401, 403):
+            except AgentCardResolutionError as exc:
+                if getattr(exc, "status_code", None) in (401, 403):
+                    raise AgentError(
+                        code=A2A_AUTH_FAILED,
+                        message="A2A authentication failed",
+                        details={
+                            "error": str(exc),
+                            "url": self._agent_url,
+                            "status_code": exc.status_code,
+                        },
+                    ) from exc
                 raise AgentError(
-                    code=A2A_AUTH_FAILED,
-                    message="A2A authentication failed",
-                    details={
-                        "error": str(exc),
-                        "url": self._agent_url,
-                        "status_code": exc.status_code,
-                    },
+                    code=A2A_DISCOVERY_FAILED,
+                    message="A2A agent card resolution failed",
+                    details={"error": str(exc), "url": self._agent_url},
                 ) from exc
-            raise AgentError(
-                code=A2A_DISCOVERY_FAILED,
-                message="A2A agent card resolution failed",
-                details={"error": str(exc), "url": self._agent_url},
-            ) from exc
-        except A2AClientTimeoutError as exc:
-            raise AgentError(
-                code=A2A_TIMEOUT,
-                message=f"A2A request timed out after {self._timeout}s",
-                details={"timeout": self._timeout, "url": self._agent_url},
-            ) from exc
-        except A2AClientError as exc:
-            raise AgentError(
-                code=A2A_TASK_FAILED,
-                message=f"A2A client error: {exc}",
-                details={"error": str(exc), "url": self._agent_url},
-            ) from exc
-        except httpx.TimeoutException as exc:
-            raise AgentError(
-                code=A2A_TIMEOUT,
-                message=f"A2A request timed out after {self._timeout}s",
-                details={"timeout": self._timeout, "url": self._agent_url},
-            ) from exc
-        except httpx.HTTPStatusError as exc:
-            if exc.response.status_code in (401, 403):
+            except A2AClientTimeoutError as exc:
                 raise AgentError(
-                    code=A2A_AUTH_FAILED,
-                    message="A2A authentication failed",
-                    details={
-                        "error": str(exc),
-                        "url": self._agent_url,
-                        "status_code": exc.response.status_code,
-                    },
+                    code=A2A_TIMEOUT,
+                    message=f"A2A request timed out after {self._timeout}s",
+                    details={"timeout": self._timeout, "url": self._agent_url},
                 ) from exc
-            raise AgentError(
-                code=A2A_TASK_FAILED,
-                message="A2A connection failed",
-                details={"error": str(exc), "url": self._agent_url},
-            ) from exc
-        except httpx.HTTPError as exc:
-            raise AgentError(
-                code=A2A_TASK_FAILED,
-                message="A2A connection failed",
-                details={"error": str(exc), "url": self._agent_url},
-            ) from exc
+            except A2AClientError as exc:
+                # SDK wraps httpx.HTTPStatusError — inspect cause chain
+                status = _extract_http_status_from_cause(exc)
+                if status in (401, 403):
+                    raise AgentError(
+                        code=A2A_AUTH_FAILED,
+                        message="A2A authentication failed",
+                        details={
+                            "error": str(exc),
+                            "url": self._agent_url,
+                            "status_code": status,
+                        },
+                    ) from exc
+                raise AgentError(
+                    code=A2A_TASK_FAILED,
+                    message=f"A2A client error: {exc}",
+                    details={"error": str(exc), "url": self._agent_url},
+                ) from exc
+            except httpx.TimeoutException as exc:
+                raise AgentError(
+                    code=A2A_TIMEOUT,
+                    message=f"A2A request timed out after {self._timeout}s",
+                    details={"timeout": self._timeout, "url": self._agent_url},
+                ) from exc
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code in (401, 403):
+                    raise AgentError(
+                        code=A2A_AUTH_FAILED,
+                        message="A2A authentication failed",
+                        details={
+                            "error": str(exc),
+                            "url": self._agent_url,
+                            "status_code": exc.response.status_code,
+                        },
+                    ) from exc
+                raise AgentError(
+                    code=A2A_TASK_FAILED,
+                    message="A2A connection failed",
+                    details={"error": str(exc), "url": self._agent_url},
+                ) from exc
+            except httpx.HTTPError as exc:
+                raise AgentError(
+                    code=A2A_TASK_FAILED,
+                    message="A2A connection failed",
+                    details={"error": str(exc), "url": self._agent_url},
+                ) from exc
+
         finally:
+            # F4: nested cleanup — client.close() failure must not skip httpx
             if client is not None:
-                await client.close()
+                try:
+                    await client.close()
+                except Exception:
+                    import logging as _log
+
+                    _log.getLogger(__name__).warning(
+                        "A2A client.close() failed", exc_info=True
+                    )
             await httpx_client.aclose()
 
         is_completed = task_state == TaskState.TASK_STATE_COMPLETED
@@ -474,99 +501,133 @@ class A2AAgentAdapter:
             timeout=self._timeout,
         )
         try:
-            config = ClientConfig(
-                httpx_client=httpx_client,
-                streaming=True,
-            )
-            client = await create_client(
-                agent=self._agent_url,
-                client_config=config,
-            )
-        except AgentCardResolutionError as exc:
-            await httpx_client.aclose()
-            if getattr(exc, "status_code", None) in (401, 403):
+            try:
+                config = ClientConfig(
+                    httpx_client=httpx_client,
+                    streaming=True,
+                )
+                client = await create_client(
+                    agent=self._agent_url,
+                    client_config=config,
+                )
+            except AgentCardResolutionError as exc:
+                if getattr(exc, "status_code", None) in (401, 403):
+                    raise AgentError(
+                        code=A2A_AUTH_FAILED,
+                        message="A2A authentication failed during discovery",
+                        details={
+                            "error": str(exc),
+                            "url": self._agent_url,
+                            "status_code": exc.status_code,
+                        },
+                    ) from exc
                 raise AgentError(
-                    code=A2A_AUTH_FAILED,
-                    message="A2A authentication failed during discovery",
-                    details={
-                        "error": str(exc),
-                        "url": self._agent_url,
-                        "status_code": exc.status_code,
-                    },
+                    code=A2A_DISCOVERY_FAILED,
+                    message="A2A agent card resolution failed",
+                    details={"error": str(exc), "url": self._agent_url},
                 ) from exc
-            raise AgentError(
-                code=A2A_DISCOVERY_FAILED,
-                message="A2A agent card resolution failed",
-                details={"error": str(exc), "url": self._agent_url},
-            ) from exc
-        except A2AClientTimeoutError as exc:
-            await httpx_client.aclose()
-            raise AgentError(
-                code=A2A_TIMEOUT,
-                message=f"A2A client creation timed out after {self._timeout}s",
-                details={"timeout": self._timeout, "url": self._agent_url},
-            ) from exc
-        except A2AClientError as exc:
-            await httpx_client.aclose()
-            raise AgentError(
-                code=A2A_TASK_FAILED,
-                message="A2A client creation failed",
-                details={"error": str(exc), "url": self._agent_url},
-            ) from exc
-        except httpx.TimeoutException as exc:
-            await httpx_client.aclose()
-            raise AgentError(
-                code=A2A_TIMEOUT,
-                message=f"A2A client creation timed out after {self._timeout}s",
-                details={"timeout": self._timeout, "url": self._agent_url},
-            ) from exc
-        except httpx.HTTPStatusError as exc:
-            await httpx_client.aclose()
-            if exc.response.status_code in (401, 403):
+            except A2AClientTimeoutError as exc:
                 raise AgentError(
-                    code=A2A_AUTH_FAILED,
-                    message="A2A authentication failed",
-                    details={
-                        "error": str(exc),
-                        "url": self._agent_url,
-                        "status_code": exc.response.status_code,
-                    },
+                    code=A2A_TIMEOUT,
+                    message=(f"A2A client creation timed out after {self._timeout}s"),
+                    details={"timeout": self._timeout, "url": self._agent_url},
                 ) from exc
-            raise AgentError(
-                code=A2A_TASK_FAILED,
-                message="A2A client creation failed",
-                details={"error": str(exc), "url": self._agent_url},
-            ) from exc
-        except httpx.HTTPError as exc:
-            await httpx_client.aclose()
-            raise AgentError(
-                code=A2A_TASK_FAILED,
-                message="A2A client creation failed",
-                details={"error": str(exc), "url": self._agent_url},
-            ) from exc
-        except Exception as exc:
-            await httpx_client.aclose()
-            raise AgentError(
-                code=A2A_TASK_FAILED,
-                message="A2A client creation failed",
-                details={"error": str(exc), "url": self._agent_url},
-            ) from exc
+            except A2AClientError as exc:
+                raise AgentError(
+                    code=A2A_TASK_FAILED,
+                    message="A2A client creation failed",
+                    details={"error": str(exc), "url": self._agent_url},
+                ) from exc
+            except httpx.TimeoutException as exc:
+                raise AgentError(
+                    code=A2A_TIMEOUT,
+                    message=(f"A2A client creation timed out after {self._timeout}s"),
+                    details={"timeout": self._timeout, "url": self._agent_url},
+                ) from exc
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code in (401, 403):
+                    raise AgentError(
+                        code=A2A_AUTH_FAILED,
+                        message="A2A authentication failed",
+                        details={
+                            "error": str(exc),
+                            "url": self._agent_url,
+                            "status_code": exc.response.status_code,
+                        },
+                    ) from exc
+                raise AgentError(
+                    code=A2A_TASK_FAILED,
+                    message="A2A client creation failed",
+                    details={"error": str(exc), "url": self._agent_url},
+                ) from exc
+            except httpx.HTTPError as exc:
+                raise AgentError(
+                    code=A2A_TASK_FAILED,
+                    message="A2A client creation failed",
+                    details={"error": str(exc), "url": self._agent_url},
+                ) from exc
+            except Exception as exc:
+                raise AgentError(
+                    code=A2A_TASK_FAILED,
+                    message="A2A client creation failed",
+                    details={"error": str(exc), "url": self._agent_url},
+                ) from exc
 
-        try:
-            async for response in client.send_message(request):
-                if response.HasField("task"):
-                    task = response.task
-                    state_name = TaskState.Name(task.status.state).replace(
-                        "TASK_STATE_", ""
-                    ).lower()
-                    yield {
-                        "type": "status",
-                        "state": state_name,
-                        "message": "",
-                    }
-                    # Also yield artifacts from task
-                    for artifact in task.artifacts:
-                        parts_text: list[str] = []
+            try:
+                async for response in client.send_message(request):
+                    if response.HasField("task"):
+                        task = response.task
+                        state_name = (
+                            TaskState.Name(task.status.state)
+                            .replace("TASK_STATE_", "")
+                            .lower()
+                        )
+                        yield {
+                            "type": "status",
+                            "state": state_name,
+                            "message": "",
+                        }
+                        # Also yield artifacts from task
+                        for artifact in task.artifacts:
+                            parts_text: list[str] = []
+                            for part in artifact.parts:
+                                if part.text:
+                                    parts_text.append(part.text)
+                            if parts_text:
+                                yield {
+                                    "type": "artifact",
+                                    "parts": parts_text,
+                                }
+
+                    elif response.HasField("message"):
+                        msg = response.message
+                        text = self._extract_text_from_parts(msg.parts)
+                        yield {
+                            "type": "message",
+                            "text": text,
+                        }
+
+                    elif response.HasField("status_update"):
+                        status_update = response.status_update
+                        state_name = (
+                            TaskState.Name(status_update.status.state)
+                            .replace("TASK_STATE_", "")
+                            .lower()
+                        )
+                        message_text = ""
+                        if status_update.status.HasField("message"):
+                            message_text = self._extract_text_from_parts(
+                                status_update.status.message.parts
+                            )
+                        yield {
+                            "type": "status",
+                            "state": state_name,
+                            "message": message_text,
+                        }
+
+                    elif response.HasField("artifact_update"):
+                        artifact = response.artifact_update.artifact
+                        parts_text = []
                         for part in artifact.parts:
                             if part.text:
                                 parts_text.append(part.text)
@@ -576,99 +637,90 @@ class A2AAgentAdapter:
                                 "parts": parts_text,
                             }
 
-                elif response.HasField("message"):
-                    msg = response.message
-                    text = self._extract_text_from_parts(msg.parts)
-                    yield {
-                        "type": "message",
-                        "text": text,
-                    }
-
-                elif response.HasField("status_update"):
-                    status_update = response.status_update
-                    state_name = TaskState.Name(
-                        status_update.status.state
-                    ).replace("TASK_STATE_", "").lower()
-                    message_text = ""
-                    if status_update.status.HasField("message"):
-                        message_text = self._extract_text_from_parts(
-                            status_update.status.message.parts
-                        )
-                    yield {
-                        "type": "status",
-                        "state": state_name,
-                        "message": message_text,
-                    }
-
-                elif response.HasField("artifact_update"):
-                    artifact = response.artifact_update.artifact
-                    parts_text = []
-                    for part in artifact.parts:
-                        if part.text:
-                            parts_text.append(part.text)
-                    if parts_text:
-                        yield {
-                            "type": "artifact",
-                            "parts": parts_text,
-                        }
-
-        except AgentCardResolutionError as exc:
-            if getattr(exc, "status_code", None) in (401, 403):
+            except AgentCardResolutionError as exc:
+                if getattr(exc, "status_code", None) in (401, 403):
+                    raise AgentError(
+                        code=A2A_AUTH_FAILED,
+                        message="A2A authentication failed",
+                        details={
+                            "error": str(exc),
+                            "url": self._agent_url,
+                            "status_code": exc.status_code,
+                        },
+                    ) from exc
                 raise AgentError(
-                    code=A2A_AUTH_FAILED,
-                    message="A2A authentication failed",
+                    code=A2A_DISCOVERY_FAILED,
+                    message="A2A agent card resolution failed",
+                    details={"error": str(exc), "url": self._agent_url},
+                ) from exc
+            except A2AClientTimeoutError as exc:
+                raise AgentError(
+                    code=A2A_TIMEOUT,
+                    message=f"A2A stream timed out after {self._timeout}s",
                     details={
-                        "error": str(exc),
+                        "timeout": self._timeout,
                         "url": self._agent_url,
-                        "status_code": exc.status_code,
                     },
                 ) from exc
-            raise AgentError(
-                code=A2A_DISCOVERY_FAILED,
-                message="A2A agent card resolution failed",
-                details={"error": str(exc), "url": self._agent_url},
-            ) from exc
-        except A2AClientTimeoutError as exc:
-            raise AgentError(
-                code=A2A_TIMEOUT,
-                message=f"A2A stream timed out after {self._timeout}s",
-                details={"timeout": self._timeout, "url": self._agent_url},
-            ) from exc
-        except A2AClientError as exc:
-            raise AgentError(
-                code=A2A_TASK_FAILED,
-                message=f"A2A stream error: {exc}",
-                details={"error": str(exc), "url": self._agent_url},
-            ) from exc
-        except httpx.TimeoutException as exc:
-            raise AgentError(
-                code=A2A_TIMEOUT,
-                message=f"A2A stream timed out after {self._timeout}s",
-                details={"timeout": self._timeout, "url": self._agent_url},
-            ) from exc
-        except httpx.HTTPStatusError as exc:
-            if exc.response.status_code in (401, 403):
+            except A2AClientError as exc:
+                # SDK wraps httpx.HTTPStatusError — inspect cause chain
+                status = _extract_http_status_from_cause(exc)
+                if status in (401, 403):
+                    raise AgentError(
+                        code=A2A_AUTH_FAILED,
+                        message="A2A authentication failed",
+                        details={
+                            "error": str(exc),
+                            "url": self._agent_url,
+                            "status_code": status,
+                        },
+                    ) from exc
                 raise AgentError(
-                    code=A2A_AUTH_FAILED,
-                    message="A2A authentication failed",
+                    code=A2A_TASK_FAILED,
+                    message=f"A2A stream error: {exc}",
+                    details={"error": str(exc), "url": self._agent_url},
+                ) from exc
+            except httpx.TimeoutException as exc:
+                raise AgentError(
+                    code=A2A_TIMEOUT,
+                    message=f"A2A stream timed out after {self._timeout}s",
                     details={
-                        "error": str(exc),
+                        "timeout": self._timeout,
                         "url": self._agent_url,
-                        "status_code": exc.response.status_code,
                     },
                 ) from exc
-            raise AgentError(
-                code=A2A_TASK_FAILED,
-                message="A2A stream connection failed",
-                details={"error": str(exc), "url": self._agent_url},
-            ) from exc
-        except httpx.HTTPError as exc:
-            raise AgentError(
-                code=A2A_TASK_FAILED,
-                message="A2A stream connection failed",
-                details={"error": str(exc), "url": self._agent_url},
-            ) from exc
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code in (401, 403):
+                    raise AgentError(
+                        code=A2A_AUTH_FAILED,
+                        message="A2A authentication failed",
+                        details={
+                            "error": str(exc),
+                            "url": self._agent_url,
+                            "status_code": exc.response.status_code,
+                        },
+                    ) from exc
+                raise AgentError(
+                    code=A2A_TASK_FAILED,
+                    message="A2A stream connection failed",
+                    details={"error": str(exc), "url": self._agent_url},
+                ) from exc
+            except httpx.HTTPError as exc:
+                raise AgentError(
+                    code=A2A_TASK_FAILED,
+                    message="A2A stream connection failed",
+                    details={"error": str(exc), "url": self._agent_url},
+                ) from exc
+
         finally:
+            # F4: nested cleanup — client.close() failure must not skip httpx
             if client is not None:
-                await client.close()
+                try:
+                    await client.close()
+                except Exception:
+                    import logging as _log
+
+                    _log.getLogger(__name__).warning(
+                        "A2A client.close() failed", exc_info=True
+                    )
             await httpx_client.aclose()
