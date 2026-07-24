@@ -28,9 +28,13 @@ from a2a.types import (
     AgentInterface,
     AgentProvider,
     AgentSkill,
+    HTTPAuthSecurityScheme,
     Message,
     Part,
     Role,
+    SecurityRequirement,
+    SecurityScheme,
+    StringList,
     TaskState,
 )
 
@@ -214,6 +218,8 @@ class BeddelA2AExecutor(AgentExecutor):
 def build_agent_card(
     workflows: dict[str, tuple[Workflow, Any]],
     public_base_url: str = "http://127.0.0.1:8000",
+    *,
+    include_security: bool = False,
 ) -> AgentCard:
     """Build an A2A Agent Card from discovered workflows.
 
@@ -228,11 +234,17 @@ def build_agent_card(
         public_base_url: The public-facing base URL for the agent
             (e.g. ``http://myhost:9000``).  The A2A endpoint URL is
             derived as ``{public_base_url}/a2a``.
+        include_security: When True, include bearer auth security scheme
+            in the Agent Card.
 
     Returns:
         A fully populated :class:`AgentCard` ready to be served at
         ``/.well-known/agent-card.json``.
     """
+    # Defensive: never expose 0.0.0.0 in Agent Card
+    if "0.0.0.0" in public_base_url:
+        public_base_url = public_base_url.replace("0.0.0.0", "127.0.0.1")
+
     skills: list[AgentSkill] = []
 
     for wf_id, (workflow, _executor) in workflows.items():
@@ -263,6 +275,23 @@ def build_agent_card(
             ),
         )
 
+    # Build security schemes if requested
+    security_schemes: dict[str, SecurityScheme] = {}
+    security_requirements: list[SecurityRequirement] = []
+
+    if include_security:
+        bearer_scheme = SecurityScheme(
+            http_auth_security_scheme=HTTPAuthSecurityScheme(
+                description="Bearer token for A2A authentication",
+                scheme="bearer",
+                bearer_format="opaque",
+            )
+        )
+        security_schemes["bearer"] = bearer_scheme
+        req = SecurityRequirement()
+        req.schemes["bearer"].CopyFrom(StringList())
+        security_requirements.append(req)
+
     return AgentCard(
         name="Beddel Agent",
         description="A2A-compliant agent powered by Beddel workflows.",
@@ -282,4 +311,6 @@ def build_agent_card(
         capabilities=AgentCapabilities(streaming=True),
         default_input_modes=["text/plain"],
         default_output_modes=["text/plain"],
+        security_schemes=security_schemes,
+        security_requirements=security_requirements,
     )

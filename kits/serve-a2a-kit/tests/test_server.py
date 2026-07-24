@@ -140,8 +140,9 @@ class TestBuildAgentCard:
 
         assert len(card.skills) == 2
         # URL is now in supported_interfaces with /a2a suffix
+        # 0.0.0.0 is defensively replaced with 127.0.0.1 in the card
         assert len(card.supported_interfaces) == 1
-        assert card.supported_interfaces[0].url == "http://0.0.0.0:9000/a2a"
+        assert card.supported_interfaces[0].url == "http://127.0.0.1:9000/a2a"
         assert card.supported_interfaces[0].protocol_binding == "JSONRPC"
         assert card.supported_interfaces[0].protocol_version == "1.0"
         ids = {s.id for s in card.skills}
