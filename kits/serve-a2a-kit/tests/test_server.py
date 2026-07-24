@@ -125,8 +125,12 @@ class TestBuildAgentCard:
 
     def test_multiple_workflows(self) -> None:
         """Multiple workflows produce multiple skills."""
-        wf1 = _make_workflow(wf_id="wf-a", name="Alpha", steps=[_make_step(primitive="llm")])
-        wf2 = _make_workflow(wf_id="wf-b", name="Beta", steps=[_make_step(primitive="tool")])
+        wf1 = _make_workflow(
+            wf_id="wf-a", name="Alpha", steps=[_make_step(primitive="llm")]
+        )
+        wf2 = _make_workflow(
+            wf_id="wf-b", name="Beta", steps=[_make_step(primitive="tool")]
+        )
         registry: dict[str, tuple[Workflow, Any]] = {
             "wf-a": (wf1, MagicMock()),
             "wf-b": (wf2, MagicMock()),
@@ -212,8 +216,7 @@ class TestBuildAgentCard:
 
         import httpx
         from a2a.client import A2ACardResolver
-        from a2a.types import AgentCard as A2AAgentCard
-        from google.protobuf.json_format import MessageToJson, ParseDict
+        from google.protobuf.json_format import MessageToJson
 
         wf = _make_workflow(wf_id="wf-resolver", name="Resolver Test")
         registry: dict[str, tuple[Workflow, Any]] = {"wf-resolver": (wf, MagicMock())}
@@ -305,7 +308,9 @@ class TestBeddelA2AExecutor:
         mock_executor = MagicMock()
 
         events = [
-            BeddelEvent(event_type=EventType.WORKFLOW_START, data={"workflow_id": "wf-test"}),
+            BeddelEvent(
+                event_type=EventType.WORKFLOW_START, data={"workflow_id": "wf-test"}
+            ),
             BeddelEvent(
                 event_type=EventType.STEP_START,
                 step_id="step-1",
@@ -321,7 +326,9 @@ class TestBeddelA2AExecutor:
                 step_id="step-1",
                 data={"result": "Hello World"},
             ),
-            BeddelEvent(event_type=EventType.WORKFLOW_END, data={"workflow_id": "wf-test"}),
+            BeddelEvent(
+                event_type=EventType.WORKFLOW_END, data={"workflow_id": "wf-test"}
+            ),
         ]
         mock_executor.execute_stream = MagicMock(
             return_value=_mock_execute_stream(events),
@@ -442,7 +449,9 @@ class TestBeddelA2AExecutor:
         wf = _make_workflow()
         mock_executor = MagicMock()
 
-        async def _failing_stream(_wf: Any, _inputs: Any) -> AsyncGenerator[BeddelEvent, None]:
+        async def _failing_stream(
+            _wf: Any, _inputs: Any
+        ) -> AsyncGenerator[BeddelEvent, None]:
             yield BeddelEvent(event_type=EventType.WORKFLOW_START, data={})
             raise RuntimeError("boom")
 

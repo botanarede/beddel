@@ -25,6 +25,8 @@ from a2a.server.tasks import TaskUpdater
 from a2a.types import (
     AgentCapabilities,
     AgentCard,
+    AgentInterface,
+    AgentProvider,
     AgentSkill,
     Message,
     Part,
@@ -209,8 +211,7 @@ class BeddelA2AExecutor(AgentExecutor):
 
 def build_agent_card(
     workflows: dict[str, tuple[Workflow, Any]],
-    host: str = "127.0.0.1",
-    port: int = 8000,
+    public_base_url: str = "http://127.0.0.1:8000",
 ) -> AgentCard:
     """Build an A2A Agent Card from discovered workflows.
 
@@ -222,15 +223,14 @@ def build_agent_card(
         workflows: Mapping of workflow IDs to ``(Workflow, executor)``
             tuples.  Only the :class:`Workflow` is used; the executor
             value is ignored.
-        host: Hostname for the agent URL.
-        port: Port for the agent URL.
+        public_base_url: The public-facing base URL for the agent
+            (e.g. ``http://myhost:9000``).  The A2A endpoint URL is
+            derived as ``{public_base_url}/a2a``.
 
     Returns:
         A fully populated :class:`AgentCard` ready to be served at
         ``/.well-known/agent-card.json``.
     """
-    from a2a.types import AgentInterface
-
     skills: list[AgentSkill] = []
 
     for wf_id, (workflow, _executor) in workflows.items():
@@ -252,10 +252,18 @@ def build_agent_card(
         description="A2A-compliant agent powered by Beddel workflows.",
         version="1.0.0",
         supported_interfaces=[
-            AgentInterface(url=f"http://{host}:{port}"),
+            AgentInterface(
+                url=f"{public_base_url.rstrip('/')}/a2a",
+                protocol_binding="JSONRPC",
+                protocol_version="1.0",
+            ),
         ],
+        provider=AgentProvider(
+            organization="Beddel",
+            url="https://github.com/botanarede/beddel",
+        ),
         skills=skills,
         capabilities=AgentCapabilities(streaming=True),
-        default_input_modes=["application/json"],
-        default_output_modes=["application/json"],
+        default_input_modes=["text/plain"],
+        default_output_modes=["text/plain"],
     )
