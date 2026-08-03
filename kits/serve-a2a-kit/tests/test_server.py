@@ -1360,16 +1360,29 @@ class TestExecutorWithDefaultHandler:
         assert isinstance(sse_events[0], Task)
         assert sse_events[0].status.state == TaskState.TASK_STATE_SUBMITTED
 
-        # Last event should be terminal (Task with COMPLETED state)
+        # Last event should be terminal. Under a2a-sdk 1.1.2,
+        # on_message_send_stream() forwards status updates unchanged — only
+        # the non-streaming on_message_send() replaces them with Task
+        # snapshots. The terminal SSE item is therefore a
+        # TaskStatusUpdateEvent(COMPLETED), not a Task.
         last_event = sse_events[-1]
-        assert isinstance(last_event, Task)
+        assert isinstance(last_event, TaskStatusUpdateEvent)
         assert last_event.status.state == TaskState.TASK_STATE_COMPLETED
 
-        # Verify artifact events are present with stable IDs
+        # Verify artifact events are present with stable IDs and the exact
+        # append/last_chunk flag sequence: first chunk creates the artifact
+        # (append=False), the second chunk appends (append=True), and the
+        # WORKFLOW_END final marker appends with last_chunk=True.
         artifact_events = [
             ev for ev in sse_events if isinstance(ev, TaskArtifactUpdateEvent)
         ]
-        assert len(artifact_events) >= 2  # At least 2 chunks + last_chunk marker
+        assert len(artifact_events) == 3
+        assert artifact_events[0].append is False
+        assert artifact_events[0].last_chunk is False
+        assert artifact_events[1].append is True
+        assert artifact_events[1].last_chunk is False
+        assert artifact_events[2].append is True
+        assert artifact_events[2].last_chunk is True
 
         # All artifact events share one stable artifact ID
         artifact_ids = {ev.artifact.artifact_id for ev in artifact_events}
