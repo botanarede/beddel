@@ -38,16 +38,20 @@ a2a-sdk object (``FastAPI``, ``DefaultRequestHandler``, ``InMemoryTaskStore``,
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import uuid
 from collections.abc import AsyncGenerator
 from secrets import compare_digest
 from typing import Any
+from unittest.mock import MagicMock
 
 import httpx
 import pytest
 import pytest_asyncio
 from a2a.client import A2ACardResolver
 from a2a.server.agent_execution.context import ServerCallContext
+from a2a.server.events import EventQueue
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import (
     add_a2a_routes_to_fastapi,
@@ -676,3 +680,190 @@ async def test_valid_bearer_token_dispatches_normally(
     body = response.json()
     assert "error" not in body, f"Expected a JSON-RPC success result, got: {body}"
     assert body["result"]["task"]["status"]["state"] == "TASK_STATE_COMPLETED"
+
+
+# ---------------------------------------------------------------------------
+# AC7: Cancelling an ALREADY-ACTIVE task reaches terminal CANCELED
+# ---------------------------------------------------------------------------
+#
+# Why this lives at the executor level rather than going through the ASGI /
+# JSON-RPC layer like the rest of this module: the request handler's
+# ``on_message_send`` / ``on_message_send_stream`` drive the executor loop to
+# completion internally, so a task cannot be held in a genuinely non-terminal
+# state from outside the handler. Cancelling requires an ACTIVE task, so the
+# real ``BeddelA2AExecutor.execute()`` is driven directly as an in-flight
+# asyncio task and paused mid-stream via ``_GatedWorkflowExecutor``.
+#
+# This is NOT a duplicate of ``test_server.py::TestBeddelA2AExecutor::
+# test_cancel``. That test cancels a task that was never submitted (empty
+# registry, no prior ``execute()``), which proves only that the cancel path
+# emits CANCELED in isolation. AC7 requires proving that cancelling an
+# ALREADY-ACTIVE task reaches terminal CANCELED *without re-submitting* the
+# task — which needs a real prior ``execute()`` on the same task_id.
+
+
+def _make_request_context(workflow_id: str) -> MagicMock:
+    """Build a mock ``RequestContext`` carrying a DataPart with ``workflow_id``.
+
+    Mirrors ``_make_request_context()`` in ``test_server.py`` — the proven
+    pattern for driving ``BeddelA2AExecutor`` directly. ``RequestContext`` is
+    the only mocked object here; the executor, ``EventQueue``, ``TaskUpdater``
+    and every emitted event type are real a2a-sdk components.
+    """
+    ctx = MagicMock()
+    ctx.task_id = str(uuid.uuid4())
+    ctx.context_id = str(uuid.uuid4())
+
+    data_value = Value()
+    json_format.ParseDict({"workflow_id": workflow_id}, data_value)
+    ctx.message = Message(
+        role=Role.ROLE_USER,
+        parts=[Part(data=data_value)],
+        message_id=str(uuid.uuid4()),
+    )
+    return ctx
+
+
+def _collect_events(event_queue: EventQueue) -> list[Any]:
+    """Drain all currently-queued events from an ``EventQueue`` (non-blocking).
+
+    Accesses the underlying ``asyncio.Queue`` via ``get_nowait()`` to avoid
+    the blocking async ``dequeue_event`` — same approach as
+    ``test_server.py::_collect_events``.
+    """
+    collected: list[Any] = []
+    while True:
+        try:
+            # ``queue`` is only declared on the concrete EventQueueLegacy that
+            # ``EventQueue()`` redirects to, not on the abstract base mypy
+            # resolves here — same artifact as test_server.py's baseline.
+            collected.append(event_queue.queue.get_nowait())  # type: ignore[attr-defined]
+        except asyncio.QueueEmpty:
+            break
+    return collected
+
+
+_TERMINAL_TASK_STATES = frozenset(
+    {
+        TaskState.TASK_STATE_COMPLETED,
+        TaskState.TASK_STATE_FAILED,
+        TaskState.TASK_STATE_CANCELED,
+    }
+)
+
+
+class _GatedWorkflowExecutor:
+    """Workflow-side stub whose event stream pauses mid-execution.
+
+    Yields ``WORKFLOW_START``, signals :attr:`started`, then blocks forever on
+    :attr:`release`. The pause happens *after* the consumer has processed
+    ``WORKFLOW_START`` (an async generator only resumes once the consumer
+    loops back around), so when :attr:`started` is set the task is guaranteed
+    to be SUBMITTED + WORKING and not yet terminal — a genuinely ACTIVE task.
+
+    Like ``_StubWorkflowExecutor``, this stubs only the *workflow* side; no
+    a2a-sdk component is mocked.
+    """
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def _stream(self) -> AsyncGenerator[BeddelEvent, None]:
+        yield BeddelEvent(event_type=EventType.WORKFLOW_START, data={})
+        self.started.set()
+        await self.release.wait()
+        yield BeddelEvent(event_type=EventType.WORKFLOW_END, data={})
+
+    def execute_stream(
+        self, workflow: Workflow, inputs: dict[str, Any] | None
+    ) -> AsyncGenerator[BeddelEvent, None]:
+        return self._stream()
+
+
+@pytest.mark.asyncio
+async def test_cancel_of_active_task_reaches_canceled_without_resubmitting() -> None:
+    """Cancelling an already-active task reaches terminal CANCELED and does
+    not re-submit the task (AC7).
+
+    Sequence:
+        1. ``execute()`` runs as an in-flight asyncio task and pauses
+           mid-stream, leaving the task genuinely ACTIVE.
+        2. The first drain proves the task really existed and was active:
+           ``Task(SUBMITTED)`` followed by ``TaskStatusUpdateEvent(WORKING)``,
+           with no terminal state yet.
+        3. ``cancel()`` is called with the SAME context (same task_id /
+           context_id) as the in-flight execution.
+        4. The second drain proves exactly one new event — a
+           ``TaskStatusUpdateEvent(CANCELED)`` addressed to that task — and
+           NO second ``Task`` object and NO ``SUBMITTED`` status event, i.e.
+           cancellation did not re-submit.
+        5. Aborting the paused execution enqueues nothing further, so
+           CANCELED stands as the terminal state.
+    """
+    gated = _GatedWorkflowExecutor()
+    workflow = _make_workflow(wf_id="wf-cancel")
+    registry: WorkflowRegistry = {"wf-cancel": (workflow, gated)}  # type: ignore[dict-item]
+    executor = BeddelA2AExecutor(registry)
+
+    ctx = _make_request_context("wf-cancel")
+    # ``EventQueue()`` is typed abstract but redirects to the concrete
+    # EventQueueLegacy at runtime (with a DeprecationWarning). This is the
+    # established pattern across test_server.py's executor-level tests.
+    event_queue = EventQueue()  # type: ignore[abstract]
+
+    execute_task = asyncio.create_task(executor.execute(ctx, event_queue))
+    try:
+        await asyncio.wait_for(gated.started.wait(), timeout=5)
+
+        # --- Step 2: the task is genuinely ACTIVE (submitted, not terminal).
+        first_drain = _collect_events(event_queue)
+
+        assert isinstance(first_drain[0], Task)
+        assert first_drain[0].id == ctx.task_id
+        assert first_drain[0].context_id == ctx.context_id
+        assert first_drain[0].status.state == TaskState.TASK_STATE_SUBMITTED
+
+        status_states = [
+            ev.status.state
+            for ev in first_drain[1:]
+            if isinstance(ev, TaskStatusUpdateEvent)
+        ]
+        assert status_states == [TaskState.TASK_STATE_WORKING]
+        assert not any(state in _TERMINAL_TASK_STATES for state in status_states), (
+            f"Task must still be active before cancelling, got {status_states}"
+        )
+
+        # --- Step 3: cancel the SAME, still-active task.
+        await executor.cancel(ctx, event_queue)
+
+        # --- Step 4: exactly one CANCELED event, and no re-submission.
+        second_drain = _collect_events(event_queue)
+
+        assert len(second_drain) == 1, (
+            f"cancel() must emit exactly one event, got {second_drain}"
+        )
+        cancel_event = second_drain[0]
+        assert isinstance(cancel_event, TaskStatusUpdateEvent)
+        assert cancel_event.status.state == TaskState.TASK_STATE_CANCELED
+        assert cancel_event.task_id == ctx.task_id
+        assert cancel_event.context_id == ctx.context_id
+
+        # No new Task object: cancel() must not create/re-submit a task.
+        assert not any(isinstance(ev, Task) for ev in second_drain)
+        assert not any(
+            isinstance(ev, TaskStatusUpdateEvent)
+            and ev.status.state == TaskState.TASK_STATE_SUBMITTED
+            for ev in second_drain
+        )
+    finally:
+        # --- Step 5: abort the paused execution rather than releasing the
+        # gate, so the workflow does not run on to COMPLETED after CANCELED —
+        # matching real cancellation semantics.
+        execute_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await execute_task
+
+    assert _collect_events(event_queue) == [], (
+        "Nothing may be enqueued after CANCELED — it is the terminal state"
+    )
