@@ -94,6 +94,14 @@ if not (_KITS_DIR / "serve-a2a-kit" / "kit.yaml").is_file():
     )
 
 
+pytestmark = pytest.mark.integration
+"""Module-wide ``integration`` marker (Story K1A.5, AC7).
+
+Declared *after* the ``importorskip`` / ``skip(allow_module_level=True)`` guards
+above so a missing dependency still short-circuits collection cleanly.
+"""
+
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------

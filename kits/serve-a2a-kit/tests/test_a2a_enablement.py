@@ -106,6 +106,17 @@ if _missing:
     )
 
 
+pytestmark = pytest.mark.integration
+"""Module-wide ``integration`` marker (Story K1A.5, AC7).
+
+Declared *after* the ``importorskip`` / ``skip(allow_module_level=True)`` guards
+above so a missing dependency still short-circuits collection cleanly.  These
+tests build real FastAPI apps against a real SQLite kit index and real kit
+discovery, so they belong in the same selective-CI bucket as the other
+Story-K1A.5 modules.
+"""
+
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------

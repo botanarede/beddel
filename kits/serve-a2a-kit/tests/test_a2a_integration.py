@@ -91,6 +91,14 @@ from beddel_serve_a2a.server import (
     build_agent_card,
 )
 
+pytestmark = pytest.mark.integration
+"""Module-wide ``integration`` marker (Story K1A.5, AC7).
+
+Applied at module scope rather than per function so a newly added test cannot
+be forgotten.  ``pytestmark`` composes with per-function decorators such as
+``@pytest.mark.asyncio``.
+"""
+
 # ---------------------------------------------------------------------------
 # Workflow / step builders (mirrors test_server.py helpers)
 # ---------------------------------------------------------------------------
