@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncGenerator
+from secrets import compare_digest
 from typing import Any
 
 import httpx
@@ -65,9 +66,12 @@ from a2a.types import (
     TaskState,
     TaskStatusUpdateEvent,
 )
+from a2a.utils import constants as a2a_constants
 from fastapi import FastAPI
 from google.protobuf import json_format
 from google.protobuf.struct_pb2 import Value
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse as StarletteJSONResponse
 
 from beddel.domain.models import (
     BeddelEvent,
@@ -169,6 +173,38 @@ def _build_send_request(
 
 
 # ---------------------------------------------------------------------------
+# Auth middleware (Story K1A.5 AC6) — test-local reimplementation
+# ---------------------------------------------------------------------------
+
+
+class _TestA2ABearerAuthMiddleware(BaseHTTPMiddleware):
+    """Reimplementation of the private ``_A2ABearerAuthMiddleware`` defined
+    inside ``beddel.cli.commands._build_runtime_app()``.
+
+    The production class is a nested class local to a function body, so it
+    cannot be imported here. This mirrors it exactly: same path-prefix
+    check (``/a2a``), same ``Bearer `` prefix check, same
+    ``secrets.compare_digest`` comparison, and the same 401 JSON response
+    shape (``{"error": "Unauthorized"}``). Only wired into the harness when
+    ``auth_token`` is passed to ``_build_harness()`` — mirroring the
+    production ``if _a2a_token:`` guard.
+    """
+
+    def __init__(self, app: Any, token: str) -> None:
+        super().__init__(app)
+        self._token = token
+
+    async def dispatch(self, request: Any, call_next: Any) -> Any:
+        if request.url.path.startswith("/a2a"):
+            auth = request.headers.get("authorization", "")
+            if not auth.startswith("Bearer ") or not compare_digest(
+                auth[7:], self._token
+            ):
+                return StarletteJSONResponse({"error": "Unauthorized"}, status_code=401)
+        return await call_next(request)
+
+
+# ---------------------------------------------------------------------------
 # Fixtures — real FastAPI app + real DefaultRequestHandler over ASGI
 # ---------------------------------------------------------------------------
 
@@ -199,12 +235,20 @@ class _A2AHarness:
 
 def _build_harness(
     events_by_workflow: dict[str, list[BeddelEvent]],
+    *,
+    auth_token: str | None = None,
 ) -> _A2AHarness:
     """Construct a real FastAPI + DefaultRequestHandler harness.
 
     Args:
         events_by_workflow: Maps workflow_id to the BeddelEvent sequence
             that the stub workflow executor should stream for it.
+        auth_token: When provided, wires ``_TestA2ABearerAuthMiddleware``
+            onto the FastAPI app — mirroring the production
+            ``if _a2a_token:`` guard in
+            ``beddel.cli.commands._build_runtime_app()``. Defaults to
+            ``None``, preserving the Task 1 harness's unauthenticated
+            behavior unchanged.
 
     Returns:
         A fully wired ``_A2AHarness`` ready for ASGI dispatch.
@@ -227,6 +271,12 @@ def _build_harness(
     )
 
     app = FastAPI()
+
+    # Bearer auth middleware for A2A routes — only wired when a token is
+    # provided, mirroring the production `if _a2a_token:` guard.
+    if auth_token:
+        app.add_middleware(_TestA2ABearerAuthMiddleware, token=auth_token)
+
     add_a2a_routes_to_fastapi(
         app,
         agent_card_routes=create_agent_card_routes(agent_card),
@@ -280,6 +330,68 @@ async def a2a_harness() -> AsyncGenerator[_A2AHarness, None]:
         yield harness
     finally:
         await harness.client.aclose()
+
+
+_AUTH_TEST_TOKEN = "test-secret-token-123"
+
+
+@pytest_asyncio.fixture
+async def a2a_harness_with_auth() -> AsyncGenerator[_A2AHarness, None]:
+    """Pytest fixture yielding an ``_A2AHarness`` with the bearer auth
+    middleware active (Story K1A.5 AC6).
+
+    Reuses the same ``wf-complete`` workflow event sequence as
+    ``a2a_harness`` for consistency, but builds a standalone registry so
+    this fixture has no dependency on the unauthenticated one.
+
+    The underlying ``httpx.AsyncClient`` is closed on teardown.
+    """
+    events_by_workflow = {
+        "wf-complete": [
+            BeddelEvent(event_type=EventType.WORKFLOW_START, data={}),
+            BeddelEvent(
+                event_type=EventType.TEXT_CHUNK,
+                step_id="step-1",
+                data={"text": "Hello "},
+            ),
+            BeddelEvent(
+                event_type=EventType.TEXT_CHUNK,
+                step_id="step-1",
+                data={"text": "World"},
+            ),
+            BeddelEvent(event_type=EventType.WORKFLOW_END, data={}),
+        ],
+    }
+    harness = _build_harness(events_by_workflow, auth_token=_AUTH_TEST_TOKEN)
+    try:
+        yield harness
+    finally:
+        await harness.client.aclose()
+
+
+def _build_jsonrpc_send_payload(workflow_id: str) -> dict[str, Any]:
+    """Build a raw JSON-RPC 2.0 envelope for a ``SendMessage`` call.
+
+    This is the shape a real A2A client sends over HTTP to ``POST /a2a``
+    (as opposed to ``_build_send_request()``, which builds the proto
+    request object used by the other tests to call the handler directly
+    in-process). The a2a-sdk 1.1.2 JSON-RPC dispatcher routes on the gRPC
+    service method name ``"SendMessage"`` (see
+    ``JsonRpcDispatcher.METHOD_TO_MODEL``), with ``params`` parsed into a
+    ``SendMessageRequest`` proto message via ``ParseDict``.
+    """
+    data_value = Value()
+    json_format.ParseDict({"workflow_id": workflow_id}, data_value)
+    request = SendMessageRequest(
+        message=Message(
+            role=Role.ROLE_USER,
+            parts=[Part(data=data_value)],
+            message_id=str(uuid.uuid4()),
+        ),
+        configuration=SendMessageConfiguration(),
+    )
+    params = json_format.MessageToDict(request)
+    return {"jsonrpc": "2.0", "id": 1, "method": "SendMessage", "params": params}
 
 
 # ---------------------------------------------------------------------------
@@ -476,3 +588,91 @@ async def test_text_only_message_missing_workflow_id_fails_cleanly(
         f"Expected an informative message mentioning 'workflow_id', "
         f"got history texts: {history_texts}"
     )
+
+
+# ---------------------------------------------------------------------------
+# AC6: Auth enforcement — 401 for bad/missing token, valid token dispatches
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_missing_bearer_token_returns_401(
+    a2a_harness_with_auth: _A2AHarness,
+) -> None:
+    """POST /a2a with no Authorization header is rejected with 401.
+
+    Exercises the ``_TestA2ABearerAuthMiddleware`` path-prefix check on
+    ``/a2a`` with an empty/absent ``authorization`` header, mirroring the
+    production ``_A2ABearerAuthMiddleware`` guard.
+    """
+    payload = _build_jsonrpc_send_payload("wf-complete")
+
+    response = await a2a_harness_with_auth.client.post(
+        "/a2a",
+        json=payload,
+        headers={a2a_constants.VERSION_HEADER: a2a_constants.PROTOCOL_VERSION_1_0},
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {"error": "Unauthorized"}
+
+
+@pytest.mark.asyncio
+async def test_invalid_bearer_token_returns_401(
+    a2a_harness_with_auth: _A2AHarness,
+) -> None:
+    """POST /a2a with an incorrect bearer token is rejected with 401.
+
+    Uses ``secrets.compare_digest`` under the hood (via the middleware),
+    same as production — a token that does not match is always rejected
+    regardless of how "close" it is to the real one.
+    """
+    payload = _build_jsonrpc_send_payload("wf-complete")
+
+    response = await a2a_harness_with_auth.client.post(
+        "/a2a",
+        json=payload,
+        headers={
+            "Authorization": "Bearer wrong-token",
+            a2a_constants.VERSION_HEADER: a2a_constants.PROTOCOL_VERSION_1_0,
+        },
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {"error": "Unauthorized"}
+
+
+@pytest.mark.asyncio
+async def test_valid_bearer_token_dispatches_normally(
+    a2a_harness_with_auth: _A2AHarness,
+) -> None:
+    """POST /a2a with the correct bearer token is NOT rejected by auth.
+
+    AC6 requires proving the auth *gate* passes for a valid token — it
+    does not require a full successful JSON-RPC round trip. Here we go
+    one step further than the minimum bar and perform the full round
+    trip: a valid token against a well-formed ``SendMessage`` JSON-RPC
+    envelope reaches the real ``DefaultRequestHandler`` and completes the
+    stubbed ``wf-complete`` workflow, returning HTTP 200 with a
+    ``TASK_STATE_COMPLETED`` task in the JSON-RPC result. A non-401
+    status code alone (e.g. 400/422 on a malformed body) would already be
+    sufficient proof that the auth gate passed, since AC6 is about auth
+    enforcement, not JSON-RPC correctness — but the full round trip is
+    achievable here and gives a strictly stronger guarantee.
+    """
+    payload = _build_jsonrpc_send_payload("wf-complete")
+
+    response = await a2a_harness_with_auth.client.post(
+        "/a2a",
+        json=payload,
+        headers={
+            "Authorization": f"Bearer {_AUTH_TEST_TOKEN}",
+            a2a_constants.VERSION_HEADER: a2a_constants.PROTOCOL_VERSION_1_0,
+        },
+    )
+
+    assert response.status_code != 401
+    assert response.status_code == 200
+    body = response.json()
+    assert "error" not in body, f"Expected a JSON-RPC success result, got: {body}"
+    assert body["result"]["task"]["status"]["state"] == "TASK_STATE_COMPLETED"
