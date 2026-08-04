@@ -165,10 +165,6 @@ _LEAK_MARKERS = (
     "Traceback (most recent call last)",
 )
 
-_TERMINAL_STATE_NAMES = frozenset(
-    {"TASK_STATE_COMPLETED", "TASK_STATE_FAILED", "TASK_STATE_CANCELED"}
-)
-
 _DISPATCH_ERROR_FRAGMENTS = (
     "not found in registry",
     "Missing 'workflow_id'",
