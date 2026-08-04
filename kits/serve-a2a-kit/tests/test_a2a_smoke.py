@@ -41,18 +41,27 @@ the strings the current code actually emits when A2A fails to come up
 (``_A2A_FAILURE_MARKERS``) *and* positively asserts the success line
 ``"A2A: /.well-known/agent-card.json (N workflow(s))"`` is present.
 
-Known limitation surfaced by these tests
-----------------------------------------
-The task returned over JSON-RPC currently reaches ``TASK_STATE_FAILED`` with
-"Workflow stream ended without a terminal event".  Root cause is in the SDK, not
-in this kit: ``_build_runtime_app`` builds the A2A executor with
-``DefaultDependencies(...)`` that has no ``lifecycle_hooks``, so
-``WorkflowExecutor.__init__`` falls back to a no-op ``IHookManager()`` and
-``execute_stream()`` yields *zero* events.  Fixing that is production work and
-out of scope for a tests-only task, so the send test asserts what genuinely
-proves AC2 — card discovery, dispatch, registry resolution and a terminal task
-snapshot over the wire — and explicitly asserts the failure is *not* an
-A2A-layer dispatch error, which is the part that would regress.
+Known limitation surfaced by these tests (RESOLVED by Epic SH1)
+-----------------------------------------------
+The task returned over JSON-RPC previously reached ``TASK_STATE_FAILED`` with
+"Workflow stream ended without a terminal event".  Root cause was in the SDK:
+``_build_runtime_app`` built the A2A executor with ``DefaultDependencies(...)``
+that had no ``lifecycle_hooks``, so ``WorkflowExecutor.__init__`` fell back to a
+no-op ``IHookManager()`` and ``execute_stream()`` yielded *zero* events.
+
+Fixed by Epic SH1 (Stories SH1.1 + SH1.3):
+- SH1.1 (ADR-0015 Option C): ``execute_stream()`` constructs a stream-scoped
+  ``_StreamHookFanOut`` per call, owning the internal ``_Collector``'s
+  registration independently of ``self._hook_manager``.  Events are delivered
+  even when ``lifecycle_hooks`` is not supplied.
+- SH1.3 (ADR-0015 Option A): ``_build_runtime_app()`` now injects
+  ``lifecycle_hooks=LifecycleHookManager()`` at the 4 affected
+  ``DefaultDependencies`` sites, including the A2A executor registry.
+
+After the fix the task reaches ``TASK_STATE_COMPLETED`` instead of ``FAILED``.
+``test_serve_subprocess_send_message_returns_terminal_task`` has been updated
+(Story SH1.5, AC8) to assert ``TASK_STATE_COMPLETED`` rather than accepting
+any terminal state.
 """
 
 from __future__ import annotations
@@ -473,16 +482,22 @@ def test_serve_subprocess_send_message_returns_terminal_task(
 
     1. the first response is a ``Task`` in ``SUBMITTED`` whose history echoes
        the exact ``message_id`` sent -> our message reached the executor;
-    2. the last response carries a terminal state -> the task lifecycle ran to
-       completion instead of hanging;
+    2. the last response carries ``TASK_STATE_COMPLETED`` -> the workflow ran
+       to completion (not the pre-SH1 ``FAILED`` due to zero events);
     3. no dispatch-layer failure ("workflow not found", "missing workflow_id")
        -> the Agent Card skill actually resolved in the server-side registry.
 
-    See the module docstring: the terminal state is currently ``FAILED`` because
-    the SDK wires the A2A executor without lifecycle hooks. That is a production
-    defect, not a transport defect, so this test asserts the transport and
-    dispatch guarantees that must hold either way rather than pinning the
-    current-but-wrong terminal state.
+    Epic SH1 corrective (Stories SH1.1 + SH1.3):
+    The test previously asserted only that *any* terminal state was reached,
+    because the SDK wired the A2A executor without ``lifecycle_hooks``,
+    causing ``execute_stream()`` to yield zero events and the task to always
+    reach ``TASK_STATE_FAILED``.  After the fix:
+    - SH1.1 stream-scoped fan-out ensures events are delivered regardless of
+      whether ``lifecycle_hooks`` was supplied;
+    - SH1.3 injects a concrete ``LifecycleHookManager`` at the A2A
+      ``DefaultDependencies`` site in ``_build_runtime_app()``.
+    The task now reaches ``TASK_STATE_COMPLETED`` and this test pins that
+    corrected state (Story SH1.5, AC8 / PRD AC8).
     """
     sent_message_id, responses = _send_message(a2a_server.base_url)
 
@@ -500,8 +515,13 @@ def test_serve_subprocess_send_message_returns_terminal_task(
 
     last = responses[-1]
     terminal_state, terminal_text = _terminal_state_and_text(last)
-    assert terminal_state in _TERMINAL_STATE_NAMES, (
-        f"task never reached a terminal state (got {terminal_state}): {last}"
+
+    # SH1.5 AC2 / PRD AC8: assert the corrected COMPLETED terminal state.
+    # Pre-fix this was always FAILED ("Workflow stream ended without a terminal event").
+    assert terminal_state == "TASK_STATE_COMPLETED", (
+        f"expected TASK_STATE_COMPLETED after Epic SH1 fix, got {terminal_state!r}. "
+        f"If this is TASK_STATE_FAILED with 'Workflow stream ended without a terminal event', "
+        f"the SH1.1/SH1.3 fix may have regressed. Last response: {last}"
     )
 
     for fragment in _DISPATCH_ERROR_FRAGMENTS:
