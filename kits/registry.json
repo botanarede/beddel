@@ -7,8 +7,8 @@
   },
   {
     "name": "agent-a2a-kit",
-    "version": "0.2.0",
-    "description": "A2A Protocol kit \u2014 outbound client adapter + inbound server (bidirectional)",
+    "version": "0.3.0",
+    "description": "A2A Protocol kit \u2014 outbound client adapter for A2A-compliant agents",
     "category": "agent"
   },
   {
@@ -178,6 +178,12 @@
     "version": "0.1.0",
     "description": "Vercel AI SDK multi-provider LLM adapter for TypeScript",
     "category": "provider"
+  },
+  {
+    "name": "serve-a2a-kit",
+    "version": "0.1.0",
+    "description": "A2A protocol server \u2014 exposes Beddel workflows as A2A-compliant agents",
+    "category": "serve"
   },
   {
     "name": "serve-express-kit",
