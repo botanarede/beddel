@@ -259,14 +259,14 @@ class TestKitYamlWorkflows:
     def test_kit_yaml_workflow_files_exist(self, kit_manifest: dict[str, Any]) -> None:
         """All workflow files referenced in kit.yaml must exist on disk."""
         for wf in kit_manifest["workflows"]:
-            file_path = _KIT_ROOT / wf["file"]
-            assert file_path.exists(), f"Referenced file not found: {wf['file']}"
+            file_path = _KIT_ROOT / wf["path"]
+            assert file_path.exists(), f"Referenced file not found: {wf['path']}"
 
     def test_kit_yaml_workflow_entries_have_required_fields(
         self, kit_manifest: dict[str, Any]
     ) -> None:
-        """Each workflow entry must have name, file, and description."""
+        """Each workflow entry must have name, path, and description."""
         for wf in kit_manifest["workflows"]:
             assert "name" in wf, f"Workflow entry missing 'name': {wf}"
-            assert "file" in wf, f"Workflow entry missing 'file': {wf}"
+            assert "path" in wf, f"Workflow entry missing 'path': {wf}"
             assert "description" in wf, f"Workflow entry missing 'description': {wf}"
