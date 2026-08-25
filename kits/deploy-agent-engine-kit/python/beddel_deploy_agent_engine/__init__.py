@@ -5,11 +5,12 @@ Re-exports the public API from the kit's modules:
 - :func:`check_adc` — Check ADC configuration and return project/error info
 - :func:`deploy_flow_to_agent_engine` — Deploy a flow YAML to Agent Engine (in-process)
 - :class:`DeployResult` — Dataclass with deployment result metadata
+- :class:`VertexAgentEngineAdapter` — Vertex AI Agent Engine runtime adapter
 """
 
 from __future__ import annotations
 
-__all__ = ["check_adc", "deploy_flow_to_agent_engine", "DeployResult"]
+__all__ = ["check_adc", "deploy_flow_to_agent_engine", "DeployResult", "VertexAgentEngineAdapter"]
 
 
 def __getattr__(name: str) -> object:
@@ -26,4 +27,8 @@ def __getattr__(name: str) -> object:
         from beddel_deploy_agent_engine.deploy import DeployResult
 
         return DeployResult
+    if name == "VertexAgentEngineAdapter":
+        from beddel_deploy_agent_engine.vertex_adapter import VertexAgentEngineAdapter
+
+        return VertexAgentEngineAdapter
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
