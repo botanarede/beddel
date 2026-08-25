@@ -9,6 +9,12 @@ integrations:
 - name: BeddelSSEAdapter
   module: sse
   description: SSE adapter for Beddel workflow event streams
+- name: BeddelServer
+  module: server
+  description: Background Uvicorn server lifecycle handle
+- name: start_beddel_server
+  module: server
+  description: Start an ASGI app in a daemon-thread Uvicorn server
 targets:
   python:
     status: implemented
@@ -16,6 +22,7 @@ targets:
     dependencies:
     - fastapi>=0.100
     - sse-starlette>=1.6
+    - uvicorn>=0.23
   typescript:
     status: unavailable
     unavailable_reason: FastAPI is a Python-only ASGI framework. See peer kit serve-express-kit for the TypeScript HTTP serving

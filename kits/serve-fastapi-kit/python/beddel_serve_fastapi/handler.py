@@ -14,7 +14,8 @@ Example::
     router = create_beddel_handler(workflow)
     app.include_router(router, prefix="/my-workflow")
 
-Requires the ``default`` extra: ``pip install beddel[default]``.
+Dependencies are declared in this kit's ``kit.yaml``. Install with
+``beddel kit install serve-fastapi-kit``.
 """
 
 from __future__ import annotations
@@ -127,7 +128,7 @@ def create_beddel_handler(
                 from beddel_provider_litellm.adapter import LiteLLMAdapter
             except ImportError:
                 raise ImportError(
-                    "LiteLLM provider not available. Install: pip install beddel[default]"
+                    "LiteLLM provider not available. Install: beddel kit install provider-litellm-kit"
                 ) from None
 
             effective_provider = LiteLLMAdapter()
