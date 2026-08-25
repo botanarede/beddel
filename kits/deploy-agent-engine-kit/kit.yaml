@@ -9,6 +9,9 @@ integrations:
 - name: check_adc
   module: adc
   description: Check ADC configuration and return project/error info
+- name: VertexAgentEngineAdapter
+  module: vertex_adapter
+  description: Vertex AI Agent Engine runtime adapter for listing agents and streaming chat
 targets:
   python:
     status: implemented

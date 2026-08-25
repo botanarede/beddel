@@ -13,6 +13,7 @@ Deploy Beddel flows to Vertex AI Agent Engine.
 |------|-------------|
 | deploy_flow_to_agent_engine | Deploy a Beddel flow YAML to Agent Engine (in-process) |
 | check_adc | Check ADC configuration and return project/error info |
+| VertexAgentEngineAdapter | Vertex AI Agent Engine runtime adapter for listing agents and streaming chat |
 
 ## Usage
 
