@@ -19,7 +19,8 @@ Example::
     router = create_agui_endpoint(workflow)
     app.include_router(router, prefix="/ag-ui")
 
-Requires the ``default`` extra: ``pip install beddel[default]``.
+An initialized Beddel installation is required:
+``pip install beddel && beddel init``.
 """
 
 from __future__ import annotations
@@ -191,7 +192,8 @@ def create_agui_endpoint(
                 from beddel_provider_litellm.adapter import LiteLLMAdapter
             except ImportError:
                 raise ImportError(
-                    "LiteLLM provider not available. Install: pip install beddel[default]"
+                    "LiteLLM provider not available. Install and initialize Beddel: "
+                    "pip install beddel && beddel init"
                 ) from None
 
             effective_provider = LiteLLMAdapter()

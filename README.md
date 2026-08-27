@@ -48,7 +48,8 @@ Solution Kits extend the slim core with isolated adapters, tools, and integratio
 ## Install
 
 ```bash
-pip install "beddel[default]"    # batteries included: litellm + otel + fastapi + httpx
+pip install beddel                 # install the core package
+beddel init                         # initialize Beddel and select kits
 ```
 
 Or start minimal and add kits as needed:

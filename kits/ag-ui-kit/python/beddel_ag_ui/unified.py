@@ -22,7 +22,8 @@ Example::
     router = create_unified_agui_endpoint(executors)
     app.include_router(router, prefix="/ag-ui")
 
-Requires the ``default`` extra: ``pip install beddel[default]``.
+An initialized Beddel installation is required:
+``pip install beddel && beddel init``.
 """
 
 from __future__ import annotations

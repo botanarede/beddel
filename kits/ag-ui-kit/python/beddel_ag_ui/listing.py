@@ -19,7 +19,8 @@ Example::
     router = create_workflow_listing_router(workflows)
     app.include_router(router, prefix="/workflows")
 
-Requires the ``default`` extra: ``pip install beddel[default]``.
+An initialized Beddel installation is required:
+``pip install beddel && beddel init``.
 """
 
 from __future__ import annotations
