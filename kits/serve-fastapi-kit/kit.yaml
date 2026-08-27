@@ -21,6 +21,7 @@ targets:
     module: beddel_serve_fastapi
     dependencies:
     - fastapi>=0.100
+    - httpx>=0.27
     - sse-starlette>=1.6
     - uvicorn>=0.23
   typescript:
