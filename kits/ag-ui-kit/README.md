@@ -17,10 +17,10 @@ AG-UI protocol adapter for dashboard integration.
 
 ## Usage
 
-Install with the appropriate extra:
+Install and initialize Beddel:
 
 ```
-pip install beddel[default]
+pip install beddel && beddel init
 ```
 
 The kit is auto-discovered by the Beddel engine when its dependencies are installed.
