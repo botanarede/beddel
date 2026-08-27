@@ -15,6 +15,15 @@ integrations:
 - name: start_beddel_server
   module: server
   description: Start an ASGI app in a daemon-thread Uvicorn server
+- name: create_runtime_app
+  module: app
+  description: Assemble a configured FastAPI application
+- name: run_app
+  module: app
+  description: Run a FastAPI application in the foreground
+- name: serve_app_async
+  module: app
+  description: Serve a FastAPI application on the running loop
 targets:
   python:
     status: implemented
