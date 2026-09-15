@@ -212,14 +212,19 @@ def context() -> ExecutionContext:
 class TestInitialization:
     """Test KimiSwarmStrategy constructor validation."""
 
-    def test_missing_api_key_raises_agent_error(
+    def test_missing_api_key_construction_succeeds(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """BEDDEL-AGENT-800 on missing MOONSHOT_API_KEY."""
+        """KimiSwarmStrategy construction succeeds even without MOONSHOT_API_KEY.
+
+        Auth validation is deferred to execution time (lazy resolution),
+        so __init__ must not raise when the env var is absent.
+        BEDDEL-AGENT-800 is raised later, at _run_swarm() time.
+        """
         monkeypatch.delenv("MOONSHOT_API_KEY", raising=False)
-        with pytest.raises(AgentError) as exc_info:
-            KimiSwarmStrategy()
-        assert exc_info.value.code == KIMI_AUTH_MISSING
+        # Must NOT raise — construction is key-agnostic
+        strategy = KimiSwarmStrategy()
+        assert strategy._api_key is None
 
     def test_explicit_api_key_bypasses_env(
         self, monkeypatch: pytest.MonkeyPatch
@@ -932,17 +937,15 @@ class TestModelValidation:
         mock_env: None,
         context: ExecutionContext,
     ) -> None:
-        """Invalid model tier raises AgentError code BEDDEL-AGENT-821."""
+        """Unknown model strings are passed through to the provider (no error raised).
+
+        resolve_model() now returns unknown strings as-is so that provider-qualified
+        IDs like 'azure/deepseek-v4-pro' flow through unchanged.  Validation of
+        unknown model names is delegated to the downstream SDK/provider.
+        """
         strategy = KimiSwarmStrategy(model="nonexistent-tier")
-        task = CoordinationTask(
-            prompt="test",
-            subtasks=["a", "b"],
-            context_data={"work_dir": "/tmp"},
-        )
-        with pytest.raises(AgentError) as exc_info:
-            await strategy.coordinate({}, task, context)
-        assert exc_info.value.code == "BEDDEL-AGENT-821"
-        assert "nonexistent-tier" in str(exc_info.value.details)
+        # Construction must succeed
+        assert strategy._model == "nonexistent-tier"
 
 
 # ---------------------------------------------------------------------------

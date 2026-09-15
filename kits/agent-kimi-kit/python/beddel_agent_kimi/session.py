@@ -46,21 +46,19 @@ def resolve_model(tier: str | None) -> str:
         tier: Beddel tier string or None (defaults to 'balanced').
 
     Returns:
-        Kimi model identifier string.
-
-    Raises:
-        ValueError: If the tier is not recognized.
+        Kimi model identifier string. Unknown values are passed through
+        as-is so the downstream SDK or provider can reject them with its
+        own error.
     """
     if tier is None:
         return MODEL_TIER_MAP["balanced"]
     if tier in MODEL_TIER_MAP:
         return MODEL_TIER_MAP[tier]
-    # Check if it's already a raw kimi model name (passthrough)
+    # Check if a recognised well-known kimi-* model name
     if tier.startswith("kimi-"):
         return tier
-    raise ValueError(
-        f"Unknown model tier: {tier!r}. Valid tiers: {list(MODEL_TIER_MAP.keys())}"
-    )
+    # Pass through anything else (e.g. "provider/model" or unknown)
+    return tier
 
 
 def resolve_sandbox(sandbox: str) -> str:
@@ -115,6 +113,11 @@ def build_kimi_config(
     Centralises the provider/model config structure so adapter and swarm
     share the same wiring without duplication.
 
+    The provider configuration is resolved from the local Kimi CLI config
+    (``kimi_cli.config.load_config()``) by matching the resolved *model*
+    against the configured ``LLMModel.model`` fields. If no match is found
+    the builder falls back to the Moonshot provider.
+
     Args:
         api_key: Moonshot platform API key.
         model: Resolved Kimi model identifier.
@@ -131,18 +134,49 @@ def build_kimi_config(
     if max_context_size <= 0:
         raise ValueError(f"max_context_size must be > 0, got {max_context_size}")
 
+    # ------------------------------------------------------------------
+    # 1) Try to match the resolved model to a provider via kimi_cli.config
+    # ------------------------------------------------------------------
+    provider_name: str | None = None
+    provider_base_url: str | None = None
+    provider_type: str = "kimi"
+
+    try:
+        from kimi_cli.config import load_config
+
+        config = load_config()
+        for key, m in (config.models or {}).items():
+            if m.model == model:
+                # key format: "provider/model"
+                provider_name = key.split("/", 1)[0]
+                if provider_name in (config.providers or {}):
+                    p = config.providers[provider_name]
+                    provider_base_url = str(p.base_url) if p.base_url else None
+                    provider_type = p.type.value if hasattr(p.type, "value") else str(p.type)
+                break
+    except Exception:
+        pass  # Fall through to Moonshot default
+
+    # ------------------------------------------------------------------
+    # 2) Fallback: Moonshot provider
+    # ------------------------------------------------------------------
+    if provider_name is None or provider_base_url is None:
+        provider_name = "moonshot"
+        provider_base_url = "https://api.moonshot.cn/v1"
+        provider_type = "kimi"
+
+    provider_dict = {
+        "type": provider_type,
+        "base_url": provider_base_url,
+        "api_key": api_key,
+    }
+
     return Config(
         default_model=model,
-        providers={
-            "kimi": {
-                "type": "kimi",
-                "base_url": "https://api.moonshot.ai/v1",
-                "api_key": api_key,
-            }
-        },
+        providers={provider_name: provider_dict},
         models={
             model: {
-                "provider": "kimi",
+                "provider": provider_name,
                 "model": model,
                 "max_context_size": max_context_size,
             }
