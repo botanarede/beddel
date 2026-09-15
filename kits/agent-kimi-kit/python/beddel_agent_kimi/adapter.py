@@ -76,14 +76,9 @@ class KimiAgentAdapter:
         approval_timeout: float = 60.0,
         agent_file: Path | None = None,
     ) -> None:
-        try:
-            self._api_key = api_key if api_key else get_api_key()
-        except ValueError as exc:
-            raise AgentError(
-                code=KIMI_AUTH_MISSING,
-                message=str(exc),
-                details={"env_var": "MOONSHOT_API_KEY"},
-            ) from exc
+        # Store API key now; validation is deferred to first use so that
+        # construction never blocks on a missing environment variable.
+        self._api_key = api_key
         self._timeout = timeout
         self._work_dir = Path(work_dir) if work_dir else Path.cwd()
         self._approval_bridge = KimiApprovalBridge(
@@ -207,7 +202,7 @@ class KimiAgentAdapter:
             ) from exc
 
         try:
-            config = build_kimi_config(self._api_key, kimi_model)
+            config = build_kimi_config(self._resolve_api_key(), kimi_model)
 
             # Real kimi-agent-sdk lifecycle:
             # Session.create() -> session.prompt() -> collect -> cleanup
@@ -358,7 +353,7 @@ class KimiAgentAdapter:
         output_parts: list[str] = []
 
         try:
-            config = build_kimi_config(self._api_key, kimi_model)
+            config = build_kimi_config(self._resolve_api_key(), kimi_model)
             create_kwargs: dict[str, Any] = {
                 "work_dir": KaosPath(str(self._work_dir)),
                 "config": config,
@@ -404,6 +399,23 @@ class KimiAgentAdapter:
             "output": "".join(output_parts),
             "exit_code": 0,
         }
+
+    def _resolve_api_key(self) -> str:
+        """Return the API key, resolving from env if not explicitly set.
+
+        Raises:
+            AgentError: ``BEDDEL-AGENT-800`` if no key is available.
+        """
+        if self._api_key:
+            return self._api_key
+        try:
+            return get_api_key()
+        except ValueError as exc:
+            raise AgentError(
+                code=KIMI_AUTH_MISSING,
+                message=str(exc),
+                details={"env_var": "MOONSHOT_API_KEY"},
+            ) from exc
 
     @staticmethod
     def _wire_msg_to_event(

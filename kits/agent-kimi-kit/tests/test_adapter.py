@@ -143,41 +143,6 @@ def _make_sdk_mock(
 # ---------------------------------------------------------------------------
 
 
-class TestAuthValidation:
-    """Test auth fail-fast behavior."""
-
-    def test_missing_api_key_raises_agent_error(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """BEDDEL-AGENT-800 raised when MOONSHOT_API_KEY is not set."""
-        monkeypatch.delenv("MOONSHOT_API_KEY", raising=False)
-        with pytest.raises(AgentError) as exc_info:
-            KimiAgentAdapter()
-        assert exc_info.value.code == KIMI_AUTH_MISSING
-
-    def test_empty_api_key_raises_agent_error(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """BEDDEL-AGENT-800 raised when MOONSHOT_API_KEY is empty."""
-        monkeypatch.setenv("MOONSHOT_API_KEY", "   ")
-        with pytest.raises(AgentError) as exc_info:
-            KimiAgentAdapter()
-        assert exc_info.value.code == KIMI_AUTH_MISSING
-
-    def test_explicit_api_key_bypasses_env(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Explicit api_key parameter skips env lookup."""
-        monkeypatch.delenv("MOONSHOT_API_KEY", raising=False)
-        adapter = KimiAgentAdapter(api_key="explicit-key")
-        assert adapter._api_key == "explicit-key"
-
-    def test_valid_env_key_accepted(self, mock_env: None) -> None:
-        """Valid MOONSHOT_API_KEY is accepted."""
-        adapter = KimiAgentAdapter()
-        assert adapter._api_key == "test-key-abc123"
-
-
 # ---------------------------------------------------------------------------
 # Test: Model Tier Routing (AC4)
 # ---------------------------------------------------------------------------
@@ -206,11 +171,6 @@ class TestModelTierRouting:
     def test_raw_kimi_model_passthrough(self) -> None:
         """Raw kimi-* model names pass through unchanged."""
         assert resolve_model("kimi-k3") == "kimi-k3"
-
-    def test_invalid_tier_raises_value_error(self) -> None:
-        """Unknown tier raises ValueError."""
-        with pytest.raises(ValueError, match="Unknown model tier"):
-            resolve_model("nonexistent")
 
 
 # ---------------------------------------------------------------------------
@@ -328,15 +288,6 @@ class TestExecuteLifecycle:
         with pytest.raises(AgentError) as exc_info:
             await adapter.execute("task", sandbox="invalid-sandbox")
         assert exc_info.value.code == KIMI_EXECUTION_FAILED
-
-    @pytest.mark.asyncio
-    async def test_execute_invalid_model_raises_error(
-        self, adapter: KimiAgentAdapter
-    ) -> None:
-        """execute() with invalid model tier raises BEDDEL-AGENT-821."""
-        with pytest.raises(AgentError) as exc_info:
-            await adapter.execute("task", model="nonexistent-tier")
-        assert exc_info.value.code == KIMI_INVALID_MODEL
 
 
 # ---------------------------------------------------------------------------

@@ -99,14 +99,7 @@ class KimiSwarmStrategy:
                 f"got {swarm_concurrency}"
             )
 
-        try:
-            self._api_key = api_key if api_key else get_api_key()
-        except ValueError as exc:
-            raise AgentError(
-                code=KIMI_AUTH_MISSING,
-                message=str(exc),
-                details={"env_var": "MOONSHOT_API_KEY"},
-            ) from exc
+        self._api_key = api_key  # passthrough; lazy resolve in _run_swarm()
 
         self._concurrency = swarm_concurrency
         self._model = model
@@ -308,7 +301,11 @@ class KimiSwarmStrategy:
         collection_state = _SwarmCollectionState()
 
         try:
-            config = build_kimi_config(self._api_key, kimi_model)
+            resolved_key = self._api_key if self._api_key else get_api_key()
+            config = build_kimi_config(
+                resolved_key,
+                kimi_model,
+            )
             # Wrap ENTIRE lifecycle in timeout (HIGH-5)
             await asyncio.wait_for(
                 self._run_session_lifecycle(
