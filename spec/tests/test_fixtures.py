@@ -114,6 +114,7 @@ _EXPECTED_CODES: dict[str, str] = {
     "missing-steps": "BEDDEL-PARSE-002",
     "bad-strategy": "BEDDEL-PARSE-002",
     "circular-ref": "BEDDEL-PARSE-003",
+    "mcp-servers-extra-key": "BEDDEL-PARSE-002",
 }
 
 

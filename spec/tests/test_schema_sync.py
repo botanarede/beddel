@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 from pathlib import Path
 
@@ -25,7 +26,13 @@ _WORKFLOW_METADATA = {
 
 REGEN_HINT = (
     "Workflow JSON Schema is out of sync with Pydantic models. "
-    "Regenerate with: python spec/scripts/sync_workflow_schema.py"
+    "Regenerate with: python scripts/sync_workflow_schema.py"
+)
+
+# Canonical generator: scripts/ (spec/scripts/ holds stale copies left behind
+# when the scripts were moved out of spec/ in commit e3f2cf0).
+GENERATOR_PATH = (
+    Path(__file__).resolve().parent.parent.parent / "scripts" / "sync_workflow_schema.py"
 )
 
 
@@ -37,6 +44,31 @@ def test_workflow_schema_matches_pydantic_model() -> None:
     generated = {**Workflow.model_json_schema(), **_WORKFLOW_METADATA}
 
     assert committed == generated, REGEN_HINT
+
+
+def test_workflow_schema_equals_canonical_generator_output() -> None:
+    """The committed schema must equal what the canonical generator script emits."""
+    spec = importlib.util.spec_from_file_location("sync_workflow_schema", GENERATOR_PATH)
+    assert spec is not None and spec.loader is not None, f"Cannot load {GENERATOR_PATH}"
+    generator = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(generator)
+
+    generated = generator.generate_workflow_schema()
+    assert generator.SCHEMA_PATH.resolve() == SCHEMA_PATH.resolve()
+    assert json.loads(SCHEMA_PATH.read_text()) == generated, REGEN_HINT
+    assert SCHEMA_PATH.read_text() == json.dumps(generated, indent=2) + "\n"
+
+
+def test_workflow_schema_declares_mcp_servers_entry_contract() -> None:
+    """The regenerated schema carries the mcp_servers contract fixed by the Python model."""
+    schema = json.loads(SCHEMA_PATH.read_text())
+    entry = schema["$defs"]["MCPServerDeclaration"]
+
+    assert "mcp_servers" in schema["properties"]
+    assert "mcp_servers" not in schema["required"]
+    assert entry["additionalProperties"] is False
+    assert set(entry["properties"]) == {"transport", "endpoint", "authorization"}
+    assert set(entry["required"]) == {"transport", "endpoint", "authorization"}
 
 
 # --- Kit manifest schema sync ---

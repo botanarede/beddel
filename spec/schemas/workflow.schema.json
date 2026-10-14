@@ -33,6 +33,39 @@
       "title": "ExecutionStrategy",
       "type": "object"
     },
+    "MCPServerDeclaration": {
+      "additionalProperties": false,
+      "description": "Non-secret connection data for one MCP server a workflow may call.\n\nThe three fields below are the whole entry; any other key (``headers``,\n``env``, ``args``, ...) is rejected.  Credentials are never part of a\nworkflow: they are resolved and stored outside it by the MCP protocol kit.\nNo validation message produced here interpolates the offending value.\n\nAttributes:\n    transport: Name of the client adapter the execution surface registers\n        for this server.  The model validates the shape of the name only;\n        it does not enumerate transports.\n    endpoint: Absolute http or https URL of the server.  It carries no\n        userinfo, no query string and no fragment, so no credential can\n        travel in it.  Requiring HTTPS except on loopback is the job of\n        the MCP protocol kit, not of this model.\n    authorization: Name of the authorization method the MCP protocol kit\n        resolves.  It is a name only, never a token or any other secret;\n        the model validates the shape of the name and does not enumerate\n        methods.",
+      "properties": {
+        "transport": {
+          "description": "Name of the client adapter registered for this server.",
+          "maxLength": 32,
+          "pattern": "^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*$",
+          "title": "Transport",
+          "type": "string"
+        },
+        "endpoint": {
+          "description": "Absolute http(s) URL of the server; no userinfo, query string or fragment.",
+          "maxLength": 2048,
+          "title": "Endpoint",
+          "type": "string"
+        },
+        "authorization": {
+          "description": "Name of the authorization method; never a token or secret.",
+          "maxLength": 32,
+          "pattern": "^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*$",
+          "title": "Authorization",
+          "type": "string"
+        }
+      },
+      "required": [
+        "transport",
+        "endpoint",
+        "authorization"
+      ],
+      "title": "MCPServerDeclaration",
+      "type": "object"
+    },
     "RetryConfig": {
       "description": "Configuration for step retry behaviour.\n\nControls exponential back-off with optional jitter when a step is\nconfigured with ``StrategyType.RETRY``.\n\nAttributes:\n    max_attempts: Maximum number of retry attempts (including the first).\n    backoff_base: Base multiplier for exponential back-off in seconds.\n    backoff_max: Upper bound for the back-off delay in seconds.\n    jitter: Whether to add random jitter to the delay.",
       "properties": {
@@ -61,7 +94,7 @@
       "type": "object"
     },
     "Step": {
-      "description": "A single executable step within a workflow.\n\nSteps reference a primitive by name and carry an arbitrary config dict\nthat is forwarded to the primitive at execution time.  Conditional\nbranching is supported via ``if``/``then``/``else`` fields.\n\nAttributes:\n    id: Unique identifier for this step within the workflow.\n    primitive: Name of the primitive to execute (e.g. ``\"llm\"``).\n    config: Primitive-specific configuration dict.\n    if_condition: Optional expression evaluated at runtime for branching.\n    then_steps: Steps executed when ``if_condition`` is truthy.\n    else_steps: Steps executed when ``if_condition`` is falsy.\n    execution_strategy: Error-handling strategy for this step.\n    timeout: Optional timeout in seconds for step execution.\n    stream: Whether to stream output from this step.\n    parallel: Flag for parallel execution grouping by ParallelExecutionStrategy.\n    metadata: Arbitrary metadata attached to the step.\n    tags: Optional tags for step-level filtering by execution strategies.",
+      "description": "A single executable step within a workflow.\n\nSteps reference a primitive by name and carry an arbitrary config dict\nthat is forwarded to the primitive at execution time.  Conditional\nbranching is supported via ``if``/``then``/``else`` fields.\n\nAttributes:\n    id: Unique identifier for this step within the workflow.\n    primitive: Name of the primitive to execute (e.g. ``\"llm\"``).\n    config: Primitive-specific configuration dict.\n    if_condition: Optional expression evaluated at runtime for branching.\n    then_steps: Steps executed when ``if_condition`` is truthy.\n    else_steps: Steps executed when ``if_condition`` is falsy.\n    execution_strategy: Error-handling strategy for this step.\n    timeout: Optional timeout in seconds for step execution.\n    stream: Whether to stream output from this step.\n    parallel: Flag for parallel execution grouping by ParallelExecutionStrategy.\n    metadata: Arbitrary metadata attached to the step.\n    tags: Optional tags for step-level filtering by execution strategies.\n    output_key: Optional key under which this step's result is\n        additionally stored in ``context.step_results``, making it\n        accessible via ``$stepResult.{output_key}`` variable resolution.",
       "properties": {
         "id": {
           "title": "Id",
@@ -154,6 +187,18 @@
           },
           "title": "Tags",
           "type": "array"
+        },
+        "output_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Key"
         }
       },
       "required": [
@@ -269,6 +314,39 @@
       ],
       "default": null,
       "title": "Tools"
+    },
+    "requires_kits": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Requires Kits"
+    },
+    "mcp_servers": {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$": {
+              "$ref": "#/$defs/MCPServerDeclaration"
+            }
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Mcp Servers"
     }
   },
   "required": [
