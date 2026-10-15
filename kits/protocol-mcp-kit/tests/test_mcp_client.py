@@ -28,7 +28,7 @@ def _make_mock_tool(
     return SimpleNamespace(
         name=name,
         description=description,
-        inputSchema=input_schema or {"type": "object"},
+        input_schema=input_schema or {"type": "object"},
     )
 
 

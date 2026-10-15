@@ -122,7 +122,7 @@ class StdioMCPClient:
                 {
                     "name": tool.name,
                     "description": getattr(tool, "description", None) or "",
-                    "inputSchema": getattr(tool, "inputSchema", None) or {},
+                    "inputSchema": getattr(tool, "input_schema", None) or {},
                 }
                 for tool in result.tools
             ]
