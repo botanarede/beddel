@@ -1,0 +1,20 @@
+# Invalid: an mcp_servers entry accepts exactly transport, endpoint and authorization;
+# any other key (here headers) is rejected → BEDDEL-PARSE-002
+id: mcp-servers-extra-key
+name: MCP Servers Extra Key Workflow
+description: An mcp_servers entry carries a key outside the three allowed fields.
+
+mcp_servers:
+  docs_server:
+    transport: mcp-http
+    endpoint: https://mcp.example.com/mcp
+    authorization: oauth
+    headers:
+      X-Example: not-a-credential
+
+steps:
+  - id: generate
+    primitive: llm
+    config:
+      model: gpt-4o-mini
+      prompt: "Summarize the input"

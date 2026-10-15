@@ -1,0 +1,24 @@
+# yaml-language-server: $schema=../../schemas/workflow.schema.json
+# Declares MCP servers: a map keyed by snake_case server name whose entries carry
+# only non-secret connection data (transport, endpoint, authorization method name).
+# No credential, header, environment variable or argument belongs in an entry.
+id: mcp-servers-declaration
+name: MCP Servers Declaration
+description: Declares two MCP servers a workflow may call.
+
+mcp_servers:
+  docs_server:
+    transport: mcp-http
+    endpoint: https://mcp.example.com/mcp
+    authorization: oauth
+  local_tools:
+    transport: mcp-http
+    endpoint: http://127.0.0.1:8080/mcp
+    authorization: oauth
+
+steps:
+  - id: summarize
+    primitive: llm
+    config:
+      model: gpt-4o-mini
+      prompt: "Summarize $input.topic"
