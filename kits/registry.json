@@ -146,7 +146,7 @@
   {
     "name": "protocol-mcp-kit",
     "version": "0.1.0",
-    "description": "Model Context Protocol client adapters (stdio and SSE)",
+    "description": "Model Context Protocol client adapters (stdio, SSE and Streamable HTTP with OAuth)",
     "category": "protocol"
   },
   {
