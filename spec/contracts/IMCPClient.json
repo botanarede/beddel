@@ -39,11 +39,11 @@
   "behavioral_expectations": [
     "Must implement structural subtyping (Protocol) — no explicit inheritance required",
     "connect() must support multiple transport schemes: stdio://, sse://, http://",
-    "list_tools() must only be called after a successful connect(); behavior is undefined otherwise",
+    "list_tools() must only be called after a successful connect(), unless the implementation connects lazily on its first call (the Streamable HTTP client does; the core never calls connect() for it); behavior is otherwise undefined",
     "call_tool() must validate that the tool name exists on the connected server",
     "disconnect() must not raise if not currently connected (idempotent close)",
     "All methods are async — MCP communication involves network I/O",
-    "Tool descriptors returned by list_tools() must include at minimum: name, description, and input_schema fields",
+    "Tool descriptors returned by list_tools() must include at minimum: name, description, and inputSchema fields (the key the tool primitive reads)",
     "Implementations must handle connection failures and timeouts gracefully"
   ]
 }

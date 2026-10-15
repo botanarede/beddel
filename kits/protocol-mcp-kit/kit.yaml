@@ -1,6 +1,6 @@
 name: protocol-mcp-kit
 version: 0.1.0
-description: Model Context Protocol client adapters (stdio and SSE)
+description: Model Context Protocol client adapters (stdio, SSE and Streamable HTTP with OAuth)
 author: Beddel Team
 adapters:
 - port: IMCPClient
@@ -9,13 +9,26 @@ adapters:
 - port: IMCPClient
   implementation: SSEMCPClient
   description: MCP client via SSE transport
+- port: IMCPClient
+  implementation: StreamableHTTPMCPClient
+  description: Remote MCP client via Streamable HTTP, with OAuth through the official SDK
 targets:
   python:
     status: implemented
     module: beddel_protocol_mcp
+    # SDK pin (AD-21): exactly one release of one major line, so the upper bound is
+    # the pin itself.  mcp 2.3.0 (PyPI, 2026-10-02) requires Python >=3.10, which is
+    # compatible with the core's Python >=3.11.  The kit implements the transport and
+    # authorization of MCP specification revision 2026-07-28; the core depends on
+    # neither the SDK nor the revision.  Bumping the pin is a deliberate kit change.
     dependencies:
-    - mcp>=1.0
+    - mcp==2.3.0
     - jsonschema>=4.0
+    dev_note: >-
+      MCP SDK mcp==2.3.0 (major line 2, Python >=3.10); MCP specification revision
+      2026-07-28. Streamable HTTP adapter name mcp-streamable-http; authorization
+      methods none and oauth. Operator authorization: python -m
+      beddel_protocol_mcp.authorize.
     adapters:
     - port: IMCPClient
       name: mcp-stdio
@@ -23,11 +36,16 @@ targets:
     - port: IMCPClient
       name: mcp-sse
       target: beddel_protocol_mcp.sse_client:SSEMCPClient
+    - port: IMCPClient
+      name: mcp-streamable-http
+      target: beddel_protocol_mcp.http_client:StreamableHTTPMCPClient
   typescript:
     status: implemented
     package: '@beddel/protocol-mcp'
     dependencies:
     - '@modelcontextprotocol/sdk: ^1.0'
+    # Known asymmetry: only the stdio adapter is declared for TypeScript although a
+    # TypeScript SSE source exists; no TypeScript adapter is added here (AD-15).
     adapters:
     - port: IMCPClient
       target: ./src/mcp-stdio-client.ts:MCPStdioClient
