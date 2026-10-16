@@ -74,7 +74,7 @@ class TestSdkPin:
     def test_sdk_python_requirement_is_compatible_with_the_core(self) -> None:
         requires = importlib.metadata.metadata("mcp")["Requires-Python"]
         assert requires == ">=3.10"
-        assert sys.version_info >= (3, 11)  # the core's own minimum
+        assert sys.version_info >= (3, 12)  # the core's own minimum
 
     def test_readme_and_manifest_record_pin_and_specification_revision(self) -> None:
         readme = (KIT_ROOT / "README.md").read_text()

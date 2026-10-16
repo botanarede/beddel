@@ -177,4 +177,4 @@ Follow these steps before deploying agent-kimi-kit to production:
 ## Dependencies
 
 - `kimi-agent-sdk>=0.1.0`
-- Python 3.11+
+- Python 3.12+

@@ -32,7 +32,7 @@ Typed async Git operations for Beddel workflows.
 ## Prerequisites
 
 - `git` CLI on PATH
-- Python 3.11+
+- Python 3.12+
 - `beddel` SDK installed (provides `@beddel_tool` decorator)
 
 ## Usage

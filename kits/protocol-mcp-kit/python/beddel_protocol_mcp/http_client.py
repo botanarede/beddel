@@ -453,9 +453,9 @@ class StreamableHTTPMCPClient:
         """Own the SDK connection for its whole life, in this one task.
 
         anyio cancel scopes must be entered and exited by the same task; the
-        core may call from different tasks (``asyncio.wait_for`` wraps a call in
-        its own task on Python 3.11), so the connection is held here and callers
-        only use the ``Client`` object.
+        core may call from different tasks (for example when a timeout helper or
+        a task group runs a call in its own task), so the connection is held
+        here and callers only use the ``Client`` object.
         """
         try:
             async with contextlib.AsyncExitStack() as stack:

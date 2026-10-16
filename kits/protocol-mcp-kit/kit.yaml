@@ -18,7 +18,7 @@ targets:
     module: beddel_protocol_mcp
     # SDK pin (AD-21): exactly one release of one major line, so the upper bound is
     # the pin itself.  mcp 2.3.0 (PyPI, 2026-10-02) requires Python >=3.10, which is
-    # compatible with the core's Python >=3.11.  The kit implements the transport and
+    # compatible with the core's Python >=3.12.  The kit implements the transport and
     # authorization of MCP specification revision 2026-07-28; the core depends on
     # neither the SDK nor the revision.  Bumping the pin is a deliberate kit change.
     dependencies:

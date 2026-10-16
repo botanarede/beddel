@@ -9,7 +9,7 @@ Transports, OAuth and token storage live in this kit and never in the core (AD-2
 | Item | Value |
 | --- | --- |
 | MCP SDK | `mcp==2.3.0` — an exact pin, so the upper bound is the pin itself; major line **2** |
-| SDK Python requirement | `>=3.10` (compatible with the core's `>=3.11`) |
+| SDK Python requirement | `>=3.10` (compatible with the core's `>=3.12`) |
 | MCP specification revision implemented | **2026-07-28** (Streamable HTTP transport and authorization). The SDK negotiates down to the earlier `initialize` handshake for servers that predate it. |
 | JSON Schema | `jsonschema>=4.0` |
 

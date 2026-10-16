@@ -35,7 +35,7 @@ for compatibility table.
 
 <p align="center">
   <a href="https://pypi.org/project/beddel/"><img src="https://img.shields.io/pypi/v/beddel.svg" alt="PyPI version"></a>
-  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python 3.11+"></a>
+  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.12%2B-blue.svg" alt="Python 3.12+"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License: MIT"></a>
 </p>
 
@@ -59,7 +59,7 @@ pip install beddel                          # core only (3 deps: pydantic, pyyam
 beddel kit install provider-litellm-kit     # add LLM provider support
 ```
 
-Requires Python 3.11+.
+Requires Python 3.12+.
 
 ## Quick Example
 
