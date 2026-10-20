@@ -180,18 +180,56 @@ def test_missing_config_constant_raises(
     assert info.value.code == PROFILE_CONFIG_INVALID
 
 
+_PATHS: dict[str, object] = {
+    "inventory_dir": ".beddel-profile/inventory",
+    "records_dir": ".beddel-profile/records",
+}
+
+
 @pytest.mark.parametrize(
     "raw",
     [
-        {"gate_executables": ["git"]},  # missing key
+        {"gate_executables": ["git"], **_PATHS},  # missing key
         {
             "gate_executables": ["git"],
             "required_env_keys": [],
             "extra": [],
+            **_PATHS,
         },  # unknown key
-        {"gate_executables": "git", "required_env_keys": []},  # not a list
-        {"gate_executables": [1], "required_env_keys": []},  # non-string item
-        {"gate_executables": ["git"], "required_env_keys": [""]},  # empty item
+        {"gate_executables": "git", "required_env_keys": [], **_PATHS},  # not a list
+        {"gate_executables": [1], "required_env_keys": [], **_PATHS},  # non-string
+        {"gate_executables": ["git"], "required_env_keys": [""], **_PATHS},  # empty
+        {"gate_executables": ["git"], "required_env_keys": []},  # paths missing
+        {
+            "gate_executables": ["git"],
+            "required_env_keys": [],
+            "inventory_dir": "/abs",
+            "records_dir": "r",
+        },
+        {
+            "gate_executables": ["git"],
+            "required_env_keys": [],
+            "inventory_dir": "a/../b",
+            "records_dir": "r",
+        },
+        {
+            "gate_executables": ["git"],
+            "required_env_keys": [],
+            "inventory_dir": "a\\b",
+            "records_dir": "r",
+        },
+        {
+            "gate_executables": ["git"],
+            "required_env_keys": [],
+            "inventory_dir": "a//b",
+            "records_dir": "r",
+        },
+        {
+            "gate_executables": ["git"],
+            "required_env_keys": [],
+            "inventory_dir": "a",
+            "records_dir": 3,
+        },
     ],
 )
 def test_validate_config_rejects_malformed(raw: dict[str, object]) -> None:
@@ -204,6 +242,8 @@ def test_default_config_is_valid() -> None:
     loaded = cfg.load_config()
     assert loaded.gate_executables == ("git", "pytest", "ruff", "mypy")
     assert loaded.required_env_keys == ()
+    assert loaded.inventory_dir == ".beddel-profile/inventory"
+    assert loaded.records_dir == ".beddel-profile/records"
 
 
 def test_kit_root_resolves_to_kit_directory() -> None:
@@ -243,5 +283,9 @@ def test_extra_public_constant_is_rejected_at_runtime(
 def test_env_key_name_with_assignment_is_rejected() -> None:
     with pytest.raises(ProfileError):
         cfg.validate_config(
-            {"gate_executables": ["git"], "required_env_keys": ["KEY=value"]}
+            {
+                "gate_executables": ["git"],
+                "required_env_keys": ["KEY=value"],
+                **_PATHS,
+            }
         )

@@ -1,13 +1,16 @@
 id: verify-change
 name: Verify Change
-description: Entry workflow of the development profile. Runs the fail-closed preflight.
+description: Entry workflow of the development profile. Runs the fail-closed preflight, then binds the ratified inventory version to the analyzed revision.
 version: "1.0"
 requires_kits:
   - profile-dev-kit
 allowed_tools:
   - profile_preflight
+  - profile_bind_inventory
 inputs:
   - repo_path
+  - revision
+  - inventory_version
 steps:
   - id: preflight
     primitive: tool
@@ -15,3 +18,11 @@ steps:
       tool: profile_preflight
       arguments:
         repo_path: "$input.repo_path"
+  - id: bind_inventory
+    primitive: tool
+    config:
+      tool: profile_bind_inventory
+      arguments:
+        repo_path: "$input.repo_path"
+        revision: "$input.revision"
+        inventory_version: "$input.inventory_version"

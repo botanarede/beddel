@@ -18,6 +18,8 @@ from beddel_profile_dev._errors import ProfileError
 
 __all__ = [
     "GATE_EXECUTABLES",
+    "INVENTORY_DIR",
+    "RECORDS_DIR",
     "REQUIRED_ENV_KEYS",
     "KitConfig",
     "get_kit_root",
@@ -26,12 +28,17 @@ __all__ = [
 ]
 
 GATE_EXECUTABLES: tuple[str, ...] = ("git", "pytest", "ruff", "mypy")
-REQUIRED_ENV_KEYS: tuple[str, ...] = ()  # Story 2.3 adds the Review key names
+REQUIRED_ENV_KEYS: tuple[str, ...] = ()  # Epic 3 adds the Review key names
+# Repository-relative POSIX directories (Story 2.2, implementation detail).
+INVENTORY_DIR: str = ".beddel-profile/inventory"
+RECORDS_DIR: str = ".beddel-profile/records"
 
 # config key -> module constant name
 _KEYS: dict[str, str] = {
     "gate_executables": "GATE_EXECUTABLES",
     "required_env_keys": "REQUIRED_ENV_KEYS",
+    "inventory_dir": "INVENTORY_DIR",
+    "records_dir": "RECORDS_DIR",
 }
 
 _INVALID_MESSAGE = "profile config invalid"
@@ -43,6 +50,8 @@ class KitConfig:
 
     gate_executables: tuple[str, ...]
     required_env_keys: tuple[str, ...]
+    inventory_dir: str
+    records_dir: str
 
 
 def get_kit_root() -> Path:
@@ -71,6 +80,17 @@ def _string_tuple(value: object, *, env_names: bool = False) -> tuple[str, ...]:
     return tuple(items)
 
 
+def _relative_posix(value: object) -> str:
+    """Return ``value`` if it is a normalized, repository-relative POSIX path."""
+    if not isinstance(value, str) or not value or "\\" in value:
+        raise _invalid()
+    if value.startswith("/") or any(ord(c) < 32 or ord(c) == 127 for c in value):
+        raise _invalid()
+    if any(seg in ("", ".", "..") for seg in value.split("/")):
+        raise _invalid()
+    return value
+
+
 def validate_config(raw: Mapping[str, object]) -> KitConfig:
     """Validate a raw config mapping strictly.
 
@@ -83,6 +103,8 @@ def validate_config(raw: Mapping[str, object]) -> KitConfig:
     return KitConfig(
         gate_executables=_string_tuple(raw["gate_executables"]),
         required_env_keys=_string_tuple(raw["required_env_keys"], env_names=True),
+        inventory_dir=_relative_posix(raw["inventory_dir"]),
+        records_dir=_relative_posix(raw["records_dir"]),
     )
 
 
