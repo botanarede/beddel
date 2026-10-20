@@ -1,0 +1,17 @@
+id: verify-change
+name: Verify Change
+description: Entry workflow of the development profile. Runs the fail-closed preflight.
+version: "1.0"
+requires_kits:
+  - profile-dev-kit
+allowed_tools:
+  - profile_preflight
+inputs:
+  - repo_path
+steps:
+  - id: preflight
+    primitive: tool
+    config:
+      tool: profile_preflight
+      arguments:
+        repo_path: "$input.repo_path"

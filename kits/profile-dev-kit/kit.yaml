@@ -1,0 +1,38 @@
+name: profile-dev-kit
+version: 0.1.0
+description: >
+  Development profile kit: entry workflow and fail-closed preflight for
+  verifying a change in a Git repository.
+author: Beddel Team
+category: profile # descriptive only; SolutionKit ignores it
+
+# Documentation only. The runtime source of these lists is
+# python/beddel_profile_dev/config.py, never this block.
+config:
+  gate_executables: [git, pytest, ruff, mypy]
+  required_env_keys: []
+
+tools:
+  - name: profile_preflight
+    target: "beddel_profile_dev.tools.preflight:profile_preflight"
+    description: "Fail-closed preflight: Git work tree, gate executables, required env keys"
+    category: profile
+
+workflows:
+  - name: verify-change
+    path: workflows/verify-change.yaml
+    description: Entry workflow of the development profile (fail-closed preflight)
+
+targets:
+  python:
+    status: implemented
+    module: beddel_profile_dev
+    dependencies: []
+    tools:
+      - name: profile_preflight
+        target: "beddel_profile_dev.tools.preflight:profile_preflight"
+  typescript:
+    status: unavailable
+    unavailable_reason: >
+      AD-15: the profile kit is Python-only. Its preflight and gates
+      orchestrate local executables and have no TypeScript target.
