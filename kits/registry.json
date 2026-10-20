@@ -138,6 +138,12 @@
     "category": "pii"
   },
   {
+    "name": "profile-dev-kit",
+    "version": "0.1.0",
+    "description": "Development profile kit: entry workflow and fail-closed preflight for verifying a change in a Git repository.\n",
+    "category": "profile"
+  },
+  {
     "name": "protocol-gcp-mcp-kit",
     "version": "0.1.0",
     "description": "Google Managed MCP Server client adapter (BigQuery, Maps, Cloud SQL, etc.)",
