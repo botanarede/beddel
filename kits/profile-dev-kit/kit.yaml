@@ -6,22 +6,35 @@ description: >
 author: Beddel Team
 category: profile # descriptive only; SolutionKit ignores it
 
-# Documentation only. The runtime source of these lists is
+# Documentation only. The runtime source of these values is
 # python/beddel_profile_dev/config.py, never this block.
 config:
   gate_executables: [git, pytest, ruff, mypy]
   required_env_keys: []
+  inventory_dir: ".beddel-profile/inventory"
+  records_dir: ".beddel-profile/records"
 
 tools:
   - name: profile_preflight
     target: "beddel_profile_dev.tools.preflight:profile_preflight"
     description: "Fail-closed preflight: Git work tree, gate executables, required env keys"
     category: profile
+  - name: profile_ratify_inventory
+    target: "beddel_profile_dev.tools.ratify:profile_ratify_inventory"
+    description: "Record the maintainer's ratification of an inventory version (transport only)"
+    category: profile
+  - name: profile_bind_inventory
+    target: "beddel_profile_dev.tools.bind:profile_bind_inventory"
+    description: "Validate a ratified inventory version at a revision and bind its snapshot"
+    category: profile
 
 workflows:
   - name: verify-change
     path: workflows/verify-change.yaml
-    description: Entry workflow of the development profile (fail-closed preflight)
+    description: Entry workflow of the development profile (preflight, then inventory binding)
+  - name: ratify-inventory
+    path: workflows/ratify-inventory.yaml
+    description: Records the ratification of an inventory version
 
 targets:
   python:
@@ -31,6 +44,10 @@ targets:
     tools:
       - name: profile_preflight
         target: "beddel_profile_dev.tools.preflight:profile_preflight"
+      - name: profile_ratify_inventory
+        target: "beddel_profile_dev.tools.ratify:profile_ratify_inventory"
+      - name: profile_bind_inventory
+        target: "beddel_profile_dev.tools.bind:profile_bind_inventory"
   typescript:
     status: unavailable
     unavailable_reason: >

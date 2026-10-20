@@ -13,6 +13,7 @@ from beddel.tools.kits import discover_kits
 KIT_ROOT = Path(__file__).resolve().parent.parent
 KITS_DIR = KIT_ROOT.parent
 KIT_NAME = "profile-dev-kit"
+_TOOLS = ["profile_preflight", "profile_ratify_inventory", "profile_bind_inventory"]
 
 
 def _manifest() -> dict[str, Any]:
@@ -41,7 +42,7 @@ def test_discovered_without_errors_or_skips() -> None:
 
 def test_every_declared_tool_imports_with_metadata() -> None:
     kit = SolutionKit(**_manifest())
-    assert [t.name for t in kit.tools] == ["profile_preflight"]
+    assert [t.name for t in kit.tools] == _TOOLS
     for tool in kit.tools:
         module_path, func_name = tool.target.split(":")
         fn = getattr(importlib.import_module(module_path), func_name)
@@ -55,7 +56,7 @@ def test_load_kit_registers_the_declared_tool() -> None:
     from beddel.tools.kits import load_kit
 
     tools = load_kit(parse_kit_manifest(KIT_ROOT / "kit.yaml"))
-    assert set(tools) == {"profile_preflight"}
+    assert set(tools) == set(_TOOLS)
 
 
 def test_kit_yaml_config_block_matches_config_module() -> None:
@@ -64,6 +65,19 @@ def test_kit_yaml_config_block_matches_config_module() -> None:
     documented = _manifest()["config"]
     assert tuple(documented["gate_executables"]) == cfg.GATE_EXECUTABLES
     assert tuple(documented["required_env_keys"]) == cfg.REQUIRED_ENV_KEYS
+    assert documented["inventory_dir"] == cfg.INVENTORY_DIR
+    assert documented["records_dir"] == cfg.RECORDS_DIR
+
+
+def test_manifest_declares_both_workflows_and_python_targets() -> None:
+    manifest = _manifest()
+    assert [w["name"] for w in manifest["workflows"]] == [
+        "verify-change",
+        "ratify-inventory",
+    ]
+    declared = {t["name"] for t in manifest["tools"]}
+    targeted = {t["name"] for t in manifest["targets"]["python"]["tools"]}
+    assert declared == targeted == set(_TOOLS)
 
 
 def test_registry_lists_the_kit() -> None:

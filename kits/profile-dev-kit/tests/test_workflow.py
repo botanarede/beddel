@@ -5,16 +5,25 @@ from __future__ import annotations
 from collections.abc import Iterator
 from pathlib import Path
 
+import yaml
 from beddel.domain.models import Step, StrategyType, Workflow
 from beddel.domain.parser import WorkflowParser
 
-WORKFLOW_PATH = (
-    Path(__file__).resolve().parent.parent / "workflows" / "verify-change.yaml"
-)
+WORKFLOWS_DIR = Path(__file__).resolve().parent.parent / "workflows"
+WORKFLOW_PATH = WORKFLOWS_DIR / "verify-change.yaml"
+RATIFY_PATH = WORKFLOWS_DIR / "ratify-inventory.yaml"
 
 
 def _load() -> Workflow:
     return WorkflowParser.parse(WORKFLOW_PATH.read_text())
+
+
+def _raw_inputs(path: Path) -> list[str]:
+    return list(yaml.safe_load(path.read_text())["inputs"])
+
+
+def _load_ratify() -> Workflow:
+    return WorkflowParser.parse(RATIFY_PATH.read_text())
 
 
 def _walk(steps: list[Step] | None) -> Iterator[Step]:
@@ -41,18 +50,36 @@ def test_parses_and_requires_kit() -> None:
     assert wf.requires_kits == ["profile-dev-kit"]
 
 
-def test_preflight_is_the_first_and_only_step_and_fails_closed() -> None:
-    steps = _load().steps
-    assert [s.id for s in steps] == ["preflight"]
-    assert steps[0].primitive == "tool"
-    assert steps[0].config["tool"] == "profile_preflight"
-    # A failing preflight must stop the run: no retry, no fallback, no skip.
-    assert steps[0].execution_strategy.type is StrategyType.FAIL
+def test_preflight_then_bind_and_each_step_fails_closed() -> None:
+    wf = _load()
+    steps = wf.steps
+    assert [s.id for s in steps] == ["preflight", "bind_inventory"]
+    assert [s.config["tool"] for s in steps] == [
+        "profile_preflight",
+        "profile_bind_inventory",
+    ]
+    assert _raw_inputs(WORKFLOW_PATH) == ["repo_path", "revision", "inventory_version"]
+    # A failing step must stop the run: no retry, no fallback, no skip.
+    assert all(s.primitive == "tool" for s in steps)
+    assert all(s.execution_strategy.type is StrategyType.FAIL for s in steps)
 
 
 def test_allowlist_equals_the_tools_the_steps_name() -> None:
     wf = _load()
-    assert set(wf.allowed_tools or []) == _tool_names(wf.steps) == {"profile_preflight"}
+    assert wf.allowed_tools == ["profile_preflight", "profile_bind_inventory"] and set(
+        wf.allowed_tools
+    ) == _tool_names(wf.steps)
+
+
+def test_ratify_workflow_is_one_allowlisted_step() -> None:
+    wf = _load_ratify()
+    assert wf.id == "ratify-inventory"
+    assert wf.requires_kits == ["profile-dev-kit"]
+    assert _raw_inputs(RATIFY_PATH) == ["repo_path", "inventory_version", "actor"]
+    assert [s.id for s in wf.steps] == ["ratify"]
+    assert wf.allowed_tools == ["profile_ratify_inventory"]
+    assert _tool_names(wf.steps) == {"profile_ratify_inventory"}
+    assert wf.steps[0].execution_strategy.type is StrategyType.FAIL
 
 
 def test_walk_catches_a_tool_hidden_in_a_nested_branch() -> None:

@@ -1,0 +1,21 @@
+id: ratify-inventory
+name: Ratify Inventory
+description: Records the maintainer's ratification of an inventory version. The tool is transport; the human act is the committed record.
+version: "1.0"
+requires_kits:
+  - profile-dev-kit
+allowed_tools:
+  - profile_ratify_inventory
+inputs:
+  - repo_path
+  - inventory_version
+  - actor
+steps:
+  - id: ratify
+    primitive: tool
+    config:
+      tool: profile_ratify_inventory
+      arguments:
+        repo_path: "$input.repo_path"
+        inventory_version: "$input.inventory_version"
+        actor: "$input.actor"
