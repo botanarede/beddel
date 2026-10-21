@@ -123,3 +123,59 @@ def test_symlinked_inventory_dir_escaping_the_repo_is_refused(
     with pytest.raises(ProfileError):
         profile_ratify_inventory(str(repo), "v1", "a")
     assert not (outside / "v1.ratification.yaml").exists()
+
+
+# --- immutability against the index and history (Story 2.3 AC9) -------------
+
+
+def test_record_only_in_the_index_refuses_ratification(repo: Path) -> None:
+    from ._helpers import git
+
+    write_version(repo, "v1", good())
+    profile_ratify_inventory(str(repo), "v1", "a")
+    git(repo, "add", str(_record(repo).relative_to(repo)))
+    _record(repo).unlink()
+    assert _refused(repo, "v1", "b").details == {"reason": "record.exists"}
+    assert not _record(repo).exists()
+
+
+def test_record_only_in_history_refuses_ratification(repo: Path) -> None:
+    from ._helpers import commit_all, git
+
+    write_version(repo, "v1", good())
+    profile_ratify_inventory(str(repo), "v1", "a")
+    commit_all(repo, "ratify")
+    git(repo, "rm", "-q", str(_record(repo).relative_to(repo)))
+    commit_all(repo, "drop the record")
+    assert not _record(repo).exists()
+    assert _refused(repo, "v1", "b").details == {"reason": "record.exists"}
+    assert not _record(repo).exists()
+
+
+def test_unborn_head_has_no_history_and_is_not_an_error(repo: Path) -> None:
+    write_version(repo, "v1", good())
+    profile_ratify_inventory(str(repo), "v1", "a")
+    assert _record(repo).is_file()
+
+
+def test_unrelated_history_does_not_refuse(repo: Path) -> None:
+    from ._helpers import commit_all
+
+    write_version(repo, "v1", good())
+    commit_all(repo, "version only")
+    profile_ratify_inventory(str(repo), "v1", "a")
+    assert _record(repo).is_file()
+
+
+def test_unreadable_history_refuses_with_its_own_reason(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from beddel_profile_dev._errors import PROFILE_REPOSITORY_INVALID
+
+    def broken(*_: object) -> bool:
+        raise ProfileError(PROFILE_REPOSITORY_INVALID, "x")
+
+    write_version(repo, "v1", good())
+    monkeypatch.setattr("beddel_profile_dev.tools.ratify.in_head_history", broken)
+    assert _refused(repo, "v1", "a").details == {"reason": "history.unreadable"}
+    assert not _record(repo).exists()

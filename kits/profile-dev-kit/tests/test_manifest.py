@@ -13,7 +13,14 @@ from beddel.tools.kits import discover_kits
 KIT_ROOT = Path(__file__).resolve().parent.parent
 KITS_DIR = KIT_ROOT.parent
 KIT_NAME = "profile-dev-kit"
-_TOOLS = ["profile_preflight", "profile_ratify_inventory", "profile_bind_inventory"]
+_TOOLS = [
+    "profile_preflight",
+    "profile_ratify_inventory",
+    "profile_bind_inventory",
+    "profile_record_change",
+    "profile_derive_impact",
+    "profile_declare_non_applicability",
+]
 
 
 def _manifest() -> dict[str, Any]:
@@ -69,11 +76,12 @@ def test_kit_yaml_config_block_matches_config_module() -> None:
     assert documented["records_dir"] == cfg.RECORDS_DIR
 
 
-def test_manifest_declares_both_workflows_and_python_targets() -> None:
+def test_manifest_declares_all_workflows_and_python_targets() -> None:
     manifest = _manifest()
     assert [w["name"] for w in manifest["workflows"]] == [
         "verify-change",
         "ratify-inventory",
+        "declare-non-applicability",
     ]
     declared = {t["name"] for t in manifest["tools"]}
     targeted = {t["name"] for t in manifest["targets"]["python"]["tools"]}

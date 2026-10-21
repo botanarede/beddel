@@ -5,8 +5,10 @@ Development profile kit for Beddel. It provides the entry workflow
 the target path is a Git work tree, the gate executables resolve on `PATH`, and
 the required environment keys are present (key names only, never values).
 
-Status: Story 2.2. Entry workflows `verify-change` and `ratify-inventory`; tools
-`profile_preflight`, `profile_ratify_inventory` and `profile_bind_inventory`.
+Status: Story 2.3. Entry workflows `verify-change`, `ratify-inventory` and
+`declare-non-applicability`; tools `profile_preflight`,
+`profile_ratify_inventory`, `profile_bind_inventory`, `profile_record_change`,
+`profile_derive_impact` and `profile_declare_non_applicability`.
 
 ## Layout
 
@@ -39,8 +41,9 @@ numbers. Unknown keys are rejected.
   `<version>.ratification.yaml` next to the version file, create-only. The
   maintainer commits it: that commit is the human act; the tool is transport.
   A ratified version is immutable; a change is a new version.
-- `verify-change` (inputs `repo_path`, `revision`, `inventory_version`) runs
-  `preflight`, then `bind_inventory`: it reads the version and its
+- `verify-change` (inputs `repo_path`, `change_id`, `base`, `revision`,
+  `inventory_version`) runs
+  `preflight`, `change`, `bind_inventory` and `impact`. `bind_inventory` reads the version and its
   ratification from the tree of `revision`, validates identity formation and
   resolution, and either records one integrity block
   (`PROFILE_INVENTORY_INTEGRITY_BLOCK`) or writes `binding.json` and the
@@ -53,6 +56,35 @@ numbers. Unknown keys are rejected.
 - Ratification hashes the work-tree bytes and binding hashes the committed
   blob: keep the version file byte-identical when committed (no EOL or
   clean-filter rewriting), otherwise binding fails closed as unratified.
+
+## Change and Impact (Story 2.3)
+
+- `change` (`profile_record_change`) records the Change: `change_id` (id
+  pattern), its `base` commit (fixed by the first record; a rebased Change gets
+  a new id, else `PROFILE_CHANGE_CONFLICT`) and the link of the Analyzed
+  revision, which `base` must be an ancestor of (`PROFILE_CHANGE_INVALID`).
+  Records: `.beddel-profile/records/changes/<change_id>/change.json` and
+  `.../revisions/<sha>/revision.json`.
+- `impact` (`profile_derive_impact`) needs the Change, its revision link and the
+  binding. The footprint is the set of paths that differ between the trees of
+  `base` and `revision` (plumbing, no renames, never declared by the Change).
+  Affected points are the snapshot components touched by it (equal or ancestor
+  by whole path segments). Required evidence is the complete derived set: every
+  obligation of an Active product component present at the revision, plus every
+  obligation of an Affected point, each with its Requirement ID constituents,
+  `target_present` and `basis`. The result is `impact.json`, create-only and
+  deterministic (`PROFILE_IMPACT_UNBOUND`, `PROFILE_IMPACT_CONFLICT`). A new
+  Analyzed revision of the Change also discharges the earlier integrity blocks
+  of that Change (once per block); the blocked revision stays blocked.
+- `declare-non-applicability` records the maintainer's determination that one
+  obligation whose component path is absent at a revision is not applicable
+  there: only the actor who ratified the bound version may make it, once per
+  obligation and revision (`PROFILE_DETERMINATION_REFUSED` with a reason code).
+  It is a record only: it changes neither the impact record, the Required
+  evidence, the snapshot, the binding nor any block.
+- Ratification is also refused (`record.exists`) when its record is in the Git
+  index or in the history reachable from `HEAD`; an unreadable history refuses
+  with `history.unreadable`.
 
 ## Tests
 

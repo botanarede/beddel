@@ -1,4 +1,4 @@
-"""Fail-closed preflight — first and only step of ``verify-change``.
+"""Fail-closed preflight — first step of ``verify-change``.
 
 Checks the target repository, the gate executables and the required environment
 key *names*. No network. Secret values are never read into any output.
