@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -116,3 +117,28 @@ def change_fixture(
     if mutate is not None:
         mutate(repo)
     return repo, base, commit_all(repo, "change")
+
+
+def stub_gate_tools(tmp_path: Path) -> str:
+    """Return a ``PATH`` whose ``ruff``, ``mypy`` and ``pytest`` are fast stubs.
+
+    A stub prints its arguments, sleeps ``$STUB_SLEEP_<NAME>`` seconds (default
+    0) and exits with ``$STUB_EXIT_<NAME>`` (default 0), so a test drives the
+    Gate with the default command list without ever running the real tools.
+    ``git`` still comes from the real ``PATH``.
+    """
+    bin_dir = tmp_path / "gate-bin"
+    bin_dir.mkdir(exist_ok=True)
+    for tool in ("ruff", "mypy", "pytest"):
+        stub = bin_dir / tool
+        if not stub.exists():
+            name = tool.upper()
+            stub.write_text(
+                f"#!{sys.executable}\n"
+                "import os, sys, time\n"
+                "print('stub', *sys.argv[1:], flush=True)\n"
+                f"time.sleep(float(os.environ.get('STUB_SLEEP_{name}', '0')))\n"
+                f"sys.exit(int(os.environ.get('STUB_EXIT_{name}', '0')))\n"
+            )
+            stub.chmod(0o755)
+    return os.pathsep.join([str(bin_dir), os.environ.get("PATH", "")])

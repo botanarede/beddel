@@ -4,11 +4,19 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
-from ._helpers import commit_all, good, init_repo, make_source, write_version
+from ._helpers import (
+    commit_all,
+    good,
+    init_repo,
+    make_source,
+    stub_gate_tools,
+    write_version,
+)
 
 KIT_ROOT = Path(__file__).resolve().parent.parent
 KITS_DIR = KIT_ROOT.parent
@@ -30,6 +38,7 @@ def _run_workflow(
     workflow: Path,
     inputs: dict[str, str],
     tmp_path: Path,
+    kits_dir: Path = KITS_DIR,
     **extra_env: str,
 ) -> subprocess.CompletedProcess[str]:
     # Throw-away HOME whose config points kits_paths at this checkout, so the
@@ -38,7 +47,7 @@ def _run_workflow(
     home = tmp_path / "home"
     config_dir = home / ".config" / "beddel"
     config_dir.mkdir(parents=True, exist_ok=True)
-    (config_dir / "config.json").write_text(json.dumps({"kits_paths": [str(KITS_DIR)]}))
+    (config_dir / "config.json").write_text(json.dumps({"kits_paths": [str(kits_dir)]}))
     env = {
         k: v
         for k, v in os.environ.items()
@@ -66,8 +75,11 @@ def _run(
     version: str = "v1",
     change_id: str = "c1",
     base: str = "HEAD",
+    kits_dir: Path = KITS_DIR,
     **extra_env: str,
 ) -> subprocess.CompletedProcess[str]:
+    # The Gate runs the default command list: keep it fast and hermetic.
+    extra_env = {"PATH": stub_gate_tools(tmp_path), **extra_env}
     return _run_workflow(
         WORKFLOW,
         {
@@ -78,6 +90,7 @@ def _run(
             "inventory_version": version,
         },
         tmp_path,
+        kits_dir,
         **extra_env,
     )
 
@@ -123,7 +136,7 @@ def _fixture(tmp_path: Path, data: object = None) -> Path:
     return repo
 
 
-def test_ratify_then_verify_change_passes_all_four_steps(tmp_path: Path) -> None:
+def test_ratify_then_verify_change_passes_all_five_steps(tmp_path: Path) -> None:
     repo = _fixture(tmp_path)
     _ratify(repo, tmp_path)
     base = commit_all(repo)
@@ -136,6 +149,7 @@ def test_ratify_then_verify_change_passes_all_four_steps(tmp_path: Path) -> None
         "profile_record_change",
         "profile_bind_inventory",
         "profile_derive_impact",
+        "profile_run_gate",
     ):
         assert f"'tool': '{tool}'" in result.stdout
     assert (repo / RECORDS / "revisions" / sha / "snapshot.json").is_file()
@@ -147,6 +161,163 @@ def test_ratify_then_verify_change_passes_all_four_steps(tmp_path: Path) -> None
     assert impact["footprint"] == ["src/api.py"]
     assert [p["id"] for p in impact["affected_points"]] == ["api"]
     assert len(impact["required_evidence"]) == 2
+
+
+def _gate_json(repo: Path, sha: str) -> dict[str, object]:
+    path = repo / RECORDS / "changes" / "c1" / "revisions" / sha / "gate.json"
+    data = json.loads(path.read_text())
+    assert isinstance(data, dict)
+    return data
+
+
+def test_verify_change_records_a_non_zero_gate_exit_as_a_result(
+    tmp_path: Path,
+) -> None:
+    repo = _fixture(tmp_path)
+    _ratify(repo, tmp_path)
+    base = commit_all(repo)
+    (repo / "src" / "api.py").write_text("x = 2\n")
+    sha = commit_all(repo, "change")
+    result = _run(str(repo), tmp_path, revision=sha, base=base, STUB_EXIT_PYTEST="1")
+    assert result.returncode == 0, result.stderr  # a non-zero exit is not an error
+    gate = _gate_json(repo, sha)
+    assert gate["status"] == "completed"
+    commands = gate["commands"]
+    assert isinstance(commands, list)
+    assert [c["exit_code"] for c in commands] == [0, 0, 0, 1]
+    assert [c["timed_out"] for c in commands] == [False] * 4
+    output = repo / RECORDS / "changes" / "c1" / "revisions" / sha / "gate-output" / "1"
+    assert (output / "04-pytest.stdout.txt").read_text() == "stub -q\n"
+
+
+def test_rerunning_verify_change_appends_a_gate_attempt(tmp_path: Path) -> None:
+    repo = _fixture(tmp_path)
+    _ratify(repo, tmp_path)
+    base = commit_all(repo)
+    (repo / "src" / "api.py").write_text("x = 2\n")
+    sha = commit_all(repo, "change")
+    assert _run(str(repo), tmp_path, revision=sha, base=base).returncode == 0
+    second = _run(str(repo), tmp_path, revision=sha, base=base, STUB_EXIT_RUFF="2")
+    assert second.returncode == 0, second.stderr
+    gate = _gate_json(repo, sha)
+    assert str(gate["gate_ref"]).endswith("/gate-output/2")
+    output = repo / RECORDS / "changes" / "c1" / "revisions" / sha / "gate-output"
+    assert sorted(p.name for p in output.iterdir()) == ["1", "2"]
+
+
+def _kit_copy(tmp_path: Path, *replacements: tuple[str, str]) -> Path:
+    """Copy the kit under ``tmp_path`` with an edited ``config.py``; return its dir.
+
+    The Gate constants are not injectable into the CLI subprocess, so a test
+    that needs another command list or budget runs the real CLI over this copy.
+    """
+    kits = tmp_path / "kits"
+    shutil.copytree(
+        KIT_ROOT,
+        kits / "profile-dev-kit",
+        ignore=shutil.ignore_patterns("__pycache__", "tests", ".*", "*.egg-info"),
+    )
+    config = kits / "profile-dev-kit" / "python" / "beddel_profile_dev" / "config.py"
+    text = config.read_text()
+    for old, new in replacements:
+        assert old in text
+        text = text.replace(old, new)
+    config.write_text(text)
+    return kits
+
+
+def _committed_change(tmp_path: Path) -> tuple[Path, str, str]:
+    repo = _fixture(tmp_path)
+    _ratify(repo, tmp_path)
+    base = commit_all(repo)
+    (repo / "src" / "api.py").write_text("x = 2\n")
+    return repo, base, commit_all(repo, "change")
+
+
+def test_verify_change_records_a_hanging_gate_command_as_timed_out(
+    tmp_path: Path,
+) -> None:
+    repo, base, sha = _committed_change(tmp_path)
+    kits = _kit_copy(
+        tmp_path, ("GATE_TIMEOUT_SECONDS: int = 300", "GATE_TIMEOUT_SECONDS: int = 3")
+    )
+    result = _run(
+        str(repo),
+        tmp_path,
+        revision=sha,
+        base=base,
+        kits_dir=kits,
+        STUB_SLEEP_MYPY="60",
+    )
+    # A timeout is an outcome, not an error.
+    assert result.returncode == 0, result.stderr
+    commands = _gate_json(repo, sha)["commands"]
+    assert isinstance(commands, list)
+    assert [(c["exit_code"], c["timed_out"]) for c in commands] == [
+        (0, False),
+        (0, False),
+        (None, True),
+        (0, False),
+    ]
+
+
+def test_verify_change_refuses_a_gate_command_outside_the_allowlist(
+    tmp_path: Path,
+) -> None:
+    repo, base, sha = _committed_change(tmp_path)
+    kits = _kit_copy(tmp_path, ('("mypy", ".")', '("curl", "--version")'))
+    result = _run(str(repo), tmp_path, revision=sha, base=base, kits_dir=kits)
+    assert result.returncode != 0
+    # Every tool loads the config first, so the refusal surfaces at the first step.
+    assert "Step 'preflight' failed" in result.stderr
+    assert "PROFILE_GATE_COMMAND_INVALID" in result.stderr
+    assert "gate command executable is not allowed" in result.stderr
+    revision_dir = repo / RECORDS / "changes" / "c1" / "revisions" / sha
+    assert not (revision_dir / "gate.json").exists()
+    assert not (revision_dir / "gate-output").exists()
+
+
+def test_the_gate_step_alone_stops_without_an_impact_record(tmp_path: Path) -> None:
+    repo, _, sha = _committed_change(tmp_path)
+    workflow = tmp_path / "gate-only.yaml"
+    workflow.write_text(
+        "id: gate-only\n"
+        "name: Gate only\n"
+        "description: Runs the gate step without the earlier steps.\n"
+        'version: "1.0"\n'
+        "requires_kits:\n"
+        "  - profile-dev-kit\n"
+        "allowed_tools:\n"
+        "  - profile_run_gate\n"
+        "inputs:\n"
+        "  - repo_path\n"
+        "  - change_id\n"
+        "  - revision\n"
+        "steps:\n"
+        "  - id: gate\n"
+        "    primitive: tool\n"
+        "    config:\n"
+        "      tool: profile_run_gate\n"
+        "      arguments:\n"
+        '        repo_path: "$input.repo_path"\n'
+        '        change_id: "$input.change_id"\n'
+        '        revision: "$input.revision"\n'
+    )
+    result = _run_workflow(
+        workflow,
+        {"repo_path": str(repo), "change_id": "c1", "revision": sha},
+        tmp_path,
+        PATH=stub_gate_tools(tmp_path),
+    )
+    assert result.returncode != 0
+    assert "Step 'gate' failed" in result.stderr
+    assert "PROFILE_GATE_UNSCOPED" in result.stderr
+    assert (
+        "gate needs the impact record of the Change at this revision" in result.stderr
+    )
+    revision_dir = repo / RECORDS / "changes" / "c1" / "revisions" / sha
+    assert not (revision_dir / "gate.json").exists()
+    assert not (revision_dir / "gate-output").exists()
 
 
 def test_block_then_fix_commit_discharges_the_earlier_block(tmp_path: Path) -> None:

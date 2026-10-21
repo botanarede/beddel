@@ -29,6 +29,7 @@ __all__ = [
     "read_confined",
     "real_repo_root",
     "resolve_revision",
+    "work_tree_at",
     "write_create_only",
 ]
 
@@ -196,6 +197,54 @@ def in_head_history(repo: Path, path: str) -> bool:
     if result is None or result.returncode != 0:
         raise _repo_error()
     return bool(result.stdout.strip())
+
+
+def work_tree_at(repo: Path, sha: str, ignore_dir: str) -> bool:
+    """Return True if the work tree IS commit ``sha`` and no tracked file differs.
+
+    Untracked files are not looked at, and neither is anything tracked under
+    ``ignore_dir`` (the records directory, whose files the kit itself updates).
+    A Git failure is an error, never a mismatch.
+    """
+    head = _git(repo, "rev-parse", "--verify", "--end-of-options", "HEAD^{commit}")
+    if head is None or head.returncode != 0:
+        raise _repo_error()
+    if head.stdout.decode("ascii", "replace").strip() != sha:
+        return False
+    status = _git(
+        repo,
+        "--no-optional-locks",
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--untracked-files=no",
+        "--ignore-submodules=untracked",
+    )
+    if status is None or status.returncode != 0:
+        raise _repo_error()
+    prefix = ignore_dir.rstrip("/") + "/"
+    # ``status`` cannot see a tracked file flagged assume-unchanged or
+    # skip-worktree (a sparse checkout): refuse those, they could hide an edit.
+    flags = _git(repo, "ls-files", "-v", "-z")
+    if flags is None or flags.returncode != 0:
+        raise _repo_error()
+    for entry in flags.stdout.decode("utf-8", "surrogateescape").split("\0"):
+        hidden = entry and (entry[0].islower() or entry[0] == "S")
+        if hidden and not entry[2:].startswith(prefix):
+            return False
+    original = False  # the next token is the source path of a rename or copy
+    for token in status.stdout.decode("utf-8", "surrogateescape").split("\0"):
+        if not token:
+            continue
+        if original:
+            path = token
+            original = False
+        else:
+            path = token[3:]
+            original = "R" in token[:2] or "C" in token[:2]
+        if not path.startswith(prefix):
+            return False
+    return True
 
 
 def confined(root: Path, relative: str) -> Path:

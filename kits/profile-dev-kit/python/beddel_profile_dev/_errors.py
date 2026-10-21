@@ -15,6 +15,8 @@ __all__ = [
     "PROFILE_CHANGE_INVALID",
     "PROFILE_CONFIG_INVALID",
     "PROFILE_DETERMINATION_REFUSED",
+    "PROFILE_GATE_COMMAND_INVALID",
+    "PROFILE_GATE_UNSCOPED",
     "PROFILE_IMPACT_CONFLICT",
     "PROFILE_IMPACT_UNBOUND",
     "PROFILE_INVENTORY_BINDING_CONFLICT",
@@ -61,6 +63,13 @@ PROFILE_IMPACT_CONFLICT = "PROFILE_IMPACT_CONFLICT"
 
 PROFILE_DETERMINATION_REFUSED = "PROFILE_DETERMINATION_REFUSED"
 """Raised when a determination of non-applicability cannot be recorded (nothing is written)."""
+
+PROFILE_GATE_COMMAND_INVALID = "PROFILE_GATE_COMMAND_INVALID"
+"""Raised when a configured Gate command names an executable outside the allowlist."""
+
+PROFILE_GATE_UNSCOPED = "PROFILE_GATE_UNSCOPED"
+"""Raised when the Gate cannot be scoped: the impact record is absent or inconsistent
+with the step inputs, or the work tree is not the Analyzed revision."""
 
 
 class ProfileError(BeddelError):

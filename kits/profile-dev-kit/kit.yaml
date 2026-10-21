@@ -3,8 +3,10 @@ version: 0.1.0
 description: >
   Development profile kit: entry workflow and fail-closed preflight for
   verifying a change in a Git repository; ratified inventory binding; the
-  Change, its Impact (footprint, Affected points, Required evidence) and the
-  recorded determination of non-applicability.
+  Change, its Impact (footprint, Affected points, Required evidence), the
+  deterministic local Gate over that derived set (an operational outcome of
+  exit codes, never Evidence or a Verdict) and the recorded determination of
+  non-applicability.
 author: Beddel Team
 category: profile # descriptive only; SolutionKit ignores it
 
@@ -15,6 +17,13 @@ config:
   required_env_keys: []
   inventory_dir: ".beddel-profile/inventory"
   records_dir: ".beddel-profile/records"
+  gate_commands:
+    - [ruff, check, "."]
+    - [ruff, format, --check, "."]
+    - [mypy, "."]
+    - [pytest, -q]
+  gate_timeout_seconds: 300
+  gate_total_timeout_seconds: 1200
 
 tools:
   - name: profile_preflight
@@ -37,6 +46,10 @@ tools:
     target: "beddel_profile_dev.tools.impact:profile_derive_impact"
     description: "Derive the footprint, Affected points and Required evidence of a Change"
     category: profile
+  - name: profile_run_gate
+    target: "beddel_profile_dev.tools.gate:profile_run_gate"
+    description: "Run the configured local gate commands over the derived set and record exit codes (operational outcome, not Evidence)"
+    category: profile
   - name: profile_declare_non_applicability
     target: "beddel_profile_dev.tools.determine:profile_declare_non_applicability"
     description: "Record the maintainer's determination that an obligation with an absent target is not applicable (transport only)"
@@ -45,7 +58,7 @@ tools:
 workflows:
   - name: verify-change
     path: workflows/verify-change.yaml
-    description: Entry workflow of the development profile (preflight, Change, inventory binding, Impact)
+    description: Entry workflow of the development profile (preflight, Change, inventory binding, Impact, Gate)
   - name: ratify-inventory
     path: workflows/ratify-inventory.yaml
     description: Records the ratification of an inventory version
@@ -69,6 +82,8 @@ targets:
         target: "beddel_profile_dev.tools.change:profile_record_change"
       - name: profile_derive_impact
         target: "beddel_profile_dev.tools.impact:profile_derive_impact"
+      - name: profile_run_gate
+        target: "beddel_profile_dev.tools.gate:profile_run_gate"
       - name: profile_declare_non_applicability
         target: "beddel_profile_dev.tools.determine:profile_declare_non_applicability"
   typescript:
