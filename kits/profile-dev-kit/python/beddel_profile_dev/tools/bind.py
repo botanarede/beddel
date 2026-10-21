@@ -187,6 +187,9 @@ def _discharge_other_blocks(
             "resolved_by_sha256": digest,
         }
         name = entry[: -len(".json")] + ".discharged.json"
+        discharged = confined(root, f"{base}/integrity-blocks/{name}")
+        if discharged.exists() or discharged.is_symlink():
+            continue  # a block is discharged once, by either kind
         _write_or_match(
             root, f"{base}/integrity-blocks/{name}", canonical_json(discharge)
         )

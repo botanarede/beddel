@@ -18,6 +18,8 @@ from beddel.tools import beddel_tool
 from beddel_profile_dev._errors import PROFILE_RATIFICATION_REFUSED, ProfileError
 from beddel_profile_dev._io import (
     confined,
+    in_head_history,
+    in_index,
     read_confined,
     real_repo_root,
     write_create_only,
@@ -87,7 +89,12 @@ def profile_ratify_inventory(
     record_path = confined(root, record_rel)
     if record_path.exists() or record_path.is_symlink():
         raise _refuse("record.exists")
-
+    try:
+        in_history = in_index(root, record_rel) or in_head_history(root, record_rel)
+    except ProfileError:
+        raise _refuse("history.unreadable") from None
+    if in_history:
+        raise _refuse("record.exists")
     digest = hashlib.sha256(blob).hexdigest()
     record = {
         "schema": RATIFICATION_SCHEMA,

@@ -2,7 +2,9 @@ name: profile-dev-kit
 version: 0.1.0
 description: >
   Development profile kit: entry workflow and fail-closed preflight for
-  verifying a change in a Git repository.
+  verifying a change in a Git repository; ratified inventory binding; the
+  Change, its Impact (footprint, Affected points, Required evidence) and the
+  recorded determination of non-applicability.
 author: Beddel Team
 category: profile # descriptive only; SolutionKit ignores it
 
@@ -27,14 +29,29 @@ tools:
     target: "beddel_profile_dev.tools.bind:profile_bind_inventory"
     description: "Validate a ratified inventory version at a revision and bind its snapshot"
     category: profile
+  - name: profile_record_change
+    target: "beddel_profile_dev.tools.change:profile_record_change"
+    description: "Record a Change (id and base) and the link of its Analyzed revision"
+    category: profile
+  - name: profile_derive_impact
+    target: "beddel_profile_dev.tools.impact:profile_derive_impact"
+    description: "Derive the footprint, Affected points and Required evidence of a Change"
+    category: profile
+  - name: profile_declare_non_applicability
+    target: "beddel_profile_dev.tools.determine:profile_declare_non_applicability"
+    description: "Record the maintainer's determination that an obligation with an absent target is not applicable (transport only)"
+    category: profile
 
 workflows:
   - name: verify-change
     path: workflows/verify-change.yaml
-    description: Entry workflow of the development profile (preflight, then inventory binding)
+    description: Entry workflow of the development profile (preflight, Change, inventory binding, Impact)
   - name: ratify-inventory
     path: workflows/ratify-inventory.yaml
     description: Records the ratification of an inventory version
+  - name: declare-non-applicability
+    path: workflows/declare-non-applicability.yaml
+    description: Records the determination of non-applicability of one obligation with an absent target
 
 targets:
   python:
@@ -48,6 +65,12 @@ targets:
         target: "beddel_profile_dev.tools.ratify:profile_ratify_inventory"
       - name: profile_bind_inventory
         target: "beddel_profile_dev.tools.bind:profile_bind_inventory"
+      - name: profile_record_change
+        target: "beddel_profile_dev.tools.change:profile_record_change"
+      - name: profile_derive_impact
+        target: "beddel_profile_dev.tools.impact:profile_derive_impact"
+      - name: profile_declare_non_applicability
+        target: "beddel_profile_dev.tools.determine:profile_declare_non_applicability"
   typescript:
     status: unavailable
     unavailable_reason: >

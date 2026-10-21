@@ -1,0 +1,27 @@
+id: declare-non-applicability
+name: Declare Non-Applicability
+description: Records the maintainer's determination that one obligation, whose declared target is absent at an Analyzed revision, is not applicable there. The tool is transport for the maintainer's act. The determination changes nothing else.
+version: "1.0"
+requires_kits:
+  - profile-dev-kit
+allowed_tools:
+  - profile_declare_non_applicability
+inputs:
+  - repo_path
+  - revision
+  - class_id
+  - affected_point_id
+  - criterion_id
+  - actor
+steps:
+  - id: declare
+    primitive: tool
+    config:
+      tool: profile_declare_non_applicability
+      arguments:
+        repo_path: "$input.repo_path"
+        revision: "$input.revision"
+        class_id: "$input.class_id"
+        affected_point_id: "$input.affected_point_id"
+        criterion_id: "$input.criterion_id"
+        actor: "$input.actor"

@@ -11,7 +11,12 @@ from typing import Any
 from beddel.domain.errors import BeddelError
 
 __all__ = [
+    "PROFILE_CHANGE_CONFLICT",
+    "PROFILE_CHANGE_INVALID",
     "PROFILE_CONFIG_INVALID",
+    "PROFILE_DETERMINATION_REFUSED",
+    "PROFILE_IMPACT_CONFLICT",
+    "PROFILE_IMPACT_UNBOUND",
     "PROFILE_INVENTORY_BINDING_CONFLICT",
     "PROFILE_INVENTORY_INTEGRITY_BLOCK",
     "PROFILE_INVENTORY_UNRATIFIED",
@@ -41,6 +46,21 @@ PROFILE_INVENTORY_BINDING_CONFLICT = "PROFILE_INVENTORY_BINDING_CONFLICT"
 
 PROFILE_REPOSITORY_INVALID = "PROFILE_REPOSITORY_INVALID"
 """Raised when the repository path or revision cannot be used."""
+
+PROFILE_CHANGE_INVALID = "PROFILE_CHANGE_INVALID"
+"""Raised when a Change id is invalid or its base is not an ancestor of the revision."""
+
+PROFILE_CHANGE_CONFLICT = "PROFILE_CHANGE_CONFLICT"
+"""Raised when a recorded Change has another base or a stored link differs."""
+
+PROFILE_IMPACT_UNBOUND = "PROFILE_IMPACT_UNBOUND"
+"""Raised when the Change, its revision link or the revision binding is missing or inconsistent."""
+
+PROFILE_IMPACT_CONFLICT = "PROFILE_IMPACT_CONFLICT"
+"""Raised when a stored impact record differs from the re-derived one."""
+
+PROFILE_DETERMINATION_REFUSED = "PROFILE_DETERMINATION_REFUSED"
+"""Raised when a determination of non-applicability cannot be recorded (nothing is written)."""
 
 
 class ProfileError(BeddelError):

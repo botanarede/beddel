@@ -21,6 +21,10 @@ __all__ = [
     "blob_at",
     "canonical_json",
     "confined",
+    "footprint",
+    "in_head_history",
+    "in_index",
+    "is_ancestor",
     "path_present",
     "read_confined",
     "real_repo_root",
@@ -115,6 +119,83 @@ def path_present(repo: Path, sha: str, path: str) -> bool:
     if result is None or result.returncode != 0:
         raise _repo_error()
     return bool(result.stdout)
+
+
+def is_ancestor(repo: Path, base: str, revision: str) -> bool:
+    """Return True if commit ``base`` is an ancestor of ``revision``.
+
+    Exit 0 is True, exit 1 is False; any other outcome is a Git failure.
+    """
+    if _FULL_SHA.fullmatch(base) is None or _FULL_SHA.fullmatch(revision) is None:
+        raise _repo_error()
+    result = _git(repo, "merge-base", "--is-ancestor", base, revision)
+    if result is None or result.returncode not in (0, 1):
+        raise _repo_error()
+    return result.returncode == 0
+
+
+def footprint(repo: Path, base: str, revision: str) -> list[str]:
+    """Sorted, unique paths that differ between the trees of two commits.
+
+    Plumbing only: no rename detection, no diff configuration, no work tree and
+    no index. A Git failure raises; it is never an empty footprint.
+    """
+    if _FULL_SHA.fullmatch(base) is None or _FULL_SHA.fullmatch(revision) is None:
+        raise _repo_error()
+    result = _git(
+        repo,
+        "diff-tree",
+        "-r",
+        "-z",
+        "--no-renames",
+        "--ignore-submodules=none",
+        "--no-commit-id",
+        "--name-only",
+        base,
+        revision,
+    )
+    if result is None or result.returncode != 0:
+        raise _repo_error()
+    names = {
+        raw.decode("utf-8", "surrogateescape")
+        for raw in result.stdout.split(b"\x00")
+        if raw
+    }
+    return sorted(names)
+
+
+def in_index(repo: Path, path: str) -> bool:
+    """Return True if ``path`` is in the Git index. A Git failure raises."""
+    result = _git(repo, "ls-files", "-z", "--cached", "--", path)
+    if result is None or result.returncode != 0:
+        raise _repo_error()
+    return bool(result.stdout)
+
+
+def in_head_history(repo: Path, path: str) -> bool:
+    """Return True if any commit reachable from ``HEAD`` touches ``path``.
+
+    An unborn ``HEAD`` has no history and is not an error; any other Git
+    failure raises.
+    """
+    head = _git(repo, "rev-parse", "--verify", "--quiet", "HEAD")
+    if head is None:
+        raise _repo_error()
+    if head.returncode != 0:
+        # Only a HEAD that names a branch with no commit yet is unborn; a
+        # broken ref or a detached HEAD that cannot be read is a failure.
+        unborn = _git(repo, "symbolic-ref", "--quiet", "HEAD")
+        if unborn is None or unborn.returncode != 0:
+            raise _repo_error()
+        ref = unborn.stdout.decode("utf-8", "replace").strip()
+        exists = _git(repo, "show-ref", "--quiet", "--verify", ref)
+        if exists is None or exists.returncode != 1:
+            raise _repo_error()
+        return False
+    result = _git(repo, "rev-list", "-n", "1", "--full-history", "HEAD", "--", path)
+    if result is None or result.returncode != 0:
+        raise _repo_error()
+    return bool(result.stdout.strip())
 
 
 def confined(root: Path, relative: str) -> Path:

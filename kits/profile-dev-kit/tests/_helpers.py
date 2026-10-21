@@ -93,3 +93,26 @@ def make_source(repo: Path, *, with_contracts: bool = True) -> None:
     (repo / "src" / "api.py").write_text("x = 1\n")
     if with_contracts:
         (repo / "src" / "contracts.yaml").write_text("a: 1\n")
+
+
+def change_fixture(
+    tmp_path: Path,
+    mutate: Any = None,
+    data: Any = None,
+    *,
+    actor: str = "tester",
+) -> tuple[Path, str, str]:
+    """A ratified repository: returns ``(repo, base_sha, revision_sha)``.
+
+    ``mutate(repo)`` edits the work tree between the base and the revision.
+    """
+    from beddel_profile_dev.tools.ratify import profile_ratify_inventory
+
+    repo = init_repo(tmp_path / "repo")
+    make_source(repo)
+    write_version(repo, "v1", good() if data is None else data)
+    profile_ratify_inventory(str(repo), "v1", actor)
+    base = commit_all(repo, "base")
+    if mutate is not None:
+        mutate(repo)
+    return repo, base, commit_all(repo, "change")
