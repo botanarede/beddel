@@ -19,6 +19,7 @@ _TOOLS = [
     "profile_bind_inventory",
     "profile_record_change",
     "profile_derive_impact",
+    "profile_run_gate",
     "profile_declare_non_applicability",
 ]
 
@@ -74,6 +75,9 @@ def test_kit_yaml_config_block_matches_config_module() -> None:
     assert tuple(documented["required_env_keys"]) == cfg.REQUIRED_ENV_KEYS
     assert documented["inventory_dir"] == cfg.INVENTORY_DIR
     assert documented["records_dir"] == cfg.RECORDS_DIR
+    assert tuple(tuple(c) for c in documented["gate_commands"]) == cfg.GATE_COMMANDS
+    assert documented["gate_timeout_seconds"] == cfg.GATE_TIMEOUT_SECONDS
+    assert documented["gate_total_timeout_seconds"] == cfg.GATE_TOTAL_TIMEOUT_SECONDS
 
 
 def test_manifest_declares_all_workflows_and_python_targets() -> None:

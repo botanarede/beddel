@@ -50,15 +50,22 @@ def test_parses_and_requires_kit() -> None:
     assert wf.requires_kits == ["profile-dev-kit"]
 
 
-def test_preflight_change_bind_impact_and_each_step_fails_closed() -> None:
+def test_preflight_change_bind_impact_gate_and_each_step_fails_closed() -> None:
     wf = _load()
     steps = wf.steps
-    assert [s.id for s in steps] == ["preflight", "change", "bind_inventory", "impact"]
+    assert [s.id for s in steps] == [
+        "preflight",
+        "change",
+        "bind_inventory",
+        "impact",
+        "gate",
+    ]
     assert [s.config["tool"] for s in steps] == [
         "profile_preflight",
         "profile_record_change",
         "profile_bind_inventory",
         "profile_derive_impact",
+        "profile_run_gate",
     ]
     assert _raw_inputs(WORKFLOW_PATH) == [
         "repo_path",
@@ -81,6 +88,7 @@ def test_allowlist_equals_the_tools_the_steps_name() -> None:
         "profile_record_change",
         "profile_bind_inventory",
         "profile_derive_impact",
+        "profile_run_gate",
     ]
     assert len(list(WORKFLOWS_DIR.glob("*.yaml"))) == 3
 

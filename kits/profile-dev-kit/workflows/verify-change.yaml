@@ -1,6 +1,6 @@
 id: verify-change
 name: Verify Change
-description: Entry workflow of the development profile. Runs the fail-closed preflight, records the Change and its Analyzed revision, binds the ratified inventory version to the revision and derives the Impact of the Change.
+description: Entry workflow of the development profile. Runs the fail-closed preflight, records the Change and its Analyzed revision, binds the ratified inventory version to the revision, derives the Impact of the Change and runs the configured local Gate over that derived set, recording only operational outcomes.
 version: "1.0"
 requires_kits:
   - profile-dev-kit
@@ -9,6 +9,7 @@ allowed_tools:
   - profile_record_change
   - profile_bind_inventory
   - profile_derive_impact
+  - profile_run_gate
 inputs:
   - repo_path
   - change_id
@@ -43,6 +44,14 @@ steps:
     primitive: tool
     config:
       tool: profile_derive_impact
+      arguments:
+        repo_path: "$input.repo_path"
+        change_id: "$input.change_id"
+        revision: "$input.revision"
+  - id: gate
+    primitive: tool
+    config:
+      tool: profile_run_gate
       arguments:
         repo_path: "$input.repo_path"
         change_id: "$input.change_id"

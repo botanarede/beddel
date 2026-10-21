@@ -14,10 +14,16 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from beddel_profile_dev._errors import PROFILE_CONFIG_INVALID as _CONFIG_INVALID
+from beddel_profile_dev._errors import (
+    PROFILE_GATE_COMMAND_INVALID as _GATE_COMMAND_INVALID,
+)
 from beddel_profile_dev._errors import ProfileError
 
 __all__ = [
+    "GATE_COMMANDS",
     "GATE_EXECUTABLES",
+    "GATE_TIMEOUT_SECONDS",
+    "GATE_TOTAL_TIMEOUT_SECONDS",
     "INVENTORY_DIR",
     "RECORDS_DIR",
     "REQUIRED_ENV_KEYS",
@@ -32,6 +38,18 @@ REQUIRED_ENV_KEYS: tuple[str, ...] = ()  # Epic 3 adds the Review key names
 # Repository-relative POSIX directories (Story 2.2, implementation detail).
 INVENTORY_DIR: str = ".beddel-profile/inventory"
 RECORDS_DIR: str = ".beddel-profile/records"
+# Gate (Story 3.1, implementation detail, owner decision 4). Each command is an
+# argv tuple whose argv[0] MUST be in GATE_EXECUTABLES; commands run in the
+# target repository root with no shell. The per-command and total budgets are
+# independent of any Review budget (AD-18). ``None`` disables the total budget.
+GATE_COMMANDS: tuple[tuple[str, ...], ...] = (
+    ("ruff", "check", "."),
+    ("ruff", "format", "--check", "."),
+    ("mypy", "."),
+    ("pytest", "-q"),
+)
+GATE_TIMEOUT_SECONDS: int = 300
+GATE_TOTAL_TIMEOUT_SECONDS: int | None = 1200
 
 # config key -> module constant name
 _KEYS: dict[str, str] = {
@@ -39,9 +57,13 @@ _KEYS: dict[str, str] = {
     "required_env_keys": "REQUIRED_ENV_KEYS",
     "inventory_dir": "INVENTORY_DIR",
     "records_dir": "RECORDS_DIR",
+    "gate_commands": "GATE_COMMANDS",
+    "gate_timeout_seconds": "GATE_TIMEOUT_SECONDS",
+    "gate_total_timeout_seconds": "GATE_TOTAL_TIMEOUT_SECONDS",
 }
 
 _INVALID_MESSAGE = "profile config invalid"
+_MAX_TIMEOUT_SECONDS = 86400
 
 
 @dataclass(frozen=True)
@@ -52,6 +74,9 @@ class KitConfig:
     required_env_keys: tuple[str, ...]
     inventory_dir: str
     records_dir: str
+    gate_commands: tuple[tuple[str, ...], ...]
+    gate_timeout_seconds: int
+    gate_total_timeout_seconds: int | None
 
 
 def get_kit_root() -> Path:
@@ -91,20 +116,70 @@ def _relative_posix(value: object) -> str:
     return value
 
 
+def _timeout_seconds(value: object, *, optional: bool = False) -> int | None:
+    """Return a strictly positive whole number of seconds (``None`` only if optional)."""
+    if value is None and optional:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise _invalid()
+    if not 0 < value <= _MAX_TIMEOUT_SECONDS:
+        raise _invalid()
+    return value
+
+
+def _gate_commands(
+    value: object, executables: tuple[str, ...]
+) -> tuple[tuple[str, ...], ...]:
+    """Return the validated Gate command list (fail-closed, never empty).
+
+    A malformed list or argv raises ``PROFILE_CONFIG_INVALID``; a well-formed
+    argv whose executable is outside ``executables`` (a path form is outside it
+    by construction) raises ``PROFILE_GATE_COMMAND_INVALID``. An empty list
+    would record an outcome in which no command ran, so it is refused too.
+    """
+    if not isinstance(value, (list, tuple)) or not value:
+        raise _invalid()
+    commands: list[tuple[str, ...]] = []
+    for index, entry in enumerate(value):
+        argv = _string_tuple(entry)
+        if not argv or any("\x00" in part for part in argv):
+            raise _invalid()
+        # A bare executable name only: a path would bypass the allowlist by name.
+        if "/" in argv[0] or "\\" in argv[0] or argv[0] not in executables:
+            raise ProfileError(
+                _GATE_COMMAND_INVALID,
+                "gate command executable is not allowed",
+                {"index": index},
+            )
+        commands.append(argv)
+    return tuple(commands)
+
+
 def validate_config(raw: Mapping[str, object]) -> KitConfig:
     """Validate a raw config mapping strictly.
 
     Raises:
         ProfileError: On unknown keys, missing keys, non-list values, or
-            non-string / empty items.
+            non-string / empty items (``PROFILE_CONFIG_INVALID``); on a Gate
+            command outside the executable allowlist
+            (``PROFILE_GATE_COMMAND_INVALID``).
     """
     if set(raw) != set(_KEYS):
         raise _invalid()
+    gate_executables = _string_tuple(raw["gate_executables"])
+    gate_timeout = _timeout_seconds(raw["gate_timeout_seconds"])
+    if gate_timeout is None:  # unreachable (not optional); narrows the type
+        raise _invalid()
     return KitConfig(
-        gate_executables=_string_tuple(raw["gate_executables"]),
+        gate_executables=gate_executables,
         required_env_keys=_string_tuple(raw["required_env_keys"], env_names=True),
         inventory_dir=_relative_posix(raw["inventory_dir"]),
         records_dir=_relative_posix(raw["records_dir"]),
+        gate_commands=_gate_commands(raw["gate_commands"], gate_executables),
+        gate_timeout_seconds=gate_timeout,
+        gate_total_timeout_seconds=_timeout_seconds(
+            raw["gate_total_timeout_seconds"], optional=True
+        ),
     )
 
 
