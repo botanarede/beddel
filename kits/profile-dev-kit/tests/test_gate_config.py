@@ -22,9 +22,80 @@ def _raw(**overrides: Any) -> dict[str, object]:
         "gate_commands": [["ruff", "check", "."], ["pytest", "-q"]],
         "gate_timeout_seconds": 30,
         "gate_total_timeout_seconds": 90,
+        "review_agent": "kiro",
+        "review_model": "claude-opus-4.5",
+        "review_timeout_seconds": 60,
     }
     raw.update(overrides)
     return raw
+
+
+def test_default_review_config_is_valid() -> None:
+    loaded = cfg.load_config()
+    assert (loaded.review_agent, loaded.review_model) == ("kiro", "claude-opus-4.5")
+    assert loaded.review_timeout_seconds == cfg.REVIEW_TIMEOUT_SECONDS == 900
+
+
+def test_valid_review_config_is_read_from_the_raw_mapping() -> None:
+    loaded = cfg.validate_config(
+        _raw(review_agent="other", review_model="m-1.2", review_timeout_seconds=5)
+    )
+    assert (loaded.review_agent, loaded.review_model) == ("other", "m-1.2")
+    assert loaded.review_timeout_seconds == 5
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"review_agent": ""},
+        {"review_agent": 1},
+        {"review_agent": None},
+        {"review_agent": "/usr/bin/kiro"},  # a path, not a route name
+        {"review_agent": "kiro=1"},
+        {"review_agent": "a" * 65},
+        {"review_model": ""},
+        {"review_model": ["claude"]},
+        {"review_model": "claude opus"},
+        {"review_model": "https://example.test/m"},
+        {"review_timeout_seconds": 0},
+        {"review_timeout_seconds": -1},
+        {"review_timeout_seconds": True},
+        {"review_timeout_seconds": 1.5},
+        {"review_timeout_seconds": "900"},
+        {"review_timeout_seconds": None},  # the Review budget is never optional
+        {"review_timeout_seconds": 901},  # outlives the workflow's step bound
+        {"review_timeout_seconds": 86401},
+    ],
+)
+def test_malformed_review_config_fails_closed(overrides: dict[str, object]) -> None:
+    with pytest.raises(ProfileError) as info:
+        cfg.validate_config(_raw(**overrides))
+    assert info.value.code == PROFILE_CONFIG_INVALID
+
+
+def test_the_largest_review_budget_is_accepted() -> None:
+    loaded = cfg.validate_config(_raw(review_timeout_seconds=900))
+    assert loaded.review_timeout_seconds == 900
+
+
+@pytest.mark.parametrize(
+    "key", ["review_agent", "review_model", "review_timeout_seconds"]
+)
+def test_missing_review_key_fails_closed(key: str) -> None:
+    raw = _raw()
+    del raw[key]
+    with pytest.raises(ProfileError) as info:
+        cfg.validate_config(raw)
+    assert info.value.code == PROFILE_CONFIG_INVALID
+
+
+def test_load_config_refuses_a_missing_review_constant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delattr(cfg, "REVIEW_MODEL")
+    with pytest.raises(ProfileError) as info:
+        cfg.load_config()
+    assert info.value.code == PROFILE_CONFIG_INVALID
 
 
 def test_default_gate_config_is_valid_and_allowlisted() -> None:

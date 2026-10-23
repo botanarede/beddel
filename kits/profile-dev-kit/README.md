@@ -5,10 +5,10 @@ Development profile kit for Beddel. It provides the entry workflow
 the target path is a Git work tree, the gate executables resolve on `PATH`, and
 the required environment keys are present (key names only, never values).
 
-Status: Story 3.1. Entry workflows `verify-change`, `ratify-inventory` and
+Status: Story 3.2. Entry workflows `verify-change`, `ratify-inventory` and
 `declare-non-applicability`; tools `profile_preflight`,
 `profile_ratify_inventory`, `profile_bind_inventory`, `profile_record_change`,
-`profile_derive_impact`, `profile_run_gate` and
+`profile_derive_impact`, `profile_run_gate`, `profile_run_review` and
 `profile_declare_non_applicability`.
 
 ## Layout
@@ -23,8 +23,9 @@ tests/                           kit tests (no network, no real credential)
 ## Configuration
 
 The runtime source of `GATE_EXECUTABLES`, `REQUIRED_ENV_KEYS`, `INVENTORY_DIR`,
-`RECORDS_DIR`, `GATE_COMMANDS`, `GATE_TIMEOUT_SECONDS` and
-`GATE_TOTAL_TIMEOUT_SECONDS` is `python/beddel_profile_dev/config.py`, resolved relative
+`RECORDS_DIR`, `GATE_COMMANDS`, `GATE_TIMEOUT_SECONDS`,
+`GATE_TOTAL_TIMEOUT_SECONDS`, `REVIEW_AGENT`, `REVIEW_MODEL` and
+`REVIEW_TIMEOUT_SECONDS` is `python/beddel_profile_dev/config.py`, resolved relative
 to the kit root. The `config:` block in `kit.yaml` only documents the same
 values; the core does not read it. Missing or malformed config raises; it
 never degrades to empty lists.
@@ -45,7 +46,7 @@ numbers. Unknown keys are rejected.
   A ratified version is immutable; a change is a new version.
 - `verify-change` (inputs `repo_path`, `change_id`, `base`, `revision`,
   `inventory_version`) runs
-  `preflight`, `change`, `bind_inventory`, `impact` and `gate`. `bind_inventory` reads the version and its
+  `preflight`, `change`, `bind_inventory`, `impact`, `gate` and `review`. `bind_inventory` reads the version and its
   ratification from the tree of `revision`, validates identity formation and
   resolution, and either records one integrity block
   (`PROFILE_INVENTORY_INTEGRITY_BLOCK`) or writes `binding.json` and the
@@ -90,7 +91,7 @@ numbers. Unknown keys are rejected.
 
 ## Gate (Story 3.1)
 
-`gate` (`profile_run_gate`) is the last step of `verify-change`. It runs the
+`gate` (`profile_run_gate`) is the fifth step of `verify-change`. It runs the
 local gate commands over the derived set that `impact.json` already holds and
 records an **operational outcome**: each command's name, argv, exit code and
 whether it timed out. It makes no judgement. A non-zero exit is a recorded exit
@@ -149,6 +150,64 @@ Classifying an outcome belongs to a later epic.
   Two overlapping runs are not ordered: the last one to finish names its
   attempt.
 
+## Review (Story 3.2)
+
+`review` (`profile_run_review`) is the last step of `verify-change`. It hands an
+external reviewer the derived set that `impact.json` already holds and the
+`base..revision` diff, and records an **operational outcome**: `completed`,
+`timed_out` or `errored`. **The outcome is not Evidence, not a Finding, not a
+Pendency and not a Verdict**; it never satisfies an obligation of
+`required_evidence`. The reviewer's text is stored and never parsed here.
+
+- **Scope.** The prompt is built only from `impact.json` (`change_id`, `base`,
+  `revision`, the inventory identity, `footprint`, `affected_points`,
+  `required_evidence`) and the committed diff `base..revision` (through
+  `_io.py`, cut at 64000 bytes with a visible marker). Nothing is re-derived
+  and the work tree is not read. The diff is rendered inside the kit from git
+  plumbing object reads (`git diff-tree --raw` lists per-path changes,
+  `git cat-file blob <oid>` reads each side's bytes) and stdlib `difflib`
+  formats the unified-diff hunks. No git configuration scope can reach this
+  path — not the system, global, XDG, repo `.git/config`, `.gitattributes`,
+  any diff driver, nor the repository's own `.git/info/attributes` — so the
+  diff is deterministic by construction: byte-identical for the same Change,
+  revision and snapshot regardless of git configuration, attributes or work
+  tree. The kit owns the binary rule: a path is treated as binary when its
+  content contains a NUL byte **anywhere** (not just the first 8000 bytes) or
+  exceeds 1 MiB; binary paths render as `Binary files a/<path> and b/<path>
+  differ` with no bytes. Unified-diff hunk headers carry **no function-name
+  text** after `@@` — funcname patterns are git configuration and would
+  reintroduce the config surface. The 64000-byte cap is applied **after**
+  UTF-8 encoding (a byte cut); a NUL that survives to the cut point becomes
+  U+FFFD, keeping the prompt argv-safe. An absent or inconsistent impact
+  record stops the step with `PROFILE_REVIEW_UNSCOPED`; nothing is written.
+- **Route.** `REVIEW_AGENT` (default `kiro`) names the route, `REVIEW_MODEL`
+  (default `claude-opus-4.5`) the model and `REVIEW_TIMEOUT_SECONDS` (default
+  900) its own budget, independent of the Gate budgets; all three live in
+  `config.py`, never in a tool. The adapter is obtained only through
+  `_adapters.get_review_adapter`, a static kit-local map (no core discovery);
+  an unknown `REVIEW_AGENT` stops with `PROFILE_REVIEW_UNSCOPED`. The call is
+  `execute(prompt, model=REVIEW_MODEL, sandbox="read-only", tools=None)`.
+- **Authentication.** The kit neither authenticates nor installs. The route
+  runs in the already-authenticated SSO/OAuth session of its CLI: no `api_key`
+  is passed, and an ambient `KIRO_API_KEY` is refused with
+  `PROFILE_REVIEW_UNSCOPED` (it would make the route run headless and ignore
+  the sandbox). The binary is located and handed over explicitly, so the
+  adapter's auto-install never runs; a missing binary or route is recorded as
+  `errored`.
+- **Outcome.** The adapter's own timeout is recorded as `timed_out`; any other
+  adapter error, or a failure to start the route, as `errored` with its
+  `error_code`. Neither raises. A step timeout is set in the workflow
+  (`timeout: 960`) because the core bounds an asynchronous tool at 60 seconds
+  by default; keep it above `REVIEW_TIMEOUT_SECONDS` plus 30.
+- **Record.** `.beddel-profile/records/changes/<change_id>/revisions/<sha>/review.json`
+  (canonical JSON, schema `profile-dev/review-outcome/1`) holds exactly
+  `schema`, `change_id`, `revision`, `inventory_version`, `inventory_sha256`,
+  `agent`, `model`, `status`, `review_ref` and, only when `status` is not
+  `completed`, `error_code`. The raw text of each attempt is stored at
+  `review-output/<attempt>.txt` (UTF-8, undecodable bytes replaced, empty when
+  the review did not complete), numbered from 1 and append-only. The first run
+  creates `review.json`; a re-run adds the next attempt and repoints
+  `review.json` at it, leaving earlier attempts untouched.
 ## Tests
 
 ```

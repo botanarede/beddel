@@ -140,7 +140,7 @@
   {
     "name": "profile-dev-kit",
     "version": "0.1.0",
-    "description": "Development profile kit: entry workflow and fail-closed preflight for verifying a change in a Git repository; ratified inventory binding; the Change, its Impact (footprint, Affected points, Required evidence), the deterministic local Gate over that derived set (an operational outcome of exit codes, never Evidence or a Verdict) and the recorded determination of non-applicability.\n",
+    "description": "Development profile kit: entry workflow and fail-closed preflight for verifying a change in a Git repository; ratified inventory binding; the Change, its Impact (footprint, Affected points, Required evidence), the deterministic local Gate over that derived set (an operational outcome of exit codes, never Evidence or a Verdict), the external Review of that derived set through the configured agent route (an operational outcome of completed, timed out or errored, never Evidence or a Verdict) and the recorded determination of non-applicability.\n",
     "category": "profile"
   },
   {
