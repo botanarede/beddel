@@ -25,6 +25,7 @@ __all__ = [
     "PROFILE_PREFLIGHT_FAILED",
     "PROFILE_RATIFICATION_REFUSED",
     "PROFILE_REPOSITORY_INVALID",
+    "PROFILE_REVIEW_UNSCOPED",
     "ProfileError",
 ]
 
@@ -70,6 +71,11 @@ PROFILE_GATE_COMMAND_INVALID = "PROFILE_GATE_COMMAND_INVALID"
 PROFILE_GATE_UNSCOPED = "PROFILE_GATE_UNSCOPED"
 """Raised when the Gate cannot be scoped: the impact record is absent or inconsistent
 with the step inputs, or the work tree is not the Analyzed revision."""
+
+PROFILE_REVIEW_UNSCOPED = "PROFILE_REVIEW_UNSCOPED"
+"""Raised when the Review cannot be scoped or safely run: the impact record is absent
+or inconsistent with the step inputs, the review route is unknown, or an ambient API
+key would make the route run headless (nothing is written)."""
 
 
 class ProfileError(BeddelError):

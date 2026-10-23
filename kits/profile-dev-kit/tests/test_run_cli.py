@@ -11,6 +11,7 @@ from pathlib import Path
 
 from ._helpers import (
     commit_all,
+    fake_review_env,
     good,
     init_repo,
     make_source,
@@ -51,7 +52,7 @@ def _run_workflow(
     env = {
         k: v
         for k, v in os.environ.items()
-        if not k.startswith(("GIT_", "BEDDEL_", "PYTHON"))
+        if not k.startswith(("GIT_", "BEDDEL_", "PYTHON")) and k != "KIRO_API_KEY"
     }
     env.update(
         {"HOME": str(home), "XDG_CONFIG_HOME": str(home / ".config"), **extra_env}
@@ -76,10 +77,18 @@ def _run(
     change_id: str = "c1",
     base: str = "HEAD",
     kits_dir: Path = KITS_DIR,
+    review_mode: str = "completed",
     **extra_env: str,
 ) -> subprocess.CompletedProcess[str]:
-    # The Gate runs the default command list: keep it fast and hermetic.
-    extra_env = {"PATH": stub_gate_tools(tmp_path), **extra_env}
+    # The Gate runs the default command list: keep it fast and hermetic. The
+    # Review route is always faked through the adapter seam: the real route is
+    # never reachable from a test, even though the real PATH is inherited.
+    kit_python = kits_dir / "profile-dev-kit" / "python"
+    extra_env = {
+        "PATH": stub_gate_tools(tmp_path),
+        **fake_review_env(tmp_path, kit_python, review_mode),
+        **extra_env,
+    }
     return _run_workflow(
         WORKFLOW,
         {
@@ -136,7 +145,7 @@ def _fixture(tmp_path: Path, data: object = None) -> Path:
     return repo
 
 
-def test_ratify_then_verify_change_passes_all_five_steps(tmp_path: Path) -> None:
+def test_ratify_then_verify_change_passes_all_six_steps(tmp_path: Path) -> None:
     repo = _fixture(tmp_path)
     _ratify(repo, tmp_path)
     base = commit_all(repo)
@@ -150,6 +159,7 @@ def test_ratify_then_verify_change_passes_all_five_steps(tmp_path: Path) -> None
         "profile_bind_inventory",
         "profile_derive_impact",
         "profile_run_gate",
+        "profile_run_review",
     ):
         assert f"'tool': '{tool}'" in result.stdout
     assert (repo / RECORDS / "revisions" / sha / "snapshot.json").is_file()
@@ -426,3 +436,120 @@ def test_unratified_version_stops_at_bind_inventory_and_writes_no_impact(
     assert not (
         repo / RECORDS / "changes" / "c1" / "revisions" / sha / "impact.json"
     ).exists()
+
+
+def _revision_dir(repo: Path, sha: str) -> Path:
+    return repo / RECORDS / "changes" / "c1" / "revisions" / sha
+
+
+def _review_json(repo: Path, sha: str) -> dict[str, object]:
+    data = json.loads((_revision_dir(repo, sha) / "review.json").read_text())
+    assert isinstance(data, dict)
+    return data
+
+
+def test_verify_change_records_a_completed_review_through_the_fake_route(
+    tmp_path: Path,
+) -> None:
+    repo, base, sha = _committed_change(tmp_path)
+    result = _run(str(repo), tmp_path, revision=sha, base=base)
+    assert result.returncode == 0, result.stderr
+    review = _review_json(repo, sha)
+    assert review == {
+        "schema": "profile-dev/review-outcome/1",
+        "change_id": "c1",
+        "revision": sha,
+        "inventory_version": "v1",
+        "inventory_sha256": review["inventory_sha256"],
+        "agent": "kiro",
+        "model": "claude-opus-4.5",
+        "status": "completed",
+        "review_ref": f"{RECORDS}/changes/c1/revisions/{sha}/review-output/1.txt",
+    }
+    output = _revision_dir(repo, sha) / "review-output" / "1.txt"
+    assert output.read_text() == "canned review\n"
+    calls = [
+        json.loads(line)
+        for line in (tmp_path / "review-calls.jsonl").read_text().splitlines()
+    ]
+    assert len(calls) == 1
+    assert calls[0]["sandbox"] == "read-only"
+    assert calls[0]["model"] == "claude-opus-4.5"
+    assert calls[0]["tools"] is None
+    assert calls[0]["api_key_in_env"] is False
+    assert "+x = 2" in calls[0]["prompt"]
+    assert '"id": "api"' in calls[0]["prompt"]
+
+
+def test_verify_change_records_a_timed_out_review_as_a_result(tmp_path: Path) -> None:
+    repo, base, sha = _committed_change(tmp_path)
+    result = _run(str(repo), tmp_path, revision=sha, base=base, review_mode="timeout")
+    assert result.returncode == 0, result.stderr  # a timeout is an outcome
+    review = _review_json(repo, sha)
+    assert review["status"] == "timed_out"
+    assert review["error_code"] == "BEDDEL-AGENT-702"
+    assert (_revision_dir(repo, sha) / "review-output" / "1.txt").read_text() == ""
+
+
+def test_verify_change_records_a_failed_review_as_a_result(tmp_path: Path) -> None:
+    repo, base, sha = _committed_change(tmp_path)
+    result = _run(str(repo), tmp_path, revision=sha, base=base, review_mode="error")
+    assert result.returncode == 0, result.stderr
+    review = _review_json(repo, sha)
+    assert review["status"] == "errored"
+    assert review["error_code"] == "BEDDEL-AGENT-701"
+    assert "fake failure" not in json.dumps(review)  # never the adapter's message
+
+
+def test_an_ambient_api_key_stops_the_review_step_before_the_route(
+    tmp_path: Path,
+) -> None:
+    repo, base, sha = _committed_change(tmp_path)
+    result = _run(str(repo), tmp_path, revision=sha, base=base, KIRO_API_KEY="x")
+    assert result.returncode != 0
+    assert "Step 'review' failed" in result.stderr
+    assert "PROFILE_REVIEW_UNSCOPED" in result.stderr
+    assert not (_revision_dir(repo, sha) / "review.json").exists()
+    assert not (tmp_path / "review-calls.jsonl").exists()  # the route was never called
+
+
+def test_the_review_step_alone_stops_without_an_impact_record(tmp_path: Path) -> None:
+    repo, _, sha = _committed_change(tmp_path)
+    workflow = tmp_path / "review-only.yaml"
+    workflow.write_text(
+        "id: review-only\n"
+        "name: Review only\n"
+        "description: Runs the review step without the earlier steps.\n"
+        'version: "1.0"\n'
+        "requires_kits:\n"
+        "  - profile-dev-kit\n"
+        "allowed_tools:\n"
+        "  - profile_run_review\n"
+        "inputs:\n"
+        "  - repo_path\n"
+        "  - change_id\n"
+        "  - revision\n"
+        "steps:\n"
+        "  - id: review\n"
+        "    primitive: tool\n"
+        "    config:\n"
+        "      tool: profile_run_review\n"
+        "      timeout: 960\n"
+        "      arguments:\n"
+        '        repo_path: "$input.repo_path"\n'
+        '        change_id: "$input.change_id"\n'
+        '        revision: "$input.revision"\n'
+    )
+    result = _run_workflow(
+        workflow,
+        {"repo_path": str(repo), "change_id": "c1", "revision": sha},
+        tmp_path,
+        **fake_review_env(tmp_path, KIT_ROOT / "python"),
+    )
+    assert result.returncode != 0
+    assert "Step 'review' failed" in result.stderr
+    assert "PROFILE_REVIEW_UNSCOPED" in result.stderr
+    revision_dir = _revision_dir(repo, sha)
+    assert not (revision_dir / "review.json").exists()
+    assert not (revision_dir / "review-output").exists()
+    assert not (tmp_path / "review-calls.jsonl").exists()  # the route was never called

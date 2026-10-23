@@ -20,6 +20,7 @@ _TOOLS = [
     "profile_record_change",
     "profile_derive_impact",
     "profile_run_gate",
+    "profile_run_review",
     "profile_declare_non_applicability",
 ]
 
@@ -78,6 +79,9 @@ def test_kit_yaml_config_block_matches_config_module() -> None:
     assert tuple(tuple(c) for c in documented["gate_commands"]) == cfg.GATE_COMMANDS
     assert documented["gate_timeout_seconds"] == cfg.GATE_TIMEOUT_SECONDS
     assert documented["gate_total_timeout_seconds"] == cfg.GATE_TOTAL_TIMEOUT_SECONDS
+    assert documented["review_agent"] == cfg.REVIEW_AGENT
+    assert documented["review_model"] == cfg.REVIEW_MODEL
+    assert documented["review_timeout_seconds"] == cfg.REVIEW_TIMEOUT_SECONDS
 
 
 def test_manifest_declares_all_workflows_and_python_targets() -> None:

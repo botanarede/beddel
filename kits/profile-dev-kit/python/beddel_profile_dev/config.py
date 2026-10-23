@@ -27,6 +27,9 @@ __all__ = [
     "INVENTORY_DIR",
     "RECORDS_DIR",
     "REQUIRED_ENV_KEYS",
+    "REVIEW_AGENT",
+    "REVIEW_MODEL",
+    "REVIEW_TIMEOUT_SECONDS",
     "KitConfig",
     "get_kit_root",
     "load_config",
@@ -50,6 +53,12 @@ GATE_COMMANDS: tuple[tuple[str, ...], ...] = (
 )
 GATE_TIMEOUT_SECONDS: int = 300
 GATE_TOTAL_TIMEOUT_SECONDS: int | None = 1200
+# Review (Story 3.2, owner decision 3, AD-16, AD-18). The route and the model are
+# names resolved from kit config, never hard-coded in a tool. The Review budget
+# is independent of the Gate budgets. Names only: no secret is ever configured.
+REVIEW_AGENT: str = "kiro"
+REVIEW_MODEL: str = "claude-opus-4.5"
+REVIEW_TIMEOUT_SECONDS: int = 900
 
 # config key -> module constant name
 _KEYS: dict[str, str] = {
@@ -60,10 +69,17 @@ _KEYS: dict[str, str] = {
     "gate_commands": "GATE_COMMANDS",
     "gate_timeout_seconds": "GATE_TIMEOUT_SECONDS",
     "gate_total_timeout_seconds": "GATE_TOTAL_TIMEOUT_SECONDS",
+    "review_agent": "REVIEW_AGENT",
+    "review_model": "REVIEW_MODEL",
+    "review_timeout_seconds": "REVIEW_TIMEOUT_SECONDS",
 }
 
 _INVALID_MESSAGE = "profile config invalid"
 _MAX_TIMEOUT_SECONDS = 86400
+# The entry workflow bounds the ``review`` step at a fixed number of seconds; the
+# core would cancel the tool before it could record an outcome if the configured
+# Review budget (plus the tool's own guard) outlived that step bound.
+_MAX_REVIEW_TIMEOUT_SECONDS = 900
 
 
 @dataclass(frozen=True)
@@ -77,6 +93,9 @@ class KitConfig:
     gate_commands: tuple[tuple[str, ...], ...]
     gate_timeout_seconds: int
     gate_total_timeout_seconds: int | None
+    review_agent: str
+    review_model: str
+    review_timeout_seconds: int
 
 
 def get_kit_root() -> Path:
@@ -89,6 +108,15 @@ def _invalid() -> ProfileError:
 
 
 _ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+# A route or model name: a short token, never a path, a URL or a KEY=value pair.
+_ROUTE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+
+
+def _route_name(value: object) -> str:
+    """Return ``value`` if it is a plain route or model name (fail-closed)."""
+    if not isinstance(value, str) or not _ROUTE_NAME.fullmatch(value):
+        raise _invalid()
+    return value
 
 
 def _string_tuple(value: object, *, env_names: bool = False) -> tuple[str, ...]:
@@ -116,13 +144,15 @@ def _relative_posix(value: object) -> str:
     return value
 
 
-def _timeout_seconds(value: object, *, optional: bool = False) -> int | None:
+def _timeout_seconds(
+    value: object, *, optional: bool = False, maximum: int = _MAX_TIMEOUT_SECONDS
+) -> int | None:
     """Return a strictly positive whole number of seconds (``None`` only if optional)."""
     if value is None and optional:
         return None
     if isinstance(value, bool) or not isinstance(value, int):
         raise _invalid()
-    if not 0 < value <= _MAX_TIMEOUT_SECONDS:
+    if not 0 < value <= maximum:
         raise _invalid()
     return value
 
@@ -170,6 +200,11 @@ def validate_config(raw: Mapping[str, object]) -> KitConfig:
     gate_timeout = _timeout_seconds(raw["gate_timeout_seconds"])
     if gate_timeout is None:  # unreachable (not optional); narrows the type
         raise _invalid()
+    review_timeout = _timeout_seconds(
+        raw["review_timeout_seconds"], maximum=_MAX_REVIEW_TIMEOUT_SECONDS
+    )
+    if review_timeout is None:  # unreachable (not optional); narrows the type
+        raise _invalid()
     return KitConfig(
         gate_executables=gate_executables,
         required_env_keys=_string_tuple(raw["required_env_keys"], env_names=True),
@@ -180,6 +215,9 @@ def validate_config(raw: Mapping[str, object]) -> KitConfig:
         gate_total_timeout_seconds=_timeout_seconds(
             raw["gate_total_timeout_seconds"], optional=True
         ),
+        review_agent=_route_name(raw["review_agent"]),
+        review_model=_route_name(raw["review_model"]),
+        review_timeout_seconds=review_timeout,
     )
 
 

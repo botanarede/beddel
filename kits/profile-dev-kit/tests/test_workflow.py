@@ -50,7 +50,7 @@ def test_parses_and_requires_kit() -> None:
     assert wf.requires_kits == ["profile-dev-kit"]
 
 
-def test_preflight_change_bind_impact_gate_and_each_step_fails_closed() -> None:
+def test_preflight_change_bind_impact_gate_review_and_each_step_fails_closed() -> None:
     wf = _load()
     steps = wf.steps
     assert [s.id for s in steps] == [
@@ -59,6 +59,7 @@ def test_preflight_change_bind_impact_gate_and_each_step_fails_closed() -> None:
         "bind_inventory",
         "impact",
         "gate",
+        "review",
     ]
     assert [s.config["tool"] for s in steps] == [
         "profile_preflight",
@@ -66,6 +67,7 @@ def test_preflight_change_bind_impact_gate_and_each_step_fails_closed() -> None:
         "profile_bind_inventory",
         "profile_derive_impact",
         "profile_run_gate",
+        "profile_run_review",
     ]
     assert _raw_inputs(WORKFLOW_PATH) == [
         "repo_path",
@@ -89,8 +91,20 @@ def test_allowlist_equals_the_tools_the_steps_name() -> None:
         "profile_bind_inventory",
         "profile_derive_impact",
         "profile_run_gate",
+        "profile_run_review",
     ]
     assert len(list(WORKFLOWS_DIR.glob("*.yaml"))) == 3
+
+
+def test_review_step_outlives_the_largest_accepted_review_budget() -> None:
+    """The core bounds an async tool at 60 s by default; the Review needs more."""
+    from beddel_profile_dev import config as cfg
+    from beddel_profile_dev.tools import review as review_module
+
+    review = next(s for s in _load().steps if s.id == "review")
+    ceiling = cfg._MAX_REVIEW_TIMEOUT_SECONDS + review_module._GUARD_SECONDS
+    assert cfg.REVIEW_TIMEOUT_SECONDS <= cfg._MAX_REVIEW_TIMEOUT_SECONDS
+    assert review.config["timeout"] >= ceiling
 
 
 def test_declare_workflow_is_one_allowlisted_step() -> None:
