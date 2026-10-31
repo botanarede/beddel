@@ -5,10 +5,11 @@ Development profile kit for Beddel. It provides the entry workflow
 the target path is a Git work tree, the gate executables resolve on `PATH`, and
 the required environment keys are present (key names only, never values).
 
-Status: Story 3.2. Entry workflows `verify-change`, `ratify-inventory` and
+Status: Story 3.3. Entry workflows `verify-change`, `ratify-inventory` and
 `declare-non-applicability`; tools `profile_preflight`,
 `profile_ratify_inventory`, `profile_bind_inventory`, `profile_record_change`,
-`profile_derive_impact`, `profile_run_gate`, `profile_run_review` and
+`profile_derive_impact`, `profile_open_attempt`, `profile_run_gate`,
+`profile_run_review`, `profile_capture_evidence` and
 `profile_declare_non_applicability`.
 
 ## Layout
@@ -26,9 +27,10 @@ The runtime source of `GATE_EXECUTABLES`, `REQUIRED_ENV_KEYS`, `INVENTORY_DIR`,
 `RECORDS_DIR`, `GATE_COMMANDS`, `GATE_TIMEOUT_SECONDS`,
 `GATE_TOTAL_TIMEOUT_SECONDS`, `REVIEW_AGENT`, `REVIEW_MODEL` and
 `REVIEW_TIMEOUT_SECONDS` is `python/beddel_profile_dev/config.py`, resolved relative
-to the kit root. The `config:` block in `kit.yaml` only documents the same
-values; the core does not read it. Missing or malformed config raises; it
-never degrades to empty lists.
+to the kit root. `RECORDS_DIR` is resolved under `Path.home()/".config"/"beddel"`
+and separated by a SHA-256 key of the repository's Git common directory. The
+`config:` block in `kit.yaml` only documents the same values; the core does not
+read it. Missing or malformed config raises; it never degrades to empty lists.
 
 ## Inventory and ratification (Story 2.2)
 
@@ -45,13 +47,13 @@ numbers. Unknown keys are rejected.
   maintainer commits it: that commit is the human act; the tool is transport.
   A ratified version is immutable; a change is a new version.
 - `verify-change` (inputs `repo_path`, `change_id`, `base`, `revision`,
-  `inventory_version`) runs
-  `preflight`, `change`, `bind_inventory`, `impact`, `gate` and `review`. `bind_inventory` reads the version and its
+  `inventory_version`) runs `preflight`, `change`, `bind_inventory`, `impact`,
+  `attempt`, `gate`, `review` and `evidence`. `bind_inventory` reads the version and its
   ratification from the tree of `revision`, validates identity formation and
   resolution, and either records one integrity block
   (`PROFILE_INVENTORY_INTEGRITY_BLOCK`) or writes `binding.json` and the
-  canonical `snapshot.json` under `.beddel-profile/records/revisions/<sha>/`
-  (local files, never committed by the kit). An unratified version stops with
+  canonical `snapshot.json` under the setup-relative records root (local files,
+  never committed by the kit). An unratified version stops with
   `PROFILE_INVENTORY_UNRATIFIED`; another version for an already bound
   revision stops with `PROFILE_INVENTORY_BINDING_CONFLICT`.
 - A component path missing at the revision does not block binding; the
@@ -66,8 +68,8 @@ numbers. Unknown keys are rejected.
   pattern), its `base` commit (fixed by the first record; a rebased Change gets
   a new id, else `PROFILE_CHANGE_CONFLICT`) and the link of the Analyzed
   revision, which `base` must be an ancestor of (`PROFILE_CHANGE_INVALID`).
-  Records: `.beddel-profile/records/changes/<change_id>/change.json` and
-  `.../revisions/<sha>/revision.json`.
+  Records live under the setup-relative records root, separated by the stable
+  repository key, and the legacy repository-local records are not read.
 - `impact` (`profile_derive_impact`) needs the Change, its revision link and the
   binding. The footprint is the set of paths that differ between the trees of
   `base` and `revision` (plumbing, no renames, never declared by the Change).
@@ -91,7 +93,7 @@ numbers. Unknown keys are rejected.
 
 ## Gate (Story 3.1)
 
-`gate` (`profile_run_gate`) is the fifth step of `verify-change`. It runs the
+`gate` (`profile_run_gate`) is the sixth step of `verify-change`. It runs the
 local gate commands over the derived set that `impact.json` already holds and
 records an **operational outcome**: each command's name, argv, exit code and
 whether it timed out. It makes no judgement. A non-zero exit is a recorded exit
@@ -134,10 +136,14 @@ Classifying an outcome belongs to a later epic.
   running. Neither case aborts the step. The workflow sets no step `timeout:`:
   the bound on the Gate is this budget (the core does not enforce a step
   timeout on a synchronous tool).
-- **Record.** `.beddel-profile/records/changes/<change_id>/revisions/<sha>/gate.json`
-  (canonical JSON, schema `profile-dev/gate-outcome/1`) holds exactly `schema`,
-  `change_id`, `revision`, `inventory_version`, `inventory_sha256`, `status`,
-  `commands` (`name`, `argv`, `exit_code`, `timed_out`) and `gate_ref`.
+- **Record.** The revision-level pointer is stored under the setup-relative
+  records root at `changes/<change_id>/revisions/<sha>/gate.json`
+  (canonical JSON, schema `profile-dev/gate-outcome/1`). The attempt-bound
+  record is `attempts/<n>/gate.json` with schema
+  `profile-dev/attempt-gate-outcome/1` plus an `attempt` field (the
+  VerificationAttempt ordinal) and an `output_attempt` field (the
+  `gate-output/<k>` ordinal). Both carry the same 3.1 outcome fields; the
+  pointer omits `attempt` and `output_attempt`.
   `status` is `completed`: when the kit could not run the Gate at all, nothing
   is written and a `ProfileError` is raised instead. `exit_code` is `null`
   exactly when the command timed out, and negative (`-N`) when it was killed by
@@ -152,7 +158,7 @@ Classifying an outcome belongs to a later epic.
 
 ## Review (Story 3.2)
 
-`review` (`profile_run_review`) is the last step of `verify-change`. It hands an
+`review` (`profile_run_review`) is the seventh step of `verify-change`. It hands an
 external reviewer the derived set that `impact.json` already holds and the
 `base..revision` diff, and records an **operational outcome**: `completed`,
 `timed_out` or `errored`. **The outcome is not Evidence, not a Finding, not a
@@ -199,15 +205,15 @@ Pendency and not a Verdict**; it never satisfies an obligation of
   `error_code`. Neither raises. A step timeout is set in the workflow
   (`timeout: 960`) because the core bounds an asynchronous tool at 60 seconds
   by default; keep it above `REVIEW_TIMEOUT_SECONDS` plus 30.
-- **Record.** `.beddel-profile/records/changes/<change_id>/revisions/<sha>/review.json`
-  (canonical JSON, schema `profile-dev/review-outcome/1`) holds exactly
-  `schema`, `change_id`, `revision`, `inventory_version`, `inventory_sha256`,
-  `agent`, `model`, `status`, `review_ref` and, only when `status` is not
-  `completed`, `error_code`. The raw text of each attempt is stored at
-  `review-output/<attempt>.txt` (UTF-8, undecodable bytes replaced, empty when
-  the review did not complete), numbered from 1 and append-only. The first run
-  creates `review.json`; a re-run adds the next attempt and repoints
-  `review.json` at it, leaving earlier attempts untouched.
+- **Record.** The revision-level pointer is stored under the setup-relative
+  records root at `changes/<change_id>/revisions/<sha>/review.json`
+  (canonical JSON, schema `profile-dev/review-outcome/1`). The attempt-bound
+  record is `attempts/<n>/review.json` with schema
+  `profile-dev/attempt-review-outcome/1` plus an `attempt` field (the
+  VerificationAttempt ordinal) and an `output_attempt` field (the
+  `review-output/<k>.txt` ordinal); the pointer omits both. The raw text
+  remains at `review-output/<k>.txt`; a timeout or error stores an empty output
+  but produces no Review Evidence.
 ## Tests
 
 ```
@@ -223,3 +229,21 @@ alone does not put the kit's `python/` directory on `sys.path`.
 ## Targets
 
 Python only (AD-15). `targets.typescript` is `unavailable`.
+
+## VerificationAttempt and Evidence (Story 3.3)
+
+`attempt` (`profile_open_attempt`) runs after Impact and before Gate. It claims
+an ordinal with exclusive directory creation and persists the complete immutable
+scope under `changes/<change_id>/revisions/<sha>/attempts/<n>/attempt.json`.
+The scope includes the Change, revision, canonical snapshot and sorted
+Requirement ID constituents. A later run claims a new ordinal; it never edits
+an earlier attempt.
+
+Gate and Review receive the attempt ordinal and write create-only bound outcomes
+under `attempts/<n>/gate.json` and `attempts/<n>/review.json`. Revision-level
+`gate.json` and `review.json` remain mutable latest pointers with their existing
+Story 3.1 and 3.2 shapes. `evidence` (`profile_capture_evidence`) reads only the
+bound outcomes and writes one create-only file per matching Requirement ID. Gate
+Evidence preserves its commands and reference. Completed Review Evidence keeps
+the reviewer reference and the SHA-256 of non-blank stored output. Timed-out,
+errored or blank Reviews produce no Review Evidence.

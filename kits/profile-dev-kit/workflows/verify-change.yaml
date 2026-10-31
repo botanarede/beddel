@@ -1,6 +1,6 @@
 id: verify-change
 name: Verify Change
-description: Entry workflow of the development profile. Runs the fail-closed preflight, records the Change and its Analyzed revision, binds the ratified inventory version to the revision, derives the Impact of the Change, runs the configured local Gate over that derived set and runs the external Review of that derived set, recording only operational outcomes.
+description: Entry workflow of the development profile. Runs the fail-closed preflight, records the Change and its Analyzed revision, binds the ratified inventory version to the revision, derives the Impact of the Change, opens an immutable VerificationAttempt, runs the configured local Gate over that attempt, runs the external Review over that attempt and captures Evidence for matching results.
 version: "1.0"
 requires_kits:
   - profile-dev-kit
@@ -9,8 +9,10 @@ allowed_tools:
   - profile_record_change
   - profile_bind_inventory
   - profile_derive_impact
+  - profile_open_attempt
   - profile_run_gate
   - profile_run_review
+  - profile_capture_evidence
 inputs:
   - repo_path
   - change_id
@@ -49,6 +51,14 @@ steps:
         repo_path: "$input.repo_path"
         change_id: "$input.change_id"
         revision: "$input.revision"
+  - id: attempt
+    primitive: tool
+    config:
+      tool: profile_open_attempt
+      arguments:
+        repo_path: "$input.repo_path"
+        change_id: "$input.change_id"
+        revision: "$input.revision"
   - id: gate
     primitive: tool
     config:
@@ -57,15 +67,24 @@ steps:
         repo_path: "$input.repo_path"
         change_id: "$input.change_id"
         revision: "$input.revision"
+        attempt: "$stepResult.attempt.result.attempt"
   - id: review
     primitive: tool
     config:
       tool: profile_run_review
-      # The core bounds an asynchronous tool at 60 s by default; this must exceed
-      # the largest accepted REVIEW_TIMEOUT_SECONDS (900) plus the tool's own 30 s
-      # guard. The kit config refuses a larger Review budget.
+      # Keep this above REVIEW_TIMEOUT_SECONDS plus the 30-second guard.
       timeout: 960
       arguments:
         repo_path: "$input.repo_path"
         change_id: "$input.change_id"
         revision: "$input.revision"
+        attempt: "$stepResult.attempt.result.attempt"
+  - id: evidence
+    primitive: tool
+    config:
+      tool: profile_capture_evidence
+      arguments:
+        repo_path: "$input.repo_path"
+        change_id: "$input.change_id"
+        revision: "$input.revision"
+        attempt: "$stepResult.attempt.result.attempt"

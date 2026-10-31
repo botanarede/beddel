@@ -19,6 +19,7 @@ from typing import Any
 from beddel.tools import beddel_tool
 
 from beddel_profile_dev._errors import (
+    PROFILE_ATTEMPT_CONFLICT,
     PROFILE_CHANGE_INVALID,
     PROFILE_GATE_COMMAND_INVALID,
     PROFILE_GATE_UNSCOPED,
@@ -30,6 +31,7 @@ from beddel_profile_dev._io import (
     confined,
     read_confined,
     real_repo_root,
+    records_root,
     resolve_revision,
     work_tree_at,
     write_create_only,
@@ -42,6 +44,7 @@ from beddel_profile_dev.tools._subprocess import (
     run_command,
 )
 from beddel_profile_dev.tools.impact import IMPACT_SCHEMA
+from beddel_profile_dev.tools.review import _read_attempt
 
 __all__ = ["GATE_SCHEMA", "profile_run_gate"]
 
@@ -113,14 +116,18 @@ def _claim_attempt(root: Path, output_rel: str) -> int:
     attempt = max(taken, default=0) + 1
     for _ in range(_ATTEMPT_TRIES):
         target = confined(root, f"{output_rel}/{attempt}")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        # Re-check the confinement now that the directories exist.
-        confined(root, f"{output_rel}/{attempt}")
         try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            # Re-check the confinement now that the directories exist.
+            confined(root, f"{output_rel}/{attempt}")
             target.mkdir()
         except FileExistsError:
             attempt += 1
             continue
+        except (OSError, RuntimeError, ValueError) as error:
+            raise ProfileError(
+                PROFILE_REPOSITORY_INVALID, "repository or revision invalid"
+            ) from error
         return attempt
     raise ProfileError(PROFILE_REPOSITORY_INVALID, "repository or revision invalid")
 
@@ -163,12 +170,19 @@ def _publish_latest(root: Path, relative: str, attempt: int, data: bytes) -> Non
         ) from error
 
 
+def _write_attempt_outcome(records: Path, relative: str, data: bytes) -> None:
+    if not write_create_only(records, relative, data):
+        raise ProfileError(PROFILE_ATTEMPT_CONFLICT, "gate outcome already bound")
+
+
 @beddel_tool(
     name="profile_run_gate",
     description="Run the configured local gate commands over the derived set of a Change and record their exit codes",
     category="profile",
 )
-def profile_run_gate(repo_path: str, change_id: str, revision: str) -> dict[str, Any]:
+def profile_run_gate(
+    repo_path: str, change_id: str, revision: str, attempt: int
+) -> dict[str, Any]:
     """Run the Gate of a Change at its Analyzed revision.
 
     The commands run over the current work tree, so it must be that revision:
@@ -184,17 +198,34 @@ def profile_run_gate(repo_path: str, change_id: str, revision: str) -> dict[str,
             ``PROFILE_CHANGE_INVALID`` or ``PROFILE_REPOSITORY_INVALID``.
             Nothing is written when it raises before the commands start.
     """
-    # Fail-closed: a malformed or non-allowlisted config raises before any write.
     config = load_config()
-    records = config.records_dir
     if not is_valid_id(change_id):
         raise ProfileError(PROFILE_CHANGE_INVALID, "change id invalid")
-    root = real_repo_root(repo_path)
-    sha = resolve_revision(root, revision)
+    repo = real_repo_root(repo_path)
+    records = records_root(repo, config.records_dir)
+    sha = resolve_revision(repo, revision)
 
-    revision_rel = f"{records}/changes/{change_id}/revisions/{sha}"
-    scope = _read_scope(root, f"{revision_rel}/impact.json", change_id, sha)
-    if not work_tree_at(root, sha, records):
+    revision_rel = f"changes/{change_id}/revisions/{sha}"
+    impact_rel = f"{revision_rel}/impact.json"
+    scope = _read_scope(records, impact_rel, change_id, sha)
+    impact_raw = read_confined(records, impact_rel)
+    if impact_raw is None:
+        raise _unscoped()
+    try:
+        _read_attempt(records, revision_rel, attempt, change_id, sha, impact_raw)
+    except ProfileError as error:
+        if error.code == PROFILE_REPOSITORY_INVALID:
+            raise
+        raise _unscoped("gate needs the persisted attempt") from None
+    bound_gate_rel = f"{revision_rel}/attempts/{attempt}/gate.json"
+    bound_gate_path = confined(records, bound_gate_rel)
+    if os.path.lexists(bound_gate_path):
+        if not bound_gate_path.is_file():
+            raise ProfileError(
+                PROFILE_REPOSITORY_INVALID, "repository or revision invalid"
+            )
+        raise ProfileError(PROFILE_ATTEMPT_CONFLICT, "gate outcome already bound")
+    if not work_tree_at(repo, sha):
         raise _unscoped("gate needs the work tree to be the analyzed revision")
 
     # Every executable must resolve before the first write: a command that
@@ -207,10 +238,10 @@ def profile_run_gate(repo_path: str, change_id: str, revision: str) -> dict[str,
                 {"index": index},
             )
     gate_rel = f"{revision_rel}/gate.json"
-    existing = confined(root, gate_rel)
+    existing = confined(records, gate_rel)
     if os.path.lexists(existing) and not existing.is_file():
         raise ProfileError(PROFILE_REPOSITORY_INVALID, "repository or revision invalid")
-    output_dir = confined(root, f"{revision_rel}/gate-output")
+    output_dir = confined(records, f"{revision_rel}/gate-output")
     if os.path.lexists(output_dir) and not output_dir.is_dir():
         raise ProfileError(PROFILE_REPOSITORY_INVALID, "repository or revision invalid")
 
@@ -233,7 +264,7 @@ def profile_run_gate(repo_path: str, change_id: str, revision: str) -> dict[str,
                 started=True, exit_code=None, timed_out=True, stdout=b"", stderr=b""
             )
         else:
-            result = run_command(argv, root, budget)
+            result = run_command(argv, repo, budget)
             if not result.started:
                 raise ProfileError(
                     PROFILE_GATE_COMMAND_INVALID,
@@ -244,14 +275,14 @@ def profile_run_gate(repo_path: str, change_id: str, revision: str) -> dict[str,
 
     # A command may have rewritten tracked files (a formatter or a fixer): the
     # outcome would then describe a tree that is not the Analyzed revision.
-    if not work_tree_at(root, sha, records):
+    if not work_tree_at(repo, sha):
         raise _unscoped("a gate command modified the work tree")
 
-    attempt = _claim_attempt(root, f"{revision_rel}/gate-output")
-    attempt_rel = f"{revision_rel}/gate-output/{attempt}"
+    output_attempt = _claim_attempt(records, f"{revision_rel}/gate-output")
+    attempt_rel = f"{revision_rel}/gate-output/{output_attempt}"
     entries: list[dict[str, Any]] = []
     for name, argv, result in ran:
-        _record_streams(root, attempt_rel, name, result)
+        _record_streams(records, attempt_rel, name, result)
         entries.append(
             {
                 "name": name,
@@ -262,7 +293,9 @@ def profile_run_gate(repo_path: str, change_id: str, revision: str) -> dict[str,
         )
 
     outcome = {
-        "schema": GATE_SCHEMA,
+        "schema": "profile-dev/attempt-gate-outcome/1",
+        "attempt": attempt,
+        "output_attempt": output_attempt,
         "change_id": change_id,
         "revision": sha,
         "inventory_version": scope["inventory_version"],
@@ -271,7 +304,14 @@ def profile_run_gate(repo_path: str, change_id: str, revision: str) -> dict[str,
         "commands": entries,
         "gate_ref": attempt_rel,
     }
-    _publish_latest(root, gate_rel, attempt, canonical_json(outcome))
+    outcome_bytes = canonical_json(outcome)
+    pointer = dict(outcome)
+    pointer["schema"] = GATE_SCHEMA
+    pointer.pop("attempt", None)
+    pointer.pop("output_attempt", None)
+    pointer_bytes = canonical_json(pointer)
+    _write_attempt_outcome(records, bound_gate_rel, outcome_bytes)
+    _publish_latest(records, gate_rel, output_attempt, pointer_bytes)
     return {
         "ok": True,
         "change_id": change_id,
@@ -279,6 +319,7 @@ def profile_run_gate(repo_path: str, change_id: str, revision: str) -> dict[str,
         "gate": gate_rel,
         "gate_ref": attempt_rel,
         "attempt": attempt,
+        "output_attempt": output_attempt,
         "status": "completed",
         "commands": len(entries),
         "timed_out": sum(1 for e in entries if e["timed_out"]),

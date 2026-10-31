@@ -23,6 +23,7 @@ from beddel_profile_dev._io import (
     is_ancestor,
     read_confined,
     real_repo_root,
+    records_root,
     resolve_revision,
     write_create_only,
 )
@@ -83,13 +84,14 @@ def profile_record_change(
     if not is_valid_id(change_id):
         raise _invalid()
     root = real_repo_root(repo_path)
+    records = records_root(root, config.records_dir)
     base_sha = _resolve_base(root, base)
     sha = resolve_revision(root, revision)
     if not is_ancestor(root, base_sha, sha):
         raise _invalid()
 
-    change_rel = f"{config.records_dir}/changes/{change_id}/change.json"
-    link_rel = f"{config.records_dir}/changes/{change_id}/revisions/{sha}/revision.json"
+    change_rel = f"changes/{change_id}/change.json"
+    link_rel = f"changes/{change_id}/revisions/{sha}/revision.json"
     change = canonical_json(
         {"schema": CHANGE_SCHEMA, "change_id": change_id, "base": base_sha}
     )
@@ -101,13 +103,13 @@ def profile_record_change(
             "revision": sha,
         }
     )
-    if _stored_matches(root, change_rel, change) is False:
+    if _stored_matches(records, change_rel, change) is False:
         raise _conflict()
-    if _stored_matches(root, link_rel, link) is False:
+    if _stored_matches(records, link_rel, link) is False:
         raise _conflict()
     for relative, data in ((change_rel, change), (link_rel, link)):
-        if not write_create_only(root, relative, data) and (
-            read_confined(root, relative) != data
+        if not write_create_only(records, relative, data) and (
+            read_confined(records, relative) != data
         ):
             raise _conflict()
     return {

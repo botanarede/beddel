@@ -11,6 +11,8 @@ from typing import Any
 from beddel.domain.errors import BeddelError
 
 __all__ = [
+    "PROFILE_ATTEMPT_CONFLICT",
+    "PROFILE_ATTEMPT_UNSCOPED",
     "PROFILE_CHANGE_CONFLICT",
     "PROFILE_CHANGE_INVALID",
     "PROFILE_CONFIG_INVALID",
@@ -29,8 +31,14 @@ __all__ = [
     "ProfileError",
 ]
 
+PROFILE_ATTEMPT_UNSCOPED = "PROFILE_ATTEMPT_UNSCOPED"
+"""Raised when an attempt cannot be scoped to a valid impact and snapshot."""
+
 PROFILE_CONFIG_INVALID = "PROFILE_CONFIG_INVALID"
 """Raised when the kit-internal config is missing or malformed."""
+
+PROFILE_ATTEMPT_CONFLICT = "PROFILE_ATTEMPT_CONFLICT"
+"""Raised when an attempt ordinal or bound outcome already exists differently."""
 
 PROFILE_PREFLIGHT_FAILED = "PROFILE_PREFLIGHT_FAILED"
 """Raised when one or more preflight checks fail."""

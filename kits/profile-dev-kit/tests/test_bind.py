@@ -16,6 +16,7 @@ from beddel_profile_dev._errors import (
     PROFILE_REPOSITORY_INVALID,
     ProfileError,
 )
+from beddel_profile_dev._io import records_root
 from beddel_profile_dev.tools.bind import profile_bind_inventory
 from beddel_profile_dev.tools.ratify import profile_ratify_inventory
 
@@ -29,7 +30,11 @@ from ._helpers import (
     write_version,
 )
 
-RECORDS = ".beddel-profile/records/revisions"
+RECORDS = "revisions"
+
+
+def _records(repo: Path) -> Path:
+    return records_root(repo, "records/profile-dev")
 
 
 def _ratified(
@@ -50,9 +55,9 @@ def _fails(repo: Path, rev: str, version: str = "v1") -> ProfileError:
 
 def _tree(repo: Path) -> set[str]:
     return {
-        str(p.relative_to(repo))
-        for p in (repo / ".beddel-profile").rglob("*")
-        if p.is_file() and "records" in p.parts
+        str(p.relative_to(_records(repo)))
+        for p in _records(repo).rglob("*")
+        if p.is_file()
     }
 
 
@@ -70,7 +75,7 @@ def test_success_writes_binding_and_canonical_snapshot(tmp_path: Path) -> None:
         "obligations": 3,
         "targets_absent": 0,
     }
-    raw = (repo / snap_rel).read_text()
+    raw = (_records(repo) / snap_rel).read_text()
     snap = json.loads(raw)
     assert (snap["revision"], snap["inventory_version"], snap["inventory_sha256"]) == (
         sha,
@@ -83,7 +88,7 @@ def test_success_writes_binding_and_canonical_snapshot(tmp_path: Path) -> None:
     assert keys == sorted(keys)
     assert raw == json.dumps(snap, sort_keys=True, indent=2, ensure_ascii=True) + "\n"
     assert str(repo) not in raw
-    binding = json.loads((repo / RECORDS / sha / "binding.json").read_text())
+    binding = json.loads((_records(repo) / RECORDS / sha / "binding.json").read_text())
     assert (
         binding["snapshot"] == snap_rel and binding["schema"] == "profile-dev/binding/1"
     )
@@ -101,14 +106,14 @@ def test_unratified_when_record_absent(tmp_path: Path) -> None:
     write_version(repo, "v1", good())
     sha = commit_all(repo)
     assert _fails(repo, sha).code == PROFILE_INVENTORY_UNRATIFIED
-    assert not (repo / ".beddel-profile" / "records").exists()
+    assert not _tree(repo)
 
 
 def test_unratified_when_version_absent(tmp_path: Path) -> None:
     repo, sha = _ratified(tmp_path)
     assert _fails(repo, sha, "v9").code == PROFILE_INVENTORY_UNRATIFIED
     assert _fails(repo, sha, "../x").code == PROFILE_INVENTORY_UNRATIFIED
-    assert not (repo / ".beddel-profile" / "records").exists()
+    assert not _tree(repo)
 
 
 def test_unratified_when_hash_differs(tmp_path: Path) -> None:
@@ -118,7 +123,7 @@ def test_unratified_when_hash_differs(tmp_path: Path) -> None:
     write_version(repo, "v1", changed)
     sha = commit_all(repo)
     assert _fails(repo, sha).code == PROFILE_INVENTORY_UNRATIFIED
-    assert not (repo / ".beddel-profile" / "records").exists()
+    assert not _tree(repo)
 
 
 @pytest.mark.parametrize(
@@ -170,15 +175,15 @@ def test_integrity_block_prevents_binding_and_records_every_failure(
     )
     files = _tree(repo)
     assert len(files) == 1
-    block_path = repo / next(iter(files))
+    block_path = _records(repo) / next(iter(files))
     assert block_path.parent.name == "integrity-blocks"
     block = json.loads(block_path.read_text())
     assert {(f["locator"], f["code"]) for f in block["failures"]} == {
         ("components[0].path", "path.invalid"),
         ("obligations[0].class", "ref.class_unresolved"),
     }
-    assert not (repo / RECORDS / sha / "snapshot.json").exists()
-    assert not (repo / RECORDS / sha / "binding.json").exists()
+    assert not (_records(repo) / RECORDS / sha / "snapshot.json").exists()
+    assert not (_records(repo) / RECORDS / sha / "binding.json").exists()
 
 
 def test_unreadable_yaml_is_an_integrity_block(tmp_path: Path) -> None:
@@ -228,24 +233,24 @@ def test_absent_target_does_not_prevent_binding(tmp_path: Path) -> None:
     repo, sha = _ratified(tmp_path, contracts=False)
     result = profile_bind_inventory(str(repo), sha, "v1")
     assert result["targets_absent"] == 1
-    snap = json.loads((repo / result["snapshot"]).read_text())
+    snap = json.loads((_records(repo) / result["snapshot"]).read_text())
     absent = [o for o in snap["obligations"] if not o["target_present"]]
     assert [o["affected_point"] for o in absent] == ["contracts"]
-    assert not any((repo / RECORDS / sha / "integrity-blocks").glob("*"))
+    assert not any((_records(repo) / RECORDS / sha / "integrity-blocks").glob("*"))
 
 
 def test_rebinding_is_idempotent_and_byte_identical(tmp_path: Path) -> None:
     repo, sha = _ratified(tmp_path)
     first = profile_bind_inventory(str(repo), sha, "v1")
-    before = {p: (repo / p).read_bytes() for p in _tree(repo)}
+    before = {p: (_records(repo) / p).read_bytes() for p in _tree(repo)}
     assert profile_bind_inventory(str(repo), sha, "v1") == first
-    assert {p: (repo / p).read_bytes() for p in _tree(repo)} == before
+    assert {p: (_records(repo) / p).read_bytes() for p in _tree(repo)} == before
 
 
 def test_tampered_snapshot_makes_rebinding_fail(tmp_path: Path) -> None:
     repo, sha = _ratified(tmp_path)
     result = profile_bind_inventory(str(repo), sha, "v1")
-    (repo / result["snapshot"]).write_text("{}\n")
+    (_records(repo) / result["snapshot"]).write_text("{}\n")
     assert _fails(repo, sha).code == PROFILE_INVENTORY_BINDING_CONFLICT
 
 
@@ -255,20 +260,20 @@ def test_another_version_for_a_bound_revision_conflicts(tmp_path: Path) -> None:
     profile_ratify_inventory(str(repo), "v2", "tester")
     sha = commit_all(repo)
     profile_bind_inventory(str(repo), sha, "v1")
-    before = (repo / RECORDS / sha / "snapshot.json").read_bytes()
+    before = (_records(repo) / RECORDS / sha / "snapshot.json").read_bytes()
     assert _fails(repo, sha, "v2").code == PROFILE_INVENTORY_BINDING_CONFLICT
-    assert (repo / RECORDS / sha / "snapshot.json").read_bytes() == before
+    assert (_records(repo) / RECORDS / sha / "snapshot.json").read_bytes() == before
 
 
 def test_a_later_version_never_alters_an_existing_snapshot(tmp_path: Path) -> None:
     repo, sha1 = _ratified(tmp_path)
     profile_bind_inventory(str(repo), sha1, "v1")
-    before = (repo / RECORDS / sha1 / "snapshot.json").read_bytes()
+    before = (_records(repo) / RECORDS / sha1 / "snapshot.json").read_bytes()
     write_version(repo, "v2", good("v2"))
     profile_ratify_inventory(str(repo), "v2", "tester")
     sha2 = commit_all(repo)
     profile_bind_inventory(str(repo), sha2, "v2")
-    assert (repo / RECORDS / sha1 / "snapshot.json").read_bytes() == before
+    assert (_records(repo) / RECORDS / sha1 / "snapshot.json").read_bytes() == before
 
 
 def test_successful_binding_discharges_blocks_of_other_versions(
@@ -282,7 +287,7 @@ def test_successful_binding_discharges_blocks_of_other_versions(
     sha = commit_all(repo)
     assert _fails(repo, sha, "v1").code == PROFILE_INVENTORY_INTEGRITY_BLOCK
     profile_bind_inventory(str(repo), sha, "v2")
-    blocks = repo / RECORDS / sha / "integrity-blocks"
+    blocks = _records(repo) / RECORDS / sha / "integrity-blocks"
     discharges = list(blocks.glob("*.discharged.json"))
     assert len(discharges) == 1
     record = json.loads(discharges[0].read_text())
@@ -312,9 +317,11 @@ def test_git_failure_on_presence_check_is_an_error_not_absent(
 
     monkeypatch.setattr(io, "_git", flaky)
     assert _fails(repo, sha).code == PROFILE_REPOSITORY_INVALID
-    assert not (repo / RECORDS / sha / "snapshot.json").exists()
-    assert not (repo / RECORDS / sha / "binding.json").exists()
-    monkeypatch.undo()
+    assert not (_records(repo) / RECORDS / sha / "snapshot.json").exists()
+    assert not (_records(repo) / RECORDS / sha / "binding.json").exists()
+    # Restore only the Git seam: undo() would also drop the autouse HOME
+    # isolation and let this call write into the real setup directory.
+    monkeypatch.setattr(io, "_git", real)
     assert profile_bind_inventory(str(repo), sha, "v1")["targets_absent"] == 0
 
 
@@ -328,12 +335,13 @@ def test_ratification_record_fields_are_strict(tmp_path: Path, field: str) -> No
     assert _fails(repo, commit_all(repo)).code == PROFILE_INVENTORY_UNRATIFIED
 
 
-def test_symlinked_profile_root_escaping_the_repo_is_refused(tmp_path: Path) -> None:
+def test_symlinked_records_root_escaping_setup_is_refused(tmp_path: Path) -> None:
     repo, sha = _ratified(tmp_path)
     outside = tmp_path / "outside"
     outside.mkdir()
-    (repo / ".beddel-profile").rename(tmp_path / "moved")
-    (repo / ".beddel-profile").symlink_to(outside)
+    setup = Path.home() / ".config" / "beddel"
+    (setup / "records").mkdir(parents=True)
+    (setup / "records" / "profile-dev").symlink_to(outside)
     assert _fails(repo, sha).code == PROFILE_REPOSITORY_INVALID
     assert list(outside.iterdir()) == []
 
@@ -361,11 +369,13 @@ def test_invalid_revision_and_repository(tmp_path: Path) -> None:
     assert _fails(Path(""), "HEAD").code == PROFILE_REPOSITORY_INVALID
 
 
-def test_symlinked_records_dir_escaping_the_repo_is_refused(tmp_path: Path) -> None:
+def test_symlinked_records_dir_escaping_setup_is_refused(tmp_path: Path) -> None:
     repo, sha = _ratified(tmp_path)
     outside = tmp_path / "outside"
     outside.mkdir()
-    (repo / ".beddel-profile" / "records").symlink_to(outside)
+    setup = Path.home() / ".config" / "beddel"
+    setup.mkdir(parents=True)
+    (setup / "records").symlink_to(outside)
     assert _fails(repo, sha).code == PROFILE_REPOSITORY_INVALID
     assert list(outside.iterdir()) == []
 
@@ -374,8 +384,8 @@ def test_symlinked_revision_dir_escaping_the_repo_is_refused(tmp_path: Path) -> 
     repo, sha = _ratified(tmp_path)
     outside = tmp_path / "outside"
     outside.mkdir()
-    (repo / RECORDS).mkdir(parents=True)
-    (repo / RECORDS / sha).symlink_to(outside)
+    (_records(repo) / RECORDS).mkdir(parents=True)
+    (_records(repo) / RECORDS / sha).symlink_to(outside)
     assert _fails(repo, sha).code == PROFILE_REPOSITORY_INVALID
     assert list(outside.iterdir()) == []
 
@@ -383,8 +393,8 @@ def test_symlinked_revision_dir_escaping_the_repo_is_refused(tmp_path: Path) -> 
 def test_dangling_symlink_at_a_record_path_is_not_followed(tmp_path: Path) -> None:
     repo, sha = _ratified(tmp_path)
     outside = tmp_path / "outside"
-    (repo / RECORDS / sha).mkdir(parents=True)
-    (repo / RECORDS / sha / "snapshot.json").symlink_to(outside / "x.json")
+    (_records(repo) / RECORDS / sha).mkdir(parents=True)
+    (_records(repo) / RECORDS / sha / "snapshot.json").symlink_to(outside / "x.json")
     assert _fails(repo, sha).code in {
         PROFILE_INVENTORY_BINDING_CONFLICT,
         PROFILE_REPOSITORY_INVALID,

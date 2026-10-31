@@ -29,6 +29,7 @@ from beddel_profile_dev._io import (
     path_present,
     read_confined,
     real_repo_root,
+    records_root,
     resolve_revision,
     write_create_only,
 )
@@ -117,10 +118,19 @@ def _snapshot_shape_ok(snapshot: dict[str, Any]) -> bool:
     )
 
 
-def _bound_snapshot(root: Path, records: str, sha: str) -> dict[str, Any]:
-    base = f"{records}/revisions/{sha}"
-    binding = _load(root, f"{base}/binding.json")
-    snapshot = _load(root, f"{base}/snapshot.json")
+def _bound_snapshot(
+    records: Path, sha: str, snapshot_raw: bytes | None = None
+) -> dict[str, Any]:
+    base = f"revisions/{sha}"
+    binding = _load(records, f"{base}/binding.json")
+    if snapshot_raw is None:
+        snapshot_raw = read_confined(records, f"{base}/snapshot.json")
+    try:
+        snapshot = json.loads(snapshot_raw) if snapshot_raw is not None else None
+    except ValueError:
+        snapshot = None
+    if not isinstance(snapshot, dict):
+        raise _unbound()
     if (
         binding.get("schema") != BINDING_SCHEMA
         or binding.get("snapshot") != f"{base}/snapshot.json"
@@ -135,10 +145,10 @@ def _bound_snapshot(root: Path, records: str, sha: str) -> dict[str, Any]:
     return snapshot
 
 
-def _linked_change(root: Path, records: str, change_id: str, sha: str) -> str:
+def _linked_change(repo: Path, records: Path, change_id: str, sha: str) -> str:
     """Validate the Change record and the revision link; return the base SHA."""
-    change = _load(root, f"{records}/changes/{change_id}/change.json")
-    link = _load(root, f"{records}/changes/{change_id}/revisions/{sha}/revision.json")
+    change = _load(records, f"changes/{change_id}/change.json")
+    link = _load(records, f"changes/{change_id}/revisions/{sha}/revision.json")
     base = change.get("base")
     if (
         change.get("schema") != CHANGE_SCHEMA
@@ -151,24 +161,23 @@ def _linked_change(root: Path, records: str, change_id: str, sha: str) -> str:
     ):
         raise _unbound()
     try:
-        resolved = resolve_revision(root, base)
+        resolved = resolve_revision(repo, base)
     except ProfileError:
         raise _unbound() from None
-    if resolved != base or not is_ancestor(root, base, sha):
+    if resolved != base or not is_ancestor(repo, base, sha):
         raise _unbound()
     return base
 
 
 def _discharge_blocks_of_other_revisions(
-    root: Path,
-    records: str,
+    records: Path,
     change_id: str,
     sha: str,
     version: str,
     digest: str,
 ) -> None:
     """AD-12: a new Analyzed revision of the Change discharges earlier blocks, once."""
-    revisions = confined(root, f"{records}/changes/{change_id}/revisions")
+    revisions = confined(records, f"changes/{change_id}/revisions")
     if not revisions.is_dir():
         return
     for other in sorted(p.name for p in revisions.iterdir()):
@@ -176,7 +185,7 @@ def _discharge_blocks_of_other_revisions(
             continue
         try:
             link = _load(
-                root, f"{records}/changes/{change_id}/revisions/{other}/revision.json"
+                records, f"changes/{change_id}/revisions/{other}/revision.json"
             )
         except ProfileError:
             continue  # not a well-formed link: not linked to this Change
@@ -186,18 +195,18 @@ def _discharge_blocks_of_other_revisions(
             or link.get("revision") != other
         ):
             continue
-        blocks = f"{records}/revisions/{other}/integrity-blocks"
-        directory = confined(root, blocks)
+        blocks = f"revisions/{other}/integrity-blocks"
+        directory = confined(records, blocks)
         if not directory.is_dir():
             continue
         for entry in sorted(p.name for p in directory.iterdir()):
             if not entry.endswith(".json") or entry.endswith(".discharged.json"):
                 continue
             name = entry[: -len(".json")] + ".discharged.json"
-            discharged = confined(root, f"{blocks}/{name}")
+            discharged = confined(records, f"{blocks}/{name}")
             if discharged.is_symlink() or discharged.exists():
                 continue  # a block is discharged once, by either kind
-            raw = read_confined(root, f"{blocks}/{entry}")
+            raw = read_confined(records, f"{blocks}/{entry}")
             try:
                 block = json.loads(raw) if raw is not None else None
             except ValueError:
@@ -217,7 +226,7 @@ def _discharge_blocks_of_other_revisions(
                 "resolved_by_version": version,
                 "resolved_by_sha256": digest,
             }
-            write_create_only(root, f"{blocks}/{name}", canonical_json(discharge))
+            write_create_only(records, f"{blocks}/{name}", canonical_json(discharge))
 
 
 @beddel_tool(
@@ -235,14 +244,14 @@ def profile_derive_impact(
             ``PROFILE_CHANGE_INVALID`` or ``PROFILE_REPOSITORY_INVALID``.
     """
     config = load_config()
-    records = config.records_dir
     if not is_valid_id(change_id):
         raise ProfileError(PROFILE_CHANGE_INVALID, "change id invalid")
     root = real_repo_root(repo_path)
+    records = records_root(root, config.records_dir)
     sha = resolve_revision(root, revision)
 
     base = _linked_change(root, records, change_id, sha)
-    snapshot = _bound_snapshot(root, records, sha)
+    snapshot = _bound_snapshot(records, sha)
 
     paths = footprint(root, base, sha)
     fallback = {
@@ -262,15 +271,14 @@ def profile_derive_impact(
         "affected_points": points,
         "required_evidence": evidence,
     }
-    impact_rel = f"{records}/changes/{change_id}/revisions/{sha}/impact.json"
+    impact_rel = f"changes/{change_id}/revisions/{sha}/impact.json"
     data = canonical_json(impact)
-    if not write_create_only(root, impact_rel, data) and (
-        read_confined(root, impact_rel) != data
+    if not write_create_only(records, impact_rel, data) and (
+        read_confined(records, impact_rel) != data
     ):
         raise _conflict()
 
     _discharge_blocks_of_other_revisions(
-        root,
         records,
         change_id,
         sha,

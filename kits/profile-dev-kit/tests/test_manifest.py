@@ -19,8 +19,10 @@ _TOOLS = [
     "profile_bind_inventory",
     "profile_record_change",
     "profile_derive_impact",
+    "profile_open_attempt",
     "profile_run_gate",
     "profile_run_review",
+    "profile_capture_evidence",
     "profile_declare_non_applicability",
 ]
 

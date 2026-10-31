@@ -25,6 +25,7 @@ from beddel_profile_dev._io import (
     path_present,
     read_confined,
     real_repo_root,
+    records_root,
     resolve_revision,
     write_create_only,
 )
@@ -75,10 +76,11 @@ def profile_declare_non_applicability(
     if not valid_actor(actor):
         raise _refuse("actor.invalid")
     root = real_repo_root(repo_path)
+    records = records_root(root, config.records_dir)
     sha = resolve_revision(root, revision)
 
-    base = f"{config.records_dir}/revisions/{sha}"
-    raw = read_confined(root, f"{base}/binding.json")
+    base = f"revisions/{sha}"
+    raw = read_confined(records, f"{base}/binding.json")
     try:
         binding = json.loads(raw) if raw is not None else None
     except ValueError:
@@ -130,7 +132,7 @@ def profile_declare_non_applicability(
     record_rel = (
         f"{base}/non-applicability/{class_id}+{affected_point_id}+{criterion_id}.json"
     )
-    existing = confined(root, record_rel)
+    existing = confined(records, record_rel)
     if existing.exists() or existing.is_symlink():
         raise _refuse("determination.exists")
 
@@ -145,7 +147,7 @@ def profile_declare_non_applicability(
         "determined_by": actor,
         "determined_at": datetime.now(UTC).strftime(TIMESTAMP_FORMAT),
     }
-    if not write_create_only(root, record_rel, canonical_json(determination)):
+    if not write_create_only(records, record_rel, canonical_json(determination)):
         raise _refuse("determination.exists")
     return {
         "ok": True,

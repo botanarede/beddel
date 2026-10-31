@@ -243,7 +243,7 @@ def test_default_config_is_valid() -> None:
     assert loaded.gate_executables == ("git", "pytest", "ruff", "mypy")
     assert loaded.required_env_keys == ()
     assert loaded.inventory_dir == ".beddel-profile/inventory"
-    assert loaded.records_dir == ".beddel-profile/records"
+    assert loaded.records_dir == "records/profile-dev"
 
 
 def test_kit_root_resolves_to_kit_directory() -> None:

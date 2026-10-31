@@ -8,6 +8,7 @@ inside the real repository root. Records are create-only.
 from __future__ import annotations
 
 import difflib
+import hashlib
 import json
 import os
 import re
@@ -31,6 +32,8 @@ __all__ = [
     "path_present",
     "read_confined",
     "real_repo_root",
+    "records_root",
+    "repository_key",
     "resolve_revision",
     "work_tree_at",
     "write_create_only",
@@ -285,6 +288,44 @@ def real_repo_root(repo_path: object) -> Path:
     return real
 
 
+def repository_key(repo: Path) -> str:
+    """Return the stable key shared by all worktrees of ``repo``."""
+    result = _git(repo, "rev-parse", "--git-common-dir")
+    if result is None or result.returncode != 0:
+        raise _repo_error()
+    raw = result.stdout.decode("utf-8", "replace").strip()
+    if not raw:
+        raise _repo_error()
+    common = Path(os.path.realpath(Path(repo) / raw))
+    return hashlib.sha256(str(common).encode("utf-8")).hexdigest()
+
+
+def records_root(repo: Path, records_dir: str) -> Path:
+    """Return the setup-relative records root without creating it.
+
+    Directory creation is deferred until a tool has completed all of its
+    fail-closed validation. This keeps refused calls side-effect free.
+    """
+    try:
+        setup = Path.home() / ".config" / "beddel"
+        setup_real = Path(os.path.realpath(setup))
+        base = setup / records_dir
+        base_real = Path(os.path.realpath(base))
+        if base_real != setup_real and setup_real not in base_real.parents:
+            raise _repo_error()
+        candidate = base / repository_key(repo)
+        candidate_real = Path(os.path.realpath(candidate))
+        if candidate_real != setup_real and setup_real not in candidate_real.parents:
+            raise _repo_error()
+        if os.path.lexists(candidate) and not candidate.is_dir():
+            raise _repo_error()
+        return candidate_real
+    except ProfileError:
+        raise
+    except (OSError, RuntimeError, ValueError) as error:
+        raise _repo_error() from error
+
+
 def resolve_revision(repo: Path, revision: object) -> str:
     """Resolve ``revision`` to a full commit SHA (the Analyzed revision identity)."""
     if (
@@ -424,12 +465,11 @@ def in_head_history(repo: Path, path: str) -> bool:
     return bool(result.stdout.strip())
 
 
-def work_tree_at(repo: Path, sha: str, ignore_dir: str) -> bool:
-    """Return True if the work tree IS commit ``sha`` and no tracked file differs.
+def work_tree_at(repo: Path, sha: str) -> bool:
+    """Return True if the work tree IS commit ``sha`` and has no tracked edits.
 
-    Untracked files are not looked at, and neither is anything tracked under
-    ``ignore_dir`` (the records directory, whose files the kit itself updates).
-    A Git failure is an error, never a mismatch.
+    Untracked files are not looked at. Records live outside the work tree, so
+    every tracked edit is visible to this check.
     """
     head = _git(repo, "rev-parse", "--verify", "--end-of-options", "HEAD^{commit}")
     if head is None or head.returncode != 0:
@@ -447,7 +487,6 @@ def work_tree_at(repo: Path, sha: str, ignore_dir: str) -> bool:
     )
     if status is None or status.returncode != 0:
         raise _repo_error()
-    prefix = ignore_dir.rstrip("/") + "/"
     # ``status`` cannot see a tracked file flagged assume-unchanged or
     # skip-worktree (a sparse checkout): refuse those, they could hide an edit.
     flags = _git(repo, "ls-files", "-v", "-z")
@@ -455,20 +494,17 @@ def work_tree_at(repo: Path, sha: str, ignore_dir: str) -> bool:
         raise _repo_error()
     for entry in flags.stdout.decode("utf-8", "surrogateescape").split("\0"):
         hidden = entry and (entry[0].islower() or entry[0] == "S")
-        if hidden and not entry[2:].startswith(prefix):
+        if hidden:
             return False
     original = False  # the next token is the source path of a rename or copy
     for token in status.stdout.decode("utf-8", "surrogateescape").split("\0"):
         if not token:
             continue
         if original:
-            path = token
             original = False
         else:
-            path = token[3:]
             original = "R" in token[:2] or "C" in token[:2]
-        if not path.startswith(prefix):
-            return False
+        return False
     return True
 
 
@@ -501,12 +537,17 @@ def write_create_only(root: Path, relative: str, data: bytes) -> bool:
     Returns True if created, False if it already existed (never overwritten;
     the caller re-reads and applies its idempotency rule).
     """
-    path = confined(root, relative)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    confined(root, relative)  # re-check after the directories exist
     try:
-        with open(path, "xb") as handle:
-            handle.write(data)
-    except FileExistsError:
-        return False
+        path = confined(root, relative)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        confined(root, relative)  # re-check after the directories exist
+        try:
+            with open(path, "xb") as handle:
+                handle.write(data)
+        except FileExistsError:
+            return False
+    except ProfileError:
+        raise
+    except (OSError, RuntimeError, ValueError) as error:
+        raise _repo_error() from error
     return True

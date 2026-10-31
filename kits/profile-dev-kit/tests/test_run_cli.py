@@ -9,6 +9,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from beddel_profile_dev._io import records_root
+
 from ._helpers import (
     commit_all,
     fake_review_env,
@@ -24,7 +26,11 @@ KITS_DIR = KIT_ROOT.parent
 WORKFLOW = KIT_ROOT / "workflows" / "verify-change.yaml"
 RATIFY = KIT_ROOT / "workflows" / "ratify-inventory.yaml"
 DECLARE = KIT_ROOT / "workflows" / "declare-non-applicability.yaml"
-RECORDS = ".beddel-profile/records"
+RECORDS = "changes"
+
+
+def _records(repo: Path) -> Path:
+    return records_root(repo, "records/profile-dev")
 
 
 def _beddel_argv() -> list[str]:
@@ -145,7 +151,7 @@ def _fixture(tmp_path: Path, data: object = None) -> Path:
     return repo
 
 
-def test_ratify_then_verify_change_passes_all_six_steps(tmp_path: Path) -> None:
+def test_ratify_then_verify_change_passes_all_eight_steps(tmp_path: Path) -> None:
     repo = _fixture(tmp_path)
     _ratify(repo, tmp_path)
     base = commit_all(repo)
@@ -158,23 +164,32 @@ def test_ratify_then_verify_change_passes_all_six_steps(tmp_path: Path) -> None:
         "profile_record_change",
         "profile_bind_inventory",
         "profile_derive_impact",
+        "profile_open_attempt",
         "profile_run_gate",
         "profile_run_review",
+        "profile_capture_evidence",
     ):
         assert f"'tool': '{tool}'" in result.stdout
-    assert (repo / RECORDS / "revisions" / sha / "snapshot.json").is_file()
+    assert (_records(repo) / "revisions" / sha / "snapshot.json").is_file()
     impact = json.loads(
         (
-            repo / RECORDS / "changes" / "c1" / "revisions" / sha / "impact.json"
+            _records(repo) / "changes" / "c1" / "revisions" / sha / "impact.json"
         ).read_text()
     )
     assert impact["footprint"] == ["src/api.py"]
     assert [p["id"] for p in impact["affected_points"]] == ["api"]
     assert len(impact["required_evidence"]) == 2
+    attempt_dir = (
+        _records(repo) / "changes" / "c1" / "revisions" / sha / "attempts" / "1"
+    )
+    assert (attempt_dir / "attempt.json").is_file()
+    assert (attempt_dir / "gate.json").is_file()
+    assert (attempt_dir / "review.json").is_file()
+    assert len(list((attempt_dir / "evidence").glob("*.json"))) == 2
 
 
 def _gate_json(repo: Path, sha: str) -> dict[str, object]:
-    path = repo / RECORDS / "changes" / "c1" / "revisions" / sha / "gate.json"
+    path = _records(repo) / "changes" / "c1" / "revisions" / sha / "gate.json"
     data = json.loads(path.read_text())
     assert isinstance(data, dict)
     return data
@@ -196,7 +211,7 @@ def test_verify_change_records_a_non_zero_gate_exit_as_a_result(
     assert isinstance(commands, list)
     assert [c["exit_code"] for c in commands] == [0, 0, 0, 1]
     assert [c["timed_out"] for c in commands] == [False] * 4
-    output = repo / RECORDS / "changes" / "c1" / "revisions" / sha / "gate-output" / "1"
+    output = _records(repo) / "changes" / "c1" / "revisions" / sha / "gate-output" / "1"
     assert (output / "04-pytest.stdout.txt").read_text() == "stub -q\n"
 
 
@@ -211,7 +226,7 @@ def test_rerunning_verify_change_appends_a_gate_attempt(tmp_path: Path) -> None:
     assert second.returncode == 0, second.stderr
     gate = _gate_json(repo, sha)
     assert str(gate["gate_ref"]).endswith("/gate-output/2")
-    output = repo / RECORDS / "changes" / "c1" / "revisions" / sha / "gate-output"
+    output = _records(repo) / "changes" / "c1" / "revisions" / sha / "gate-output"
     assert sorted(p.name for p in output.iterdir()) == ["1", "2"]
 
 
@@ -282,7 +297,7 @@ def test_verify_change_refuses_a_gate_command_outside_the_allowlist(
     assert "Step 'preflight' failed" in result.stderr
     assert "PROFILE_GATE_COMMAND_INVALID" in result.stderr
     assert "gate command executable is not allowed" in result.stderr
-    revision_dir = repo / RECORDS / "changes" / "c1" / "revisions" / sha
+    revision_dir = _records(repo) / "changes" / "c1" / "revisions" / sha
     assert not (revision_dir / "gate.json").exists()
     assert not (revision_dir / "gate-output").exists()
 
@@ -312,6 +327,7 @@ def test_the_gate_step_alone_stops_without_an_impact_record(tmp_path: Path) -> N
         '        repo_path: "$input.repo_path"\n'
         '        change_id: "$input.change_id"\n'
         '        revision: "$input.revision"\n'
+        "        attempt: 1\n"
     )
     result = _run_workflow(
         workflow,
@@ -325,7 +341,7 @@ def test_the_gate_step_alone_stops_without_an_impact_record(tmp_path: Path) -> N
     assert (
         "gate needs the impact record of the Change at this revision" in result.stderr
     )
-    revision_dir = repo / RECORDS / "changes" / "c1" / "revisions" / sha
+    revision_dir = _records(repo) / "changes" / "c1" / "revisions" / sha
     assert not (revision_dir / "gate.json").exists()
     assert not (revision_dir / "gate-output").exists()
 
@@ -341,7 +357,7 @@ def test_block_then_fix_commit_discharges_the_earlier_block(tmp_path: Path) -> N
     blocked = _run(str(repo), tmp_path, revision=first, base=base)
     assert blocked.returncode != 0
     assert "Step 'bind_inventory' failed" in blocked.stderr
-    change_dir = repo / RECORDS / "changes" / "c1"
+    change_dir = _records(repo) / "changes" / "c1"
     assert (change_dir / "change.json").is_file()
     assert (change_dir / "revisions" / first / "revision.json").is_file()
     assert not (change_dir / "revisions" / first / "impact.json").exists()
@@ -352,7 +368,7 @@ def test_block_then_fix_commit_discharges_the_earlier_block(tmp_path: Path) -> N
     fixed = _run(str(repo), tmp_path, revision=second, base=base, version="v2")
     assert fixed.returncode == 0, fixed.stderr
     assert (change_dir / "revisions" / second / "impact.json").is_file()
-    blocks = repo / RECORDS / "revisions" / first / "integrity-blocks"
+    blocks = _records(repo) / "revisions" / first / "integrity-blocks"
     discharged = list(blocks.glob("*.discharged.json"))
     assert len(discharged) == 1
     record = json.loads(discharged[0].read_text())
@@ -368,14 +384,13 @@ def test_declare_non_applicability_for_deleted_component_only(tmp_path: Path) ->
     (repo / "src" / "contracts.yaml").unlink()
     sha = commit_all(repo, "delete contract")
     assert _run(str(repo), tmp_path, revision=sha, base=base).returncode == 0
-    impact_path = repo / RECORDS / "changes" / "c1" / "revisions" / sha / "impact.json"
+    impact_path = _records(repo) / "changes" / "c1" / "revisions" / sha / "impact.json"
     before = impact_path.read_bytes()
 
     declared = _declare(repo, tmp_path, sha, "contracts")
     assert declared.returncode == 0, declared.stderr
     record = (
-        repo
-        / RECORDS
+        _records(repo)
         / "revisions"
         / sha
         / "non-applicability"
@@ -432,14 +447,14 @@ def test_unratified_version_stops_at_bind_inventory_and_writes_no_impact(
     assert result.returncode != 0
     assert "Step 'bind_inventory' failed" in result.stderr
     assert "no ratified inventory version" in result.stderr
-    assert not (repo / RECORDS / "revisions").exists()
+    assert not (_records(repo) / "revisions").exists()
     assert not (
-        repo / RECORDS / "changes" / "c1" / "revisions" / sha / "impact.json"
+        _records(repo) / "changes" / "c1" / "revisions" / sha / "impact.json"
     ).exists()
 
 
 def _revision_dir(repo: Path, sha: str) -> Path:
-    return repo / RECORDS / "changes" / "c1" / "revisions" / sha
+    return _records(repo) / "changes" / "c1" / "revisions" / sha
 
 
 def _review_json(repo: Path, sha: str) -> dict[str, object]:
@@ -464,7 +479,7 @@ def test_verify_change_records_a_completed_review_through_the_fake_route(
         "agent": "kiro",
         "model": "claude-opus-4.5",
         "status": "completed",
-        "review_ref": f"{RECORDS}/changes/c1/revisions/{sha}/review-output/1.txt",
+        "review_ref": f"{RECORDS}/c1/revisions/{sha}/review-output/1.txt",
     }
     output = _revision_dir(repo, sha) / "review-output" / "1.txt"
     assert output.read_text() == "canned review\n"
@@ -539,6 +554,7 @@ def test_the_review_step_alone_stops_without_an_impact_record(tmp_path: Path) ->
         '        repo_path: "$input.repo_path"\n'
         '        change_id: "$input.change_id"\n'
         '        revision: "$input.revision"\n'
+        "        attempt: 1\n"
     )
     result = _run_workflow(
         workflow,

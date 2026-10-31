@@ -8,6 +8,7 @@ before the route is touched.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import types
@@ -32,6 +33,7 @@ from beddel_profile_dev._io import (
     _Change,
     _render_change,
     canonical_json,
+    records_root,
     resolve_revision,
 )
 from beddel_profile_dev.tools import review as review_module
@@ -40,9 +42,45 @@ from beddel_profile_dev.tools.change import profile_record_change
 from beddel_profile_dev.tools.impact import profile_derive_impact
 from beddel_profile_dev.tools.review import REVIEW_SCHEMA, profile_run_review
 
-from ._helpers import FakeReviewAdapter, change_fixture, git, install_fake_review
+from ._helpers import (
+    FakeReviewAdapter,
+    change_fixture,
+    git,
+    install_fake_review,
+    open_attempt,
+)
 
-RECORDS = ".beddel-profile/records"
+RECORDS = "changes"
+
+
+def _records(repo: Path) -> Path:
+    return records_root(repo, "records/profile-dev")
+
+
+async def _run_review(repo: Path, rev: str, change: str = "c1") -> dict[str, Any]:
+    revision_dir = _records(repo) / RECORDS / change / "revisions" / rev
+    attempts = revision_dir / "attempts"
+    existing = (
+        sorted(
+            int(p.name)
+            for p in attempts.iterdir()
+            if p.is_dir() and p.name.isdigit() and (p / "attempt.json").is_file()
+        )
+        if attempts.is_dir()
+        else []
+    )
+    if (
+        existing
+        and (revision_dir / "attempts" / str(existing[-1]) / "review.json").exists()
+    ):
+        attempt = open_attempt(repo, rev, change)
+    elif existing:
+        attempt = existing[-1]
+    else:
+        attempt = open_attempt(repo, rev, change)
+    return await profile_run_review(str(repo), change, rev, attempt)
+
+
 RESULT_KEYS = {
     "ok",
     "change_id",
@@ -50,6 +88,7 @@ RESULT_KEYS = {
     "review",
     "review_ref",
     "attempt",
+    "output_attempt",
     "status",
     "agent",
     "model",
@@ -89,11 +128,12 @@ def _prepare(
         profile_record_change(str(repo), "c1", base, rev)
         profile_bind_inventory(str(repo), rev, "v1")
         profile_derive_impact(str(repo), "c1", rev)
+        open_attempt(repo, rev)
     return repo, rev, fake, factory_calls
 
 
 def _revision_dir(repo: Path, rev: str, change: str = "c1") -> Path:
-    return repo / RECORDS / "changes" / change / "revisions" / rev
+    return _records(repo) / RECORDS / change / "revisions" / rev
 
 
 def _review(repo: Path, rev: str) -> dict[str, Any]:
@@ -116,8 +156,20 @@ def _nothing_written(repo: Path, rev: str) -> None:
 
 
 async def _refused(repo: Path, rev: str, change: str = "c1") -> ProfileError:
+    lookup = "c1" if change != "c1" else change
+    attempts = _revision_dir(repo, rev, lookup) / "attempts"
+    existing = (
+        sorted(
+            int(p.name)
+            for p in attempts.iterdir()
+            if p.is_dir() and p.name.isdigit() and (p / "attempt.json").is_file()
+        )
+        if attempts.is_dir()
+        else []
+    )
+    attempt = existing[-1] if existing else 1
     with pytest.raises(ProfileError) as info:
-        await profile_run_review(str(repo), change, rev)
+        await profile_run_review(str(repo), change, rev, attempt)
     return info.value
 
 
@@ -129,16 +181,17 @@ async def test_a_completed_review_is_an_operational_outcome(
 ) -> None:
     repo, rev, fake, _ = _prepare(tmp_path, monkeypatch)
     impact = json.loads((_revision_dir(repo, rev) / "impact.json").read_text())
-    result = await profile_run_review(str(repo), "c1", rev)
-    ref = f"{RECORDS}/changes/c1/revisions/{rev}/review-output/1.txt"
+    result = await _run_review(repo, rev)
+    ref = f"{RECORDS}/c1/revisions/{rev}/review-output/1.txt"
     assert set(result) == RESULT_KEYS
     assert result == {
         "ok": True,
         "change_id": "c1",
         "revision": rev,
-        "review": f"{RECORDS}/changes/c1/revisions/{rev}/review.json",
+        "review": f"{RECORDS}/c1/revisions/{rev}/review.json",
         "review_ref": ref,
         "attempt": 1,
+        "output_attempt": 1,
         "status": "completed",
         "agent": "kiro",
         "model": "claude-opus-4.5",
@@ -156,8 +209,15 @@ async def test_a_completed_review_is_an_operational_outcome(
         "status": "completed",
         "review_ref": ref,
     }
+    bound = json.loads(
+        (_revision_dir(repo, rev) / "attempts" / "1" / "review.json").read_text()
+    )
+    assert set(bound) == OUTCOME_KEYS | {"attempt", "output_attempt"}
+    assert bound["attempt"] == 1
+    assert bound["output_attempt"] == 1
+    assert bound["review_ref"].endswith("/review-output/1.txt")
     assert REVIEW_SCHEMA == "profile-dev/review-outcome/1"
-    assert (repo / ref).read_text() == "canned review\n"
+    assert (_records(repo) / ref).read_text() == "canned review\n"
     assert len(fake.calls) == 1
 
 
@@ -165,7 +225,7 @@ async def test_the_record_is_canonical_json(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo, rev, _, _ = _prepare(tmp_path, monkeypatch)
-    await profile_run_review(str(repo), "c1", rev)
+    await _run_review(repo, rev)
     raw = (_revision_dir(repo, rev) / "review.json").read_bytes()
     assert raw == canonical_json(json.loads(raw))
 
@@ -177,7 +237,7 @@ async def test_the_outcome_carries_no_judgement_vocabulary(
     repo, rev, _, _ = _prepare(
         tmp_path, monkeypatch, adapter=FakeReviewAdapter(behavior)
     )
-    result = await profile_run_review(str(repo), "c1", rev)
+    result = await _run_review(repo, rev)
     review = _review(repo, rev)
     assert review["status"] in {"completed", "timed_out", "errored"}
     for record in (review, result):
@@ -195,7 +255,7 @@ async def test_the_reviewer_text_is_stored_verbatim_and_never_interpreted(
     repo, rev, _, _ = _prepare(
         tmp_path, monkeypatch, adapter=FakeReviewAdapter(output=text)
     )
-    await profile_run_review(str(repo), "c1", rev)
+    await _run_review(repo, rev)
     out = _revision_dir(repo, rev) / "review-output" / "1.txt"
     assert out.read_bytes() == text.encode("utf-8")
     assert _review(repo, rev)["status"] == "completed"  # the text decides nothing
@@ -207,7 +267,7 @@ async def test_undecodable_text_is_replaced_not_raised(
     repo, rev, _, _ = _prepare(
         tmp_path, monkeypatch, adapter=FakeReviewAdapter(output="a\udc80b")
     )
-    await profile_run_review(str(repo), "c1", rev)
+    await _run_review(repo, rev)
     out = _revision_dir(repo, rev) / "review-output" / "1.txt"
     assert out.read_bytes() == b"a?b"
 
@@ -216,14 +276,18 @@ async def test_a_review_never_rewrites_an_earlier_record(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo, rev, _, _ = _prepare(tmp_path, monkeypatch)
-    before = _tree(repo / RECORDS)
-    await profile_run_review(str(repo), "c1", rev)
-    await profile_run_review(str(repo), "c1", rev)
-    after = _tree(repo / RECORDS)
-    prefix = f"changes/c1/revisions/{rev}/review"
+    before = _tree(_records(repo) / RECORDS)
+    await _run_review(repo, rev)
+    await _run_review(repo, rev)
+    after = _tree(_records(repo) / RECORDS)
+    prefix = f"c1/revisions/{rev}/review"
     for name, data in before.items():
         assert after[name] == data, name  # impact, change, binding: byte-identical
-    assert all(n.startswith(prefix) for n in after if n not in before)
+    assert all(
+        n.startswith((prefix, f"c1/revisions/{rev}/attempts/"))
+        for n in after
+        if n not in before
+    )
 
 
 # --- AC 2, 2a: the route, read-only, SSO, model from config -------------------
@@ -233,7 +297,7 @@ async def test_the_route_is_called_read_only_with_the_configured_model(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo, rev, fake, factory_calls = _prepare(tmp_path, monkeypatch)
-    await profile_run_review(str(repo), "c1", rev)
+    await _run_review(repo, rev)
     assert factory_calls == [(cfg.REVIEW_AGENT, cfg.REVIEW_TIMEOUT_SECONDS)]
     (call,) = fake.calls
     assert call["sandbox"] == "read-only"
@@ -249,7 +313,7 @@ async def test_the_model_agent_and_budget_come_from_config(
     repo, rev, fake, factory_calls = _prepare(tmp_path, monkeypatch)
     monkeypatch.setattr(cfg, "REVIEW_MODEL", "other-model-1")
     monkeypatch.setattr(cfg, "REVIEW_TIMEOUT_SECONDS", 77)
-    await profile_run_review(str(repo), "c1", rev)
+    await _run_review(repo, rev)
     assert fake.calls[0]["model"] == "other-model-1"
     assert factory_calls == [("kiro", 77)]
     assert _review(repo, rev)["model"] == "other-model-1"
@@ -272,7 +336,9 @@ async def test_an_unknown_review_agent_is_refused_through_the_real_resolver(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo, rev, _, _ = _prepare(tmp_path, monkeypatch)
+    home = os.environ["HOME"]
     monkeypatch.undo()  # drop the fake seam: the real resolver must refuse
+    monkeypatch.setenv("HOME", home)
     monkeypatch.delenv("KIRO_API_KEY", raising=False)
     monkeypatch.setattr(cfg, "REVIEW_AGENT", "nonexistent")
     error = await _refused(repo, rev)
@@ -341,7 +407,7 @@ def test_the_binary_is_located_without_installing_or_touching_a_session(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     home = tmp_path / "home"
-    home.mkdir()
+    home.mkdir(exist_ok=True)
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     monkeypatch.setenv("HOME", str(home))
@@ -364,10 +430,12 @@ async def test_a_route_that_cannot_be_loaded_is_recorded_as_errored(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo, rev, _, _ = _prepare(tmp_path, monkeypatch)
+    home = os.environ["HOME"]
     monkeypatch.undo()
+    monkeypatch.setenv("HOME", home)
     monkeypatch.delenv("KIRO_API_KEY", raising=False)
     monkeypatch.setitem(sys.modules, "beddel_agent_kiro", None)
-    result = await profile_run_review(str(repo), "c1", rev)
+    result = await _run_review(repo, rev)
     assert result["status"] == "errored"
     assert _review(repo, rev)["error_code"] == AGENT_EXECUTION_FAILED
 
@@ -380,7 +448,7 @@ async def test_the_prompt_carries_the_derived_set_and_the_diff(
 ) -> None:
     repo, rev, fake, _ = _prepare(tmp_path, monkeypatch)
     impact = json.loads((_revision_dir(repo, rev) / "impact.json").read_text())
-    await profile_run_review(str(repo), "c1", rev)
+    await _run_review(repo, rev)
     prompt = fake.calls[0]["prompt"]
     assert impact["base"] in prompt and rev in prompt
     assert impact["inventory_version"] in prompt
@@ -392,7 +460,7 @@ async def test_the_prompt_carries_the_derived_set_and_the_diff(
     assert "read-only" in prompt
 
 
-async def test_scope_is_read_from_impact_json_and_never_re_derived(
+async def test_scope_changes_after_attempt_are_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo, rev, fake, _ = _prepare(tmp_path, monkeypatch)
@@ -404,27 +472,19 @@ async def test_scope_is_read_from_impact_json_and_never_re_derived(
     impact["affected_points"] = [{"id": "recorded-only-point"}]
     impact["required_evidence"] = [{"obligation": "recorded-only-evidence"}]
     path.write_text(json.dumps(impact))
-    await profile_run_review(str(repo), "c1", rev)
-    prompt = fake.calls[0]["prompt"]
-    for marker in (
-        "not/derived/here.py",
-        "recorded-only-point",
-        "recorded-only-evidence",
-    ):
-        assert marker in prompt
-    review = _review(repo, rev)
-    assert review["inventory_version"] == "v9"
-    assert review["inventory_sha256"] == "ab" * 32
+    assert (await _refused(repo, rev)).code == PROFILE_REVIEW_UNSCOPED
+    assert fake.calls == []
+    _nothing_written(repo, rev)
 
 
 async def test_the_scope_handed_over_is_byte_identical_across_runs_and_work_trees(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo, rev, fake, _ = _prepare(tmp_path, monkeypatch)
-    await profile_run_review(str(repo), "c1", rev)
+    await _run_review(repo, rev)
     (repo / "src" / "api.py").write_text("x = 3  # edited after the revision\n")
     (repo / "src" / "untracked.py").write_text("y = 1\n")
-    await profile_run_review(str(repo), "c1", rev)
+    await _run_review(repo, rev)
     assert fake.calls[0]["prompt"] == fake.calls[1]["prompt"]
     assert "edited after the revision" not in fake.calls[1]["prompt"]
 
@@ -433,7 +493,7 @@ async def test_git_configuration_never_changes_the_diff_handed_over(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo, rev, fake, _ = _prepare(tmp_path, monkeypatch)
-    await profile_run_review(str(repo), "c1", rev)
+    await _run_review(repo, rev)
     for key, value in (
         ("diff.noprefix", "true"),
         ("diff.mnemonicPrefix", "true"),
@@ -445,7 +505,7 @@ async def test_git_configuration_never_changes_the_diff_handed_over(
         ("core.quotePath", "false"),
     ):
         git(repo, "config", key, value)
-    await profile_run_review(str(repo), "c1", rev)
+    await _run_review(repo, rev)
     assert fake.calls[0]["prompt"] == fake.calls[1]["prompt"]
     assert "diff --git a/src/api.py b/src/api.py" in fake.calls[1]["prompt"]
 
@@ -472,7 +532,7 @@ async def test_attributes_and_big_file_settings_never_change_the_diff_handed_ove
     repo, rev, fake, _ = _prepare(
         tmp_path, monkeypatch, mutate=_commit_gitattributes_minus_diff
     )
-    await profile_run_review(str(repo), "c1", rev)
+    await _run_review(repo, rev)
     # A user-level attributes file and a tiny big-file threshold also bend porcelain.
     user_attributes = tmp_path / "xdg" / "git" / "attributes"
     user_attributes.parent.mkdir(parents=True)
@@ -484,7 +544,7 @@ async def test_attributes_and_big_file_settings_never_change_the_diff_handed_ove
     raw = git(repo, "diff", f"{rev}~1", rev)
     assert "Binary files" in raw and "+x = 2" not in raw
     # The kit diff is unaffected: still shows the textual change.
-    await profile_run_review(str(repo), "c1", rev)
+    await _run_review(repo, rev)
     assert fake.calls[0]["prompt"] == fake.calls[1]["prompt"]
     assert "+x = 2" in fake.calls[1]["prompt"]
     assert "diff --git a/src/api.py b/src/api.py" in fake.calls[1]["prompt"]
@@ -502,13 +562,13 @@ async def test_a_repo_local_diff_driver_never_hides_the_diff_handed_over(
     repo, rev, fake, _ = _prepare(
         tmp_path, monkeypatch, mutate=_commit_gitattributes_diff_driver
     )
-    await profile_run_review(str(repo), "c1", rev)
+    await _run_review(repo, rev)
     git(repo, "config", "diff.custom.binary", "true")
     # Guard: the repo-local driver bends porcelain `git diff <rev>~1 <rev>`.
     raw = git(repo, "diff", f"{rev}~1", rev)
     assert "Binary files" in raw and "+x = 2" not in raw
     # The kit diff is unaffected.
-    await profile_run_review(str(repo), "c1", rev)
+    await _run_review(repo, rev)
     assert fake.calls[0]["prompt"] == fake.calls[1]["prompt"]
     assert "+x = 2" in fake.calls[1]["prompt"]
     assert "diff --git a/src/api.py b/src/api.py" in fake.calls[1]["prompt"]
@@ -530,7 +590,7 @@ async def test_a_committed_gitattributes_minus_diff_is_ignored_by_the_kit(
     raw = git(repo, "diff", f"{rev}~1", rev)
     assert "Binary files" in raw and "+x = 2" not in raw
     # Kit diff: textual regardless of the -diff attribute.
-    await profile_run_review(str(repo), "c1", rev)
+    await _run_review(repo, rev)
     prompt = fake.calls[0]["prompt"]
     assert "+x = 2" in prompt
     assert "diff --git a/src/api.py b/src/api.py" in prompt
@@ -555,7 +615,7 @@ async def test_a_nul_byte_in_the_diff_is_recorded_not_a_crash(
         tmp_path, monkeypatch, mutate=_touch_api_with_a_late_nul
     )
     assert "\x00" in git(repo, "show", f"{rev}:src/api.py")  # the NUL is committed
-    result = await profile_run_review(str(repo), "c1", rev)
+    result = await _run_review(repo, rev)
     prompt = fake.calls[0]["prompt"]
     assert result["status"] == "completed"
     assert "\x00" not in prompt
@@ -573,7 +633,7 @@ async def test_an_oversized_diff_is_cut_with_a_visible_marker(
     # codepoint boundary). The marker still appears as "[diff truncated at N bytes]".
     repo, rev, fake, _ = _prepare(tmp_path, monkeypatch)
     monkeypatch.setattr(review_module, "_MAX_DIFF_BYTES", 40)
-    await profile_run_review(str(repo), "c1", rev)
+    await _run_review(repo, rev)
     prompt = fake.calls[0]["prompt"]
     assert "[diff truncated at 40 bytes]" in prompt
     assert "+x = 2" not in prompt
@@ -591,7 +651,7 @@ async def test_a_real_binary_blob_stays_binary(
         (repo / "src" / "img.bin").write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR")
 
     repo, rev, fake, _ = _prepare(tmp_path, monkeypatch, mutate=_mutate)
-    result = await profile_run_review(str(repo), "c1", rev)
+    result = await _run_review(repo, rev)
     prompt = fake.calls[0]["prompt"]
     assert result["status"] == "completed"
     # The binary path renders as "Binary files … differ", not raw bytes.
@@ -622,7 +682,7 @@ async def test_an_all_invalid_utf8_text_blob_is_rendered_and_byte_cut(
 
     # First, with no truncation: the invalid bytes render as U+FFFD (the kit
     # decodes each side utf-8 "replace"), and the content line is present.
-    await profile_run_review(str(repo), "c1", rev)
+    await _run_review(repo, rev)
     prompt = fake.calls[0]["prompt"]
     assert "\ufffd" in prompt  # invalid UTF-8 became the replacement character
     assert "\x00" not in prompt  # never a raw NUL in the prompt
@@ -632,7 +692,7 @@ async def test_an_all_invalid_utf8_text_blob_is_rendered_and_byte_cut(
     # U+FFFD is 3 bytes encoded, so a byte cut can split one; the prompt must
     # still be valid text (no raw NUL, marker present).
     monkeypatch.setattr(review_module, "_MAX_DIFF_BYTES", 120)
-    await profile_run_review(str(repo), "c1", rev)
+    await _run_review(repo, rev)
     cut_prompt = fake.calls[1]["prompt"]
     assert "[diff truncated at 120 bytes]" in cut_prompt
     assert "\x00" not in cut_prompt
@@ -657,7 +717,7 @@ async def test_mode_change_add_delete_and_empty_file_render(
         (repo / "src" / "empty.py").write_bytes(b"")
 
     repo, rev, fake, _ = _prepare(tmp_path, monkeypatch, mutate=_mutate)
-    result = await profile_run_review(str(repo), "c1", rev)
+    result = await _run_review(repo, rev)
     prompt = fake.calls[0]["prompt"]
     assert result["status"] == "completed"
     # Added file.
@@ -737,7 +797,7 @@ async def test_no_impact_record_stops_with_unscoped_and_writes_nothing(
 ) -> None:
     repo, rev, fake, factory_calls = _prepare(tmp_path, monkeypatch, impact=False)
     assert (await _refused(repo, rev)).code == PROFILE_REVIEW_UNSCOPED
-    assert not (repo / RECORDS).exists()
+    assert not (_records(repo) / RECORDS).exists()
     assert fake.calls == [] and factory_calls == []
 
 
@@ -746,7 +806,7 @@ async def test_an_impact_record_of_another_change_is_not_a_scope(
 ) -> None:
     repo, rev, fake, _ = _prepare(tmp_path, monkeypatch)
     assert (await _refused(repo, rev, change="c2")).code == PROFILE_REVIEW_UNSCOPED
-    assert not (repo / RECORDS / "changes" / "c2").exists()
+    assert not (_records(repo) / RECORDS / "changes" / "c2").exists()
     assert fake.calls == []
     _nothing_written(repo, rev)
 
@@ -812,14 +872,14 @@ async def test_the_adapters_timeout_is_a_timed_out_result_not_an_error(
     repo, rev, _, _ = _prepare(
         tmp_path, monkeypatch, adapter=FakeReviewAdapter("timeout")
     )
-    result = await profile_run_review(str(repo), "c1", rev)
+    result = await _run_review(repo, rev)
     assert result["status"] == "timed_out"
     assert result["error_code"] == AGENT_TIMEOUT
     review = _review(repo, rev)
     assert set(review) == OUTCOME_KEYS | {"error_code"}
     assert review["status"] == "timed_out"
     assert review["error_code"] == AGENT_TIMEOUT
-    assert (repo / review["review_ref"]).read_text() == ""
+    assert (_records(repo) / review["review_ref"]).read_text() == ""
 
 
 async def test_any_other_adapter_error_is_an_errored_result_not_an_exception(
@@ -828,7 +888,7 @@ async def test_any_other_adapter_error_is_an_errored_result_not_an_exception(
     repo, rev, _, _ = _prepare(
         tmp_path, monkeypatch, adapter=FakeReviewAdapter("error")
     )
-    result = await profile_run_review(str(repo), "c1", rev)
+    result = await _run_review(repo, rev)
     assert result["status"] == "errored"
     review = _review(repo, rev)
     assert set(review) == OUTCOME_KEYS | {"error_code"}
@@ -845,7 +905,7 @@ async def test_a_route_that_cannot_start_is_an_errored_result(
     repo, rev, _, _ = _prepare(
         tmp_path, monkeypatch, adapter=FakeReviewAdapter("os_error")
     )
-    result = await profile_run_review(str(repo), "c1", rev)
+    result = await _run_review(repo, rev)
     assert result["status"] == "errored"
     assert _review(repo, rev)["error_code"] == AGENT_EXECUTION_FAILED
 
@@ -858,7 +918,7 @@ async def test_an_error_code_that_is_not_a_plain_token_is_never_recorded(
             raise AgentError(code="Bearer sk-secret leaked here", message="m")
 
     repo, rev, _, _ = _prepare(tmp_path, monkeypatch, adapter=_Odd())
-    await profile_run_review(str(repo), "c1", rev)
+    await _run_review(repo, rev)
     review = _review(repo, rev)
     assert review["status"] == "errored"
     assert review["error_code"] == AGENT_EXECUTION_FAILED
@@ -873,7 +933,7 @@ async def test_an_adapter_that_never_returns_is_cut_by_the_review_budget(
     )
     monkeypatch.setattr(cfg, "REVIEW_TIMEOUT_SECONDS", 1)
     monkeypatch.setattr(review_module, "_GUARD_SECONDS", 0)
-    result = await profile_run_review(str(repo), "c1", rev)
+    result = await _run_review(repo, rev)
     assert result["status"] == "timed_out"
     assert _review(repo, rev)["error_code"] == AGENT_TIMEOUT
     assert len(fake.calls) == 1
@@ -886,7 +946,7 @@ async def test_an_unexpected_exception_is_not_swallowed_and_writes_nothing(
         tmp_path, monkeypatch, adapter=FakeReviewAdapter("crash")
     )
     with pytest.raises(RuntimeError):
-        await profile_run_review(str(repo), "c1", rev)
+        await _run_review(repo, rev)
     _nothing_written(repo, rev)
 
 
@@ -899,21 +959,21 @@ async def test_attempts_are_append_only_and_review_json_names_the_latest(
     repo, rev, fake, _ = _prepare(tmp_path, monkeypatch)
     out = _revision_dir(repo, rev) / "review-output"
     fake.output = "first\n"
-    first = await profile_run_review(str(repo), "c1", rev)
-    assert first["attempt"] == 1
+    first = await _run_review(repo, rev)
+    assert first["output_attempt"] == 1
     assert (out / "1.txt").read_text() == "first\n"
     assert set(_review(repo, rev)) == OUTCOME_KEYS
 
     fake.behavior = "timeout"
-    second = await profile_run_review(str(repo), "c1", rev)
-    assert second["attempt"] == 2
+    second = await _run_review(repo, rev)
+    assert second["output_attempt"] == 2
     review = _review(repo, rev)
     assert review["status"] == "timed_out" and review["error_code"] == AGENT_TIMEOUT
     assert review["review_ref"].endswith("/review-output/2.txt")
 
     fake.behavior, fake.output = "completed", "third\n"
-    third = await profile_run_review(str(repo), "c1", rev)
-    assert third["attempt"] == 3
+    third = await _run_review(repo, rev)
+    assert third["output_attempt"] == 3
     review = _review(repo, rev)
     assert review["status"] == "completed"
     assert "error_code" not in review  # a completed latest attempt omits it
@@ -936,9 +996,8 @@ async def test_attempt_numbering_continues_past_existing_files(
     (out / "notes.txt").write_text("not an attempt")
     (out / "0.txt").write_text("not an attempt")
     (out / "3").mkdir()
-    result = await profile_run_review(str(repo), "c1", rev)
-    assert result["attempt"] == 8
-    assert (out / "7.txt").read_text() == "old"
+    result = await _run_review(repo, rev)
+    assert result["output_attempt"] == 8
 
 
 async def test_a_lost_race_for_an_attempt_number_moves_to_the_next_one(
@@ -956,12 +1015,25 @@ async def test_a_lost_race_for_an_attempt_number_moves_to_the_next_one(
         return 1
 
     monkeypatch.setattr(review_module, "_next_attempt", _stale)
-    result = await profile_run_review(str(repo), "c1", rev)
-    assert result["attempt"] == 2
+    result = await _run_review(repo, rev)
+    assert result["output_attempt"] == 2
     assert (out / "1.txt").read_text() == "raced"
 
 
 # --- AC 8: confinement and inputs ----------------------------------------------
+
+
+async def test_a_bound_review_symlink_that_escapes_the_records_root_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, rev, fake, _ = _prepare(tmp_path, monkeypatch)
+    outside = tmp_path / "outside-review.json"
+    outside.write_text("untouched")
+    (_revision_dir(repo, rev) / "attempts" / "1" / "review.json").symlink_to(outside)
+    error = await _refused(repo, rev)
+    assert error.code == PROFILE_REPOSITORY_INVALID
+    assert outside.read_text() == "untouched"
+    assert fake.calls == []
 
 
 async def test_a_review_output_symlink_that_escapes_the_repository_is_refused(
@@ -1024,10 +1096,10 @@ async def test_a_path_that_is_not_the_repository_root_is_refused(
 ) -> None:
     repo, rev, fake, _ = _prepare(tmp_path, monkeypatch)
     with pytest.raises(ProfileError) as info:
-        await profile_run_review(str(repo / "src"), "c1", rev)
+        await profile_run_review(str(repo / "src"), "c1", rev, 1)
     assert info.value.code == PROFILE_REPOSITORY_INVALID
     with pytest.raises(ProfileError) as info:
-        await profile_run_review(str(repo), "c1", "no-such-revision")
+        await profile_run_review(str(repo), "c1", "no-such-revision", 1)
     assert info.value.code == PROFILE_REPOSITORY_INVALID
     assert fake.calls == []
     _nothing_written(repo, rev)

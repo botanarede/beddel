@@ -13,12 +13,17 @@ from beddel_profile_dev._errors import (
     PROFILE_REPOSITORY_INVALID,
     ProfileError,
 )
+from beddel_profile_dev._io import records_root
 from beddel_profile_dev.tools.bind import profile_bind_inventory
 from beddel_profile_dev.tools.determine import profile_declare_non_applicability
 
 from ._helpers import change_fixture
 
-RECORDS = ".beddel-profile/records"
+RECORDS = "revisions"
+
+
+def _records(repo: Path) -> Path:
+    return records_root(repo, "records/profile-dev")
 
 
 def _bound(tmp_path: Path) -> tuple[Path, str]:
@@ -30,7 +35,7 @@ def _bound(tmp_path: Path) -> tuple[Path, str]:
 
 
 def _dir(repo: Path, rev: str) -> Path:
-    return repo / RECORDS / "revisions" / rev / "non-applicability"
+    return _records(repo) / RECORDS / rev / "non-applicability"
 
 
 def _declare(
@@ -45,7 +50,7 @@ def _declare(
 
 
 def _refused(repo: Path, rev: str, reason: str, **kwargs: str) -> None:
-    before = {p for p in (repo / RECORDS).rglob("*")}
+    before = {p for p in (_records(repo) / RECORDS).rglob("*")}
     with pytest.raises(ProfileError) as info:
         _declare(repo, rev, **kwargs)
     assert info.value.code == PROFILE_DETERMINATION_REFUSED
@@ -53,7 +58,7 @@ def _refused(repo: Path, rev: str, reason: str, **kwargs: str) -> None:
     assert info.value.message == (
         f"determination of non-applicability refused: {reason}"
     )
-    assert {p for p in (repo / RECORDS).rglob("*")} == before
+    assert {p for p in (_records(repo) / RECORDS).rglob("*")} == before
 
 
 def test_writes_exactly_the_record_for_the_ratifying_actor(tmp_path: Path) -> None:
@@ -62,9 +67,7 @@ def test_writes_exactly_the_record_for_the_ratifying_actor(tmp_path: Path) -> No
     assert result["ok"] is True
     path = _dir(repo, rev) / "gate-unit+contracts+tests-pass.json"
     record = json.loads(path.read_text())
-    binding = json.loads(
-        (repo / RECORDS / "revisions" / rev / "binding.json").read_text()
-    )
+    binding = json.loads((_records(repo) / RECORDS / rev / "binding.json").read_text())
     assert set(record) == {
         "schema",
         "revision",
@@ -127,7 +130,7 @@ def test_present_target_is_refused(tmp_path: Path) -> None:
 
 def test_no_binding_is_refused(tmp_path: Path) -> None:
     repo, _, rev = change_fixture(tmp_path)
-    (repo / RECORDS).mkdir(parents=True)
+    (_records(repo) / RECORDS).mkdir(parents=True)
     _refused(repo, rev, "binding.absent")
 
 
@@ -146,7 +149,7 @@ def test_binding_digest_that_does_not_match_the_tree_is_refused(
     tmp_path: Path,
 ) -> None:
     repo, rev = _bound(tmp_path)
-    binding = repo / RECORDS / "revisions" / rev / "binding.json"
+    binding = _records(repo) / RECORDS / rev / "binding.json"
     data = json.loads(binding.read_text())
     data["inventory_sha256"] = "0" * 64
     binding.write_text(json.dumps(data))
@@ -166,10 +169,10 @@ def test_a_work_tree_ratification_edit_is_not_trusted(tmp_path: Path) -> None:
 def test_scoped_to_one_revision_and_never_carried_over(tmp_path: Path) -> None:
     repo, rev = _bound(tmp_path)
     _declare(repo, rev)
-    assert list((repo / RECORDS / "revisions").iterdir()) == [
-        repo / RECORDS / "revisions" / rev
+    assert list((_records(repo) / RECORDS).iterdir()) == [
+        _records(repo) / RECORDS / rev
     ]
-    other = repo / RECORDS / "revisions" / ("f" * 40)
+    other = _records(repo) / RECORDS / ("f" * 40)
     assert not (other / "non-applicability").exists()
 
 
