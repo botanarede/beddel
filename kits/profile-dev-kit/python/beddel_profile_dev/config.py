@@ -38,9 +38,10 @@ __all__ = [
 
 GATE_EXECUTABLES: tuple[str, ...] = ("git", "pytest", "ruff", "mypy")
 REQUIRED_ENV_KEYS: tuple[str, ...] = ()  # Epic 3 adds the Review key names
-# Repository-relative POSIX directories (Story 2.2, implementation detail).
+# Inventory is repository-relative; runtime records resolve under setup.
 INVENTORY_DIR: str = ".beddel-profile/inventory"
-RECORDS_DIR: str = ".beddel-profile/records"
+# Records are resolved under the Beddel setup directory at call time.
+RECORDS_DIR: str = "records/profile-dev"
 # Gate (Story 3.1, implementation detail, owner decision 4). Each command is an
 # argv tuple whose argv[0] MUST be in GATE_EXECUTABLES; commands run in the
 # target repository root with no shell. The per-command and total budgets are

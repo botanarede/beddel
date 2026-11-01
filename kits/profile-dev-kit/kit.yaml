@@ -7,8 +7,9 @@ description: >
   deterministic local Gate over that derived set (an operational outcome of
   exit codes, never Evidence or a Verdict), the external Review of that derived
   set through the configured agent route (an operational outcome of completed,
-  timed out or errored, never Evidence or a Verdict) and the recorded
-  determination of non-applicability.
+  timed out or errored, never Evidence or a Verdict), append-only Evidence for
+  matching attempt-bound results and the recorded determination of
+  non-applicability.
 author: Beddel Team
 category: profile # descriptive only; SolutionKit ignores it
 
@@ -18,7 +19,8 @@ config:
   gate_executables: [git, pytest, ruff, mypy]
   required_env_keys: []
   inventory_dir: ".beddel-profile/inventory"
-  records_dir: ".beddel-profile/records"
+  # Resolved relative to the Beddel setup directory, not the repository.
+  records_dir: "records/profile-dev"
   gate_commands:
     - [ruff, check, "."]
     - [ruff, format, --check, "."]
@@ -51,6 +53,10 @@ tools:
     target: "beddel_profile_dev.tools.impact:profile_derive_impact"
     description: "Derive the footprint, Affected points and Required evidence of a Change"
     category: profile
+  - name: profile_open_attempt
+    target: "beddel_profile_dev.tools.attempt:profile_open_attempt"
+    description: "Persist the immutable VerificationAttempt scope after Impact"
+    category: profile
   - name: profile_run_gate
     target: "beddel_profile_dev.tools.gate:profile_run_gate"
     description: "Run the configured local gate commands over the derived set and record exit codes (operational outcome, not Evidence)"
@@ -58,6 +64,10 @@ tools:
   - name: profile_run_review
     target: "beddel_profile_dev.tools.review:profile_run_review"
     description: "Run the external Review of a Change through the configured agent route over its recorded derived set and record the operational outcome (not Evidence, not a Verdict)"
+    category: profile
+  - name: profile_capture_evidence
+    target: "beddel_profile_dev.tools.evidence:profile_capture_evidence"
+    description: "Capture append-only Evidence for the matching results of one VerificationAttempt"
     category: profile
   - name: profile_declare_non_applicability
     target: "beddel_profile_dev.tools.determine:profile_declare_non_applicability"
@@ -67,7 +77,7 @@ tools:
 workflows:
   - name: verify-change
     path: workflows/verify-change.yaml
-    description: Entry workflow of the development profile (preflight, Change, inventory binding, Impact, Gate, Review)
+    description: Entry workflow of the development profile (preflight, Change, inventory binding, Impact, VerificationAttempt, Gate, Review and Evidence)
   - name: ratify-inventory
     path: workflows/ratify-inventory.yaml
     description: Records the ratification of an inventory version
@@ -91,10 +101,14 @@ targets:
         target: "beddel_profile_dev.tools.change:profile_record_change"
       - name: profile_derive_impact
         target: "beddel_profile_dev.tools.impact:profile_derive_impact"
+      - name: profile_open_attempt
+        target: "beddel_profile_dev.tools.attempt:profile_open_attempt"
       - name: profile_run_gate
         target: "beddel_profile_dev.tools.gate:profile_run_gate"
       - name: profile_run_review
         target: "beddel_profile_dev.tools.review:profile_run_review"
+      - name: profile_capture_evidence
+        target: "beddel_profile_dev.tools.evidence:profile_capture_evidence"
       - name: profile_declare_non_applicability
         target: "beddel_profile_dev.tools.determine:profile_declare_non_applicability"
   typescript:

@@ -23,15 +23,45 @@ from beddel_profile_dev._errors import (
     PROFILE_REPOSITORY_INVALID,
     ProfileError,
 )
-from beddel_profile_dev._io import resolve_revision
+from beddel_profile_dev._io import records_root, resolve_revision
 from beddel_profile_dev.tools.bind import profile_bind_inventory
 from beddel_profile_dev.tools.change import profile_record_change
 from beddel_profile_dev.tools.gate import GATE_SCHEMA, profile_run_gate
 from beddel_profile_dev.tools.impact import profile_derive_impact
 
-from ._helpers import change_fixture, git, stub_gate_tools
+from ._helpers import change_fixture, git, open_attempt, stub_gate_tools
 
-RECORDS = ".beddel-profile/records"
+RECORDS = "changes"
+
+
+def _records(repo: Path) -> Path:
+    return records_root(repo, "records/profile-dev")
+
+
+def _run_gate(repo: Path, rev: str, change: str = "c1") -> dict[str, Any]:
+    revision_dir = _records(repo) / RECORDS / change / "revisions" / rev
+    attempts = revision_dir / "attempts"
+    existing = (
+        sorted(
+            int(p.name)
+            for p in attempts.iterdir()
+            if p.is_dir() and p.name.isdigit() and (p / "attempt.json").is_file()
+        )
+        if attempts.is_dir()
+        else []
+    )
+    if (
+        existing
+        and (revision_dir / "attempts" / str(existing[-1]) / "gate.json").exists()
+    ):
+        attempt = open_attempt(repo, rev, change)
+    elif existing:
+        attempt = existing[-1]
+    else:
+        attempt = open_attempt(repo, rev, change)
+    return profile_run_gate(str(repo), change, rev, attempt)
+
+
 DEFAULT_ARGV = [
     ["ruff", "check", "."],
     ["ruff", "format", "--check", "."],
@@ -45,6 +75,7 @@ RESULT_KEYS = {
     "gate",
     "gate_ref",
     "attempt",
+    "output_attempt",
     "status",
     "commands",
     "timed_out",
@@ -77,6 +108,7 @@ def _prepare(
         profile_record_change(str(repo), "c1", base, rev)
         profile_bind_inventory(str(repo), rev, "v1")
         profile_derive_impact(str(repo), "c1", rev)
+        open_attempt(repo, rev)
     return repo, rev
 
 
@@ -99,7 +131,7 @@ def _configure(
 
 
 def _revision_dir(repo: Path, rev: str, change: str = "c1") -> Path:
-    return repo / RECORDS / "changes" / change / "revisions" / rev
+    return _records(repo) / RECORDS / change / "revisions" / rev
 
 
 def _gate(repo: Path, rev: str) -> dict[str, Any]:
@@ -122,8 +154,20 @@ def _nothing_written(repo: Path, rev: str) -> None:
 
 
 def _refused(repo: Path, rev: str, change: str = "c1") -> ProfileError:
+    lookup = "c1" if change != "c1" else change
+    attempts = _revision_dir(repo, rev, lookup) / "attempts"
+    existing = (
+        sorted(
+            int(p.name)
+            for p in attempts.iterdir()
+            if p.is_dir() and p.name.isdigit() and (p / "attempt.json").is_file()
+        )
+        if attempts.is_dir()
+        else []
+    )
+    attempt = existing[-1] if existing else 1
     with pytest.raises(ProfileError) as info:
-        profile_run_gate(str(repo), change, rev)
+        profile_run_gate(str(repo), change, rev, attempt)
     return info.value
 
 
@@ -134,13 +178,14 @@ def test_default_commands_are_recorded_as_an_operational_outcome(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo, rev = _prepare(tmp_path, monkeypatch)
-    result = profile_run_gate(str(repo), "c1", rev)
+    result = _run_gate(repo, rev)
     impact = json.loads((_revision_dir(repo, rev) / "impact.json").read_text())
 
     assert set(result) == RESULT_KEYS
     assert result["ok"] is True
     assert result["status"] == "completed"
     assert result["attempt"] == 1
+    assert result["output_attempt"] == 1
     assert result["commands"] == 4
     assert result["timed_out"] == 0
 
@@ -152,7 +197,7 @@ def test_default_commands_are_recorded_as_an_operational_outcome(
     assert gate["inventory_version"] == impact["inventory_version"]
     assert gate["inventory_sha256"] == impact["inventory_sha256"]
     assert gate["status"] == "completed"
-    assert gate["gate_ref"] == f"{RECORDS}/changes/c1/revisions/{rev}/gate-output/1"
+    assert gate["gate_ref"] == f"{RECORDS}/c1/revisions/{rev}/gate-output/1"
     assert [c["name"] for c in gate["commands"]] == [
         "01-ruff",
         "02-ruff",
@@ -160,17 +205,20 @@ def test_default_commands_are_recorded_as_an_operational_outcome(
         "04-pytest",
     ]
     assert [c["argv"] for c in gate["commands"]] == DEFAULT_ARGV
-    for entry in gate["commands"]:
-        assert set(entry) == COMMAND_KEYS
-        assert entry["exit_code"] == 0
-        assert entry["timed_out"] is False
+    bound = json.loads(
+        (_revision_dir(repo, rev) / "attempts" / "1" / "gate.json").read_text()
+    )
+    assert set(bound) == OUTCOME_KEYS | {"attempt", "output_attempt"}
+    assert bound["attempt"] == 1
+    assert bound["output_attempt"] == 1
+    assert bound["gate_ref"].endswith("/gate-output/1")
 
 
 def test_raw_streams_are_stored_per_attempt_and_command(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo, rev = _prepare(tmp_path, monkeypatch)
-    profile_run_gate(str(repo), "c1", rev)
+    _run_gate(repo, rev)
     attempt = _revision_dir(repo, rev) / "gate-output" / "1"
     assert sorted(p.name for p in attempt.iterdir()) == sorted(
         f"{name}.{stream}.txt"
@@ -186,7 +234,7 @@ def test_the_record_is_canonical_json(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo, rev = _prepare(tmp_path, monkeypatch)
-    profile_run_gate(str(repo), "c1", rev)
+    _run_gate(repo, rev)
     raw = (_revision_dir(repo, rev) / "gate.json").read_bytes()
     expected = (
         json.dumps(json.loads(raw), sort_keys=True, indent=2, ensure_ascii=True) + "\n"
@@ -200,7 +248,7 @@ def test_a_non_zero_exit_is_a_recorded_exit_code_not_an_error(
     repo, rev = _prepare(tmp_path, monkeypatch)
     monkeypatch.setenv("STUB_EXIT_PYTEST", "3")
     monkeypatch.setenv("STUB_EXIT_MYPY", "1")
-    result = profile_run_gate(str(repo), "c1", rev)
+    result = _run_gate(repo, rev)
     assert result["status"] == "completed"
     codes = {c["name"]: c["exit_code"] for c in _gate(repo, rev)["commands"]}
     assert codes == {"01-ruff": 0, "02-ruff": 0, "03-mypy": 1, "04-pytest": 3}
@@ -211,7 +259,7 @@ def test_the_outcome_carries_no_judgement_vocabulary(
 ) -> None:
     repo, rev = _prepare(tmp_path, monkeypatch)
     monkeypatch.setenv("STUB_EXIT_PYTEST", "1")
-    result = profile_run_gate(str(repo), "c1", rev)
+    result = _run_gate(repo, rev)
     text = (
         (_revision_dir(repo, rev) / "gate.json").read_text() + json.dumps(result)
     ).lower()
@@ -230,7 +278,7 @@ def test_a_timed_out_command_is_recorded_and_does_not_abort(
     repo, rev = _prepare(tmp_path, monkeypatch)
     _configure(monkeypatch, per_command=1)
     monkeypatch.setenv("STUB_SLEEP_MYPY", "30")
-    result = profile_run_gate(str(repo), "c1", rev)
+    result = _run_gate(repo, rev)
     assert result["status"] == "completed"
     assert result["timed_out"] == 1
     entries = {c["name"]: c for c in _gate(repo, rev)["commands"]}
@@ -248,7 +296,7 @@ def test_the_total_budget_records_the_remaining_commands_as_timed_out(
     repo, rev = _prepare(tmp_path, monkeypatch)
     _configure(monkeypatch, per_command=30, total=1)
     monkeypatch.setenv("STUB_SLEEP_RUFF", "30")
-    result = profile_run_gate(str(repo), "c1", rev)
+    result = _run_gate(repo, rev)
     assert result["status"] == "completed"
     assert result["timed_out"] == 4
     gate = _gate(repo, rev)
@@ -266,7 +314,7 @@ def test_an_unset_total_budget_never_cuts_a_command_short(
 ) -> None:
     repo, rev = _prepare(tmp_path, monkeypatch)
     _configure(monkeypatch, total=None)
-    profile_run_gate(str(repo), "c1", rev)
+    _run_gate(repo, rev)
     assert all(c["exit_code"] == 0 for c in _gate(repo, rev)["commands"])
 
 
@@ -392,8 +440,8 @@ def test_an_untracked_file_does_not_block_the_gate(
 ) -> None:
     repo, rev = _prepare(tmp_path, monkeypatch)
     (repo / "scratch.txt").write_text("untracked\n")
-    profile_run_gate(str(repo), "c1", rev)
-    profile_run_gate(str(repo), "c1", rev)  # the kit's own records are untracked too
+    _run_gate(repo, rev)
+    _run_gate(repo, rev)  # the kit's own records are untracked too
     assert _gate(repo, rev)["gate_ref"].endswith("/gate-output/2")
 
 
@@ -409,7 +457,7 @@ def test_a_gate_json_that_is_a_directory_is_refused_before_any_command_runs(
 # --- AC 1: scope comes from impact.json only --------------------------------
 
 
-def test_scope_is_read_from_impact_json_and_never_re_derived(
+def test_scope_changes_after_attempt_are_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo, rev = _prepare(tmp_path, monkeypatch)
@@ -419,25 +467,27 @@ def test_scope_is_read_from_impact_json_and_never_re_derived(
     impact["inventory_sha256"] = "ab" * 32
     impact["footprint"] = ["not/derived/here.py"]
     path.write_text(json.dumps(impact))
-    profile_run_gate(str(repo), "c1", rev)
-    gate = _gate(repo, rev)
-    assert gate["inventory_version"] == "v9"
-    assert gate["inventory_sha256"] == "ab" * 32
+    assert _refused(repo, rev).code == PROFILE_GATE_UNSCOPED
+    _nothing_written(repo, rev)
 
 
 def test_the_gate_reads_the_impact_record_and_never_rewrites_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo, rev = _prepare(tmp_path, monkeypatch)
-    before = _tree(repo / RECORDS)
-    profile_run_gate(str(repo), "c1", rev)
-    profile_run_gate(str(repo), "c1", rev)
-    after = _tree(repo / RECORDS)
-    gate_prefix = f"changes/c1/revisions/{rev}/gate"
+    before = _tree(_records(repo) / RECORDS)
+    _run_gate(repo, rev)
+    _run_gate(repo, rev)
+    after = _tree(_records(repo) / RECORDS)
+    gate_prefix = f"c1/revisions/{rev}/gate"
     for name, data in before.items():
         assert after[name] == data, name  # every earlier record is byte-identical
     assert {n for n in after if n not in before}.issuperset({f"{gate_prefix}.json"})
-    assert all(n.startswith(gate_prefix) for n in after if n not in before)
+    assert all(
+        n.startswith((gate_prefix, f"c1/revisions/{rev}/attempts/"))
+        for n in after
+        if n not in before
+    )
 
 
 def test_no_impact_record_stops_with_unscoped_and_writes_nothing(
@@ -445,7 +495,7 @@ def test_no_impact_record_stops_with_unscoped_and_writes_nothing(
 ) -> None:
     repo, rev = _prepare(tmp_path, monkeypatch, impact=False)
     assert _refused(repo, rev).code == PROFILE_GATE_UNSCOPED
-    assert not (repo / RECORDS).exists()
+    assert not (_records(repo) / RECORDS).exists()
 
 
 def test_an_impact_record_of_another_change_is_not_a_scope(
@@ -453,7 +503,7 @@ def test_an_impact_record_of_another_change_is_not_a_scope(
 ) -> None:
     repo, rev = _prepare(tmp_path, monkeypatch)
     assert _refused(repo, rev, change="c2").code == PROFILE_GATE_UNSCOPED
-    assert not (repo / RECORDS / "changes" / "c2").exists()
+    assert not (_records(repo) / RECORDS / "c2").exists()
     _nothing_written(repo, rev)
 
 
@@ -555,7 +605,7 @@ def test_commands_run_in_the_repository_root_with_git_env_removed(
     repo, rev = _prepare(tmp_path, monkeypatch)
     _configure(monkeypatch, [["git", "rev-parse", "--show-toplevel"]])
     monkeypatch.setenv("GIT_DIR", str(tmp_path / "elsewhere"))
-    profile_run_gate(str(repo), "c1", rev)
+    _run_gate(repo, rev)
     out = _revision_dir(repo, rev) / "gate-output" / "1" / "01-git.stdout.txt"
     assert Path(out.read_text().strip()) == repo.resolve()
     assert _gate(repo, rev)["commands"][0]["exit_code"] == 0
@@ -565,10 +615,10 @@ def test_scope_and_command_list_are_identical_across_runs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo, rev = _prepare(tmp_path, monkeypatch)
-    profile_run_gate(str(repo), "c1", rev)
+    _run_gate(repo, rev)
     first = _gate(repo, rev)
     monkeypatch.setenv("STUB_EXIT_PYTEST", "2")  # exit codes may differ
-    profile_run_gate(str(repo), "c1", rev)
+    _run_gate(repo, rev)
     second = _gate(repo, rev)
     for key in ("schema", "change_id", "revision", "inventory_version"):
         assert first[key] == second[key]
@@ -587,21 +637,21 @@ def test_attempts_are_append_only_and_gate_json_names_the_latest(
     repo, rev = _prepare(tmp_path, monkeypatch)
     output = _revision_dir(repo, rev) / "gate-output"
 
-    first = profile_run_gate(str(repo), "c1", rev)
+    first = _run_gate(repo, rev)
     attempt_one = _tree(output / "1")
-    assert first["attempt"] == 1
+    assert first["output_attempt"] == 1
 
     monkeypatch.setenv("STUB_EXIT_PYTEST", "3")
-    second = profile_run_gate(str(repo), "c1", rev)
-    assert second["attempt"] == 2
+    second = _run_gate(repo, rev)
+    assert second["output_attempt"] == 2
     assert _tree(output / "1") == attempt_one  # a prior attempt is never rewritten
     gate = _gate(repo, rev)
     assert gate["gate_ref"].endswith("/gate-output/2")
     assert gate["commands"][3]["exit_code"] == 3
 
     monkeypatch.setenv("STUB_EXIT_PYTEST", "4")
-    third = profile_run_gate(str(repo), "c1", rev)
-    assert third["attempt"] == 3
+    third = _run_gate(repo, rev)
+    assert third["output_attempt"] == 3
     assert sorted(p.name for p in output.iterdir()) == ["1", "2", "3"]
     assert _tree(output / "1") == attempt_one
     assert (output / "2" / "04-pytest.stdout.txt").read_text() == "stub -q\n"
@@ -618,9 +668,9 @@ def test_attempt_numbering_continues_past_existing_directories(
     (output / "7").mkdir(parents=True)
     (output / "notes").mkdir()
     (output / "0").mkdir()
-    result = profile_run_gate(str(repo), "c1", rev)
-    assert result["attempt"] == 8
-    assert (output / "8").is_dir()
+    result = _run_gate(repo, rev)
+    assert result["output_attempt"] == 8
+
     assert list((output / "7").iterdir()) == []
 
 
@@ -628,14 +678,26 @@ def test_a_refused_rerun_leaves_the_previous_outcome_untouched(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo, rev = _prepare(tmp_path, monkeypatch)
-    profile_run_gate(str(repo), "c1", rev)
-    before = _tree(repo / RECORDS)
+    _run_gate(repo, rev)
+    before = _tree(_records(repo) / RECORDS)
     monkeypatch.setattr(cfg, "GATE_COMMANDS", (("curl", "x"),))
     assert _refused(repo, rev).code == PROFILE_GATE_COMMAND_INVALID
-    assert _tree(repo / RECORDS) == before
+    assert _tree(_records(repo) / RECORDS) == before
 
 
 # --- AC 9: confinement and inputs ---------------------------------------------
+
+
+def test_a_bound_gate_symlink_that_escapes_the_records_root_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, rev = _prepare(tmp_path, monkeypatch)
+    outside = tmp_path / "outside-gate.json"
+    outside.write_text("untouched")
+    (_revision_dir(repo, rev) / "attempts" / "1" / "gate.json").symlink_to(outside)
+    error = _refused(repo, rev)
+    assert error.code == PROFILE_REPOSITORY_INVALID
+    assert outside.read_text() == "untouched"
 
 
 def test_a_gate_output_symlink_that_escapes_the_repository_is_refused(
@@ -675,9 +737,9 @@ def test_a_path_that_is_not_the_repository_root_is_refused(
 ) -> None:
     repo, rev = _prepare(tmp_path, monkeypatch)
     with pytest.raises(ProfileError) as info:
-        profile_run_gate(str(repo / "src"), "c1", rev)
+        profile_run_gate(str(repo / "src"), "c1", rev, 1)
     assert info.value.code == PROFILE_REPOSITORY_INVALID
     with pytest.raises(ProfileError) as info:
-        profile_run_gate(str(repo), "c1", "no-such-revision")
+        profile_run_gate(str(repo), "c1", "no-such-revision", 1)
     assert info.value.code == PROFILE_REPOSITORY_INVALID
     _nothing_written(repo, rev)

@@ -2,7 +2,7 @@
 
 The version file and its ratification record are read from the tree of the
 Analyzed revision, never from the work tree. Records written here live under
-``<records_dir>/revisions/<sha>/`` in the work tree and are create-only.
+the setup-relative records root and are create-only.
 """
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ from beddel_profile_dev._io import (
     path_present,
     read_confined,
     real_repo_root,
+    records_root,
     resolve_revision,
     write_create_only,
 )
@@ -115,11 +116,11 @@ def _valid_timestamp(value: object) -> bool:
     return True
 
 
-def _write_or_match(root: Path, relative: str, data: bytes) -> None:
+def _write_or_match(records: Path, relative: str, data: bytes) -> None:
     """Create-only write; if present, the stored bytes must be identical."""
-    if write_create_only(root, relative, data):
+    if write_create_only(records, relative, data):
         return
-    if read_confined(root, relative) != data:
+    if read_confined(records, relative) != data:
         raise _conflict()
 
 
@@ -159,15 +160,15 @@ def _snapshot(
 
 
 def _discharge_other_blocks(
-    root: Path, base: str, revision: str, version: str, digest: str
+    records: Path, base: str, revision: str, version: str, digest: str
 ) -> None:
-    directory = confined(root, f"{base}/integrity-blocks")
+    directory = confined(records, f"{base}/integrity-blocks")
     if not directory.is_dir():
         return
     for entry in sorted(p.name for p in directory.iterdir()):
         if not entry.endswith(".json") or entry.endswith(".discharged.json"):
             continue
-        raw = read_confined(root, f"{base}/integrity-blocks/{entry}")
+        raw = read_confined(records, f"{base}/integrity-blocks/{entry}")
         try:
             block = json.loads(raw) if raw is not None else None
         except ValueError:
@@ -187,11 +188,11 @@ def _discharge_other_blocks(
             "resolved_by_sha256": digest,
         }
         name = entry[: -len(".json")] + ".discharged.json"
-        discharged = confined(root, f"{base}/integrity-blocks/{name}")
+        discharged = confined(records, f"{base}/integrity-blocks/{name}")
         if discharged.exists() or discharged.is_symlink():
             continue  # a block is discharged once, by either kind
         _write_or_match(
-            root, f"{base}/integrity-blocks/{name}", canonical_json(discharge)
+            records, f"{base}/integrity-blocks/{name}", canonical_json(discharge)
         )
 
 
@@ -213,6 +214,7 @@ def profile_bind_inventory(
     """
     config = load_config()
     root = real_repo_root(repo_path)
+    records = records_root(root, config.records_dir)
     sha = resolve_revision(root, revision)
     if not is_valid_id(inventory_version):
         raise _unratified()
@@ -229,11 +231,11 @@ def profile_bind_inventory(
     if not _record_is_valid(record_blob, inventory_version, digest):
         raise _unratified()
 
-    base = f"{config.records_dir}/revisions/{sha}"
+    base = f"revisions/{sha}"
     binding_rel = f"{base}/binding.json"
     snapshot_rel = f"{base}/snapshot.json"
 
-    existing = read_confined(root, binding_rel)
+    existing = read_confined(records, binding_rel)
     if existing is not None:
         try:
             stored = json.loads(existing)
@@ -246,8 +248,8 @@ def profile_bind_inventory(
             raise _conflict()
 
     block_rel = f"{base}/integrity-blocks/{inventory_version}-{digest[:12]}.json"
-    if read_confined(root, block_rel) is not None:
-        raise _blocked(_recorded_codes(read_confined(root, block_rel)), block_rel)
+    if read_confined(records, block_rel) is not None:
+        raise _blocked(_recorded_codes(read_confined(records, block_rel)), block_rel)
 
     failures: list[Failure]
     inventory: Inventory | None
@@ -265,7 +267,7 @@ def profile_bind_inventory(
             "inventory_sha256": digest,
             "failures": [{"locator": f.locator, "code": f.code} for f in failures],
         }
-        _write_or_match(root, block_rel, canonical_json(block))
+        _write_or_match(records, block_rel, canonical_json(block))
         raise _blocked(sorted({f.code for f in failures}), block_rel)
 
     present = {c.path: path_present(root, sha, c.path) for c in inventory.components}
@@ -277,9 +279,9 @@ def profile_bind_inventory(
         "inventory_sha256": digest,
         "snapshot": snapshot_rel,
     }
-    _write_or_match(root, snapshot_rel, canonical_json(snapshot))
-    _write_or_match(root, binding_rel, canonical_json(binding))
-    _discharge_other_blocks(root, base, sha, inventory_version, digest)
+    _write_or_match(records, snapshot_rel, canonical_json(snapshot))
+    _write_or_match(records, binding_rel, canonical_json(binding))
+    _discharge_other_blocks(records, base, sha, inventory_version, digest)
 
     return {
         "ok": True,

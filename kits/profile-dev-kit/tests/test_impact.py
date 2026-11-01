@@ -14,6 +14,7 @@ from beddel_profile_dev._errors import (
     PROFILE_REPOSITORY_INVALID,
     ProfileError,
 )
+from beddel_profile_dev._io import records_root
 from beddel_profile_dev.tools.bind import profile_bind_inventory
 from beddel_profile_dev.tools.change import profile_record_change
 from beddel_profile_dev.tools.impact import profile_derive_impact
@@ -21,11 +22,15 @@ from beddel_profile_dev.tools.ratify import profile_ratify_inventory
 
 from ._helpers import change_fixture, commit_all, good, write_version
 
-RECORDS = ".beddel-profile/records"
+RECORDS = "changes"
+
+
+def _records(repo: Path) -> Path:
+    return records_root(repo, "records/profile-dev")
 
 
 def _impact_path(repo: Path, rev: str, change: str = "c1") -> Path:
-    return repo / RECORDS / "changes" / change / "revisions" / rev / "impact.json"
+    return _records(repo) / RECORDS / change / "revisions" / rev / "impact.json"
 
 
 def _run_all(repo: Path, base: str, rev: str, version: str = "v1") -> dict[str, Any]:
@@ -86,7 +91,7 @@ def test_record_has_exactly_the_documented_fields_and_counts(tmp_path: Path) -> 
         "ok": True,
         "change_id": "c1",
         "revision": rev,
-        "impact": f"{RECORDS}/changes/c1/revisions/{rev}/impact.json",
+        "impact": f"{RECORDS}/c1/revisions/{rev}/impact.json",
         "affected_points": 1,
         "required_evidence": 3,
         "targets_absent": 1,
@@ -150,7 +155,7 @@ def test_without_a_change_record_it_is_unbound_and_writes_nothing(
     repo, _, rev = change_fixture(tmp_path)
     profile_bind_inventory(str(repo), rev, "v1")
     assert _fails(repo, rev).code == PROFILE_IMPACT_UNBOUND
-    assert not (repo / RECORDS / "changes").exists()
+    assert not (_records(repo) / RECORDS).exists()
 
 
 def test_without_a_binding_it_is_unbound(tmp_path: Path) -> None:
@@ -167,7 +172,7 @@ def test_binding_that_disagrees_with_the_snapshot_is_unbound(
     repo, base, rev = change_fixture(tmp_path)
     _run_all(repo, base, rev)
     _impact_path(repo, rev).unlink()
-    binding = repo / RECORDS / "revisions" / rev / "binding.json"
+    binding = _records(repo) / "revisions" / rev / "binding.json"
     data = json.loads(binding.read_text())
     data[field] = "other"
     binding.write_text(json.dumps(data))
@@ -179,7 +184,7 @@ def test_malformed_snapshot_is_unbound(tmp_path: Path) -> None:
     repo, base, rev = change_fixture(tmp_path)
     _run_all(repo, base, rev)
     _impact_path(repo, rev).unlink()
-    snapshot = repo / RECORDS / "revisions" / rev / "snapshot.json"
+    snapshot = _records(repo) / "revisions" / rev / "snapshot.json"
     data = json.loads(snapshot.read_text())
     data["obligations"][0]["affected_point"] = "missing"
     snapshot.write_text(json.dumps(data))
@@ -206,7 +211,7 @@ def test_symlinked_impact_dir_escaping_the_repo_is_refused(tmp_path: Path) -> No
     profile_bind_inventory(str(repo), rev, "v1")
     outside = tmp_path / "outside"
     outside.mkdir()
-    link = repo / RECORDS / "changes" / "c1" / "revisions" / rev
+    link = _records(repo) / RECORDS / "c1" / "revisions" / rev
     for child in link.iterdir():
         child.unlink()
     link.rmdir()
@@ -237,7 +242,7 @@ def _blocked_then_fixed(tmp_path: Path) -> tuple[Path, str, str, str]:
 def test_new_revision_discharges_the_earlier_block_once(tmp_path: Path) -> None:
     repo, base, first, second = _blocked_then_fixed(tmp_path)
     _run_all(repo, base, second, "v2")
-    blocks = repo / RECORDS / "revisions" / first / "integrity-blocks"
+    blocks = _records(repo) / "revisions" / first / "integrity-blocks"
     discharged = list(blocks.glob("*.discharged.json"))
     assert len(discharged) == 1
     record = json.loads(discharged[0].read_text())
@@ -264,7 +269,7 @@ def test_new_revision_discharges_the_earlier_block_once(tmp_path: Path) -> None:
 
 def test_block_already_discharged_by_version_is_left_untouched(tmp_path: Path) -> None:
     repo, base, first, second = _blocked_then_fixed(tmp_path)
-    blocks = repo / RECORDS / "revisions" / first / "integrity-blocks"
+    blocks = _records(repo) / "revisions" / first / "integrity-blocks"
     block = next(blocks.glob("*.json"))
     name = block.name[: -len(".json")] + ".discharged.json"
     marker = b'{"schema": "profile-dev/integrity-discharge/1"}\n'
@@ -287,7 +292,7 @@ def test_discharge_by_version_skips_a_block_already_discharged_by_revision(
     repo, _base, first = change_fixture(tmp_path, add_v2, broken)
     with pytest.raises(ProfileError):
         profile_bind_inventory(str(repo), first, "v1")
-    blocks = repo / RECORDS / "revisions" / first / "integrity-blocks"
+    blocks = _records(repo) / "revisions" / first / "integrity-blocks"
     block = next(blocks.glob("*.json"))
     name = block.name[: -len(".json")] + ".discharged.json"
     marker = b'{"schema": "profile-dev/integrity-discharge-by-revision/1"}\n'
@@ -302,13 +307,13 @@ def test_blocks_of_revisions_linked_only_to_other_changes_are_untouched(
 ) -> None:
     repo, base, first, second = _blocked_then_fixed(tmp_path)
     # drop the c1 link of the blocked revision: it is now only a revision of c0
-    link_dir = repo / RECORDS / "changes" / "c1" / "revisions" / first
+    link_dir = _records(repo) / RECORDS / "c1" / "revisions" / first
     for child in link_dir.iterdir():
         child.unlink()
     link_dir.rmdir()
     profile_record_change(str(repo), "c0", base, first)
     _run_all(repo, base, second, "v2")
-    blocks = repo / RECORDS / "revisions" / first / "integrity-blocks"
+    blocks = _records(repo) / "revisions" / first / "integrity-blocks"
     assert list(blocks.glob("*.discharged.json")) == []
 
 
@@ -321,7 +326,7 @@ def test_determinations_do_not_change_the_impact_bytes(tmp_path: Path) -> None:
     before = path.read_bytes()
     state = {
         p: p.read_bytes()
-        for p in (repo / RECORDS / "revisions" / rev).rglob("*")
+        for p in (_records(repo) / "revisions" / rev).rglob("*")
         if p.is_file()
     }
     profile_declare_non_applicability(
@@ -342,7 +347,7 @@ def test_a_tampered_base_in_the_change_record_is_unbound_and_writes_nothing(
     profile_record_change(str(repo), "c1", b, rev)
     profile_bind_inventory(str(repo), rev, "v1")
     for name in ("change.json", f"revisions/{rev}/revision.json"):
-        path = repo / RECORDS / "changes" / "c1" / name
+        path = _records(repo) / RECORDS / "c1" / name
         data = json.loads(path.read_text())
         data["base"] = base
         path.write_text(json.dumps(data))
@@ -368,7 +373,7 @@ def test_obligation_fields_of_a_snapshot_must_be_strings(
     repo, base, rev = change_fixture(tmp_path)
     _run_all(repo, base, rev)
     _impact_path(repo, rev).unlink()
-    path = repo / RECORDS / "revisions" / rev / "snapshot.json"
+    path = _records(repo) / "revisions" / rev / "snapshot.json"
     data = json.loads(path.read_text())
     data["obligations"][0][key] = value
     path.write_text(json.dumps(data))
@@ -391,7 +396,7 @@ def test_snapshot_identity_fields_must_be_well_formed(
     _run_all(repo, base, rev)
     _impact_path(repo, rev).unlink()
     for name in ("binding.json", "snapshot.json"):
-        path = repo / RECORDS / "revisions" / rev / name
+        path = _records(repo) / "revisions" / rev / name
         data = json.loads(path.read_text())
         data[field] = value
         path.write_text(json.dumps(data))

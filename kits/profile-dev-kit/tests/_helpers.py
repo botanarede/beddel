@@ -119,6 +119,20 @@ def change_fixture(
     return repo, base, commit_all(repo, "change")
 
 
+def records_root_for(repo: Path) -> Path:
+    """Return the setup-relative records root used by the profile kit."""
+    from beddel_profile_dev._io import records_root
+
+    return records_root(repo, "records/profile-dev")
+
+
+def open_attempt(repo: Path, revision: str, change_id: str = "c1") -> int:
+    """Open and return a fresh VerificationAttempt for a prepared Change."""
+    from beddel_profile_dev.tools.attempt import profile_open_attempt
+
+    return profile_open_attempt(str(repo), change_id, revision)["attempt"]
+
+
 def stub_gate_tools(tmp_path: Path) -> str:
     """Return a ``PATH`` whose ``ruff``, ``mypy`` and ``pytest`` are fast stubs.
 

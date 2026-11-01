@@ -12,6 +12,7 @@ and is never parsed here.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -24,6 +25,7 @@ from beddel.tools import beddel_tool
 
 from beddel_profile_dev import _adapters
 from beddel_profile_dev._errors import (
+    PROFILE_ATTEMPT_CONFLICT,
     PROFILE_CHANGE_INVALID,
     PROFILE_REPOSITORY_INVALID,
     PROFILE_REVIEW_UNSCOPED,
@@ -35,6 +37,7 @@ from beddel_profile_dev._io import (
     diff_text,
     read_confined,
     real_repo_root,
+    records_root,
     resolve_revision,
     write_create_only,
 )
@@ -85,14 +88,18 @@ def _repo_invalid() -> ProfileError:
 
 
 def _read_scope(
-    root: Path, impact_rel: str, change_id: str, sha: str
+    root: Path,
+    impact_rel: str,
+    change_id: str,
+    sha: str,
+    raw: bytes | None = None,
 ) -> dict[str, Any]:
     """Return the complete derived set of the impact record; refuse if unusable.
 
     The footprint, the Affected points and the Required evidence are read as
     recorded and never re-derived.
     """
-    raw = read_confined(root, impact_rel)
+    raw = read_confined(root, impact_rel) if raw is None else raw
     try:
         data = json.loads(raw) if raw is not None else None
     except ValueError:
@@ -118,6 +125,105 @@ def _read_scope(
     ):
         raise _unscoped()
     return data
+
+
+def _read_attempt(
+    records: Path,
+    revision_rel: str,
+    attempt: int,
+    change_id: str,
+    sha: str,
+    impact_raw: bytes,
+) -> dict[str, Any]:
+    if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 1:
+        raise _unscoped("review needs a valid attempt")
+    relative = f"{revision_rel}/attempts/{attempt}/attempt.json"
+    raw = read_confined(records, relative)
+    try:
+        data = json.loads(raw) if raw is not None else None
+    except ValueError:
+        data = None
+    if not isinstance(data, dict):
+        raise _unscoped("review needs the persisted attempt")
+    required = {
+        "schema",
+        "attempt",
+        "change_id",
+        "base",
+        "revision",
+        "inventory_version",
+        "inventory_sha256",
+        "snapshot_ref",
+        "snapshot_sha256",
+        "impact_ref",
+        "impact_sha256",
+        "requirements",
+    }
+    if set(data) != required or data.get("attempt") != attempt:
+        raise _unscoped("review attempt scope is invalid")
+    if (
+        data.get("schema") != "profile-dev/verification-attempt/1"
+        or data.get("change_id") != change_id
+        or data.get("revision") != sha
+        or data.get("impact_ref") != f"{revision_rel}/impact.json"
+        or data.get("impact_sha256") != hashlib.sha256(impact_raw).hexdigest()
+    ):
+        raise _unscoped("review attempt scope is invalid")
+    try:
+        impact = json.loads(impact_raw)
+        snapshot_raw = read_confined(records, data["snapshot_ref"])
+    except (KeyError, ValueError, TypeError):
+        raise _unscoped("review attempt scope is invalid") from None
+    if (
+        not isinstance(impact, dict)
+        or data.get("base") != impact.get("base")
+        or data.get("inventory_version") != impact.get("inventory_version")
+        or data.get("inventory_sha256") != impact.get("inventory_sha256")
+        or data.get("snapshot_ref") != f"revisions/{sha}/snapshot.json"
+        or snapshot_raw is None
+        or data.get("snapshot_sha256") != hashlib.sha256(snapshot_raw).hexdigest()
+    ):
+        raise _unscoped("review attempt scope is invalid")
+    expected_requirements: list[tuple[str, str, str, str]] = []
+    for item in impact.get("required_evidence", []):
+        if not isinstance(item, dict):
+            raise _unscoped("review attempt scope is invalid")
+        values = tuple(
+            item.get(key) for key in ("class", "affected_point", "criterion")
+        )
+        kind = item.get("kind")
+        if not all(
+            isinstance(value, str) and is_valid_id(value) for value in values
+        ) or kind not in {"gate", "review"}:
+            raise _unscoped("review attempt scope is invalid")
+        expected_requirements.append((*values, kind))
+    expected_requirements.sort()
+    actual_requirements = data.get("requirements")
+    if not isinstance(actual_requirements, list):
+        raise _unscoped("review attempt scope is invalid")
+    actual_keys = []
+    for item in actual_requirements:
+        if not isinstance(item, dict) or set(item) != {
+            "class",
+            "affected_point",
+            "criterion",
+            "kind",
+        }:
+            raise _unscoped("review attempt scope is invalid")
+        values = tuple(item[key] for key in ("class", "affected_point", "criterion"))
+        if not all(isinstance(value, str) and is_valid_id(value) for value in values):
+            raise _unscoped("review attempt scope is invalid")
+        if item["kind"] not in {"gate", "review"}:
+            raise _unscoped("review attempt scope is invalid")
+        actual_keys.append((*values, item["kind"]))
+    if actual_keys != sorted(actual_keys) or actual_keys != expected_requirements:
+        raise _unscoped("review attempt scope is invalid")
+    return data
+
+
+def _write_attempt_outcome(records: Path, relative: str, data: bytes) -> None:
+    if not write_create_only(records, relative, data):
+        raise ProfileError(PROFILE_ATTEMPT_CONFLICT, "review outcome already bound")
 
 
 def _dump(value: Any) -> str:
@@ -209,7 +315,7 @@ def _error_code(error: AgentError) -> str:
     category="profile",
 )
 async def profile_run_review(
-    repo_path: str, change_id: str, revision: str
+    repo_path: str, change_id: str, revision: str, attempt: int
 ) -> dict[str, Any]:
     """Run the external Review of a Change at its Analyzed revision.
 
@@ -228,28 +334,39 @@ async def profile_run_review(
     """
     # Fail-closed: a malformed config raises before any read or write.
     config = load_config()
-    records = config.records_dir
     if not is_valid_id(change_id):
         raise ProfileError(PROFILE_CHANGE_INVALID, "change id invalid")
-    root = real_repo_root(repo_path)
-    sha = resolve_revision(root, revision)
+    repo = real_repo_root(repo_path)
+    records = records_root(repo, config.records_dir)
+    sha = resolve_revision(repo, revision)
 
-    revision_rel = f"{records}/changes/{change_id}/revisions/{sha}"
-    scope = _read_scope(root, f"{revision_rel}/impact.json", change_id, sha)
+    revision_rel = f"changes/{change_id}/revisions/{sha}"
+    impact_rel = f"{revision_rel}/impact.json"
+    scope = _read_scope(records, impact_rel, change_id, sha)
+    impact_raw = read_confined(records, impact_rel)
+    if impact_raw is None:
+        raise _unscoped()
+    _read_attempt(records, revision_rel, attempt, change_id, sha, impact_raw)
+    bound_review_rel = f"{revision_rel}/attempts/{attempt}/review.json"
+    bound_review_path = confined(records, bound_review_rel)
+    if os.path.lexists(bound_review_path):
+        if not bound_review_path.is_file():
+            raise _repo_invalid()
+        raise ProfileError(PROFILE_ATTEMPT_CONFLICT, "review outcome already bound")
     # A set API key would make the route run headless and ignore the sandbox.
     if _ENV_API_KEY in os.environ:
         raise _unscoped("review refuses to run with an ambient API key")
 
     review_rel = f"{revision_rel}/review.json"
-    existing = confined(root, review_rel)
+    existing = confined(records, review_rel)
     if os.path.lexists(existing) and not existing.is_file():
         raise _repo_invalid()
     output_rel = f"{revision_rel}/review-output"
-    output_dir = confined(root, output_rel)
+    output_dir = confined(records, output_rel)
     if os.path.lexists(output_dir) and not output_dir.is_dir():
         raise _repo_invalid()
 
-    diff, truncated = diff_text(root, scope["base"], sha, _MAX_DIFF_BYTES)
+    diff, truncated = diff_text(repo, scope["base"], sha, _MAX_DIFF_BYTES)
     prompt = _build_prompt(scope, diff, truncated)
 
     status = "completed"
@@ -276,10 +393,12 @@ async def profile_run_review(
     except OSError:
         status, error_code = "errored", AGENT_EXECUTION_FAILED
 
-    attempt = _record_output(root, output_rel, output)
-    review_ref = f"{output_rel}/{attempt}.txt"
+    attempt_output = _record_output(records, output_rel, output)
+    review_ref = f"{output_rel}/{attempt_output}.txt"
     outcome: dict[str, Any] = {
-        "schema": REVIEW_SCHEMA,
+        "schema": "profile-dev/attempt-review-outcome/1",
+        "attempt": attempt,
+        "output_attempt": attempt_output,
         "change_id": change_id,
         "revision": sha,
         "inventory_version": scope["inventory_version"],
@@ -291,7 +410,14 @@ async def profile_run_review(
     }
     if error_code is not None:
         outcome["error_code"] = error_code
-    _publish_latest(root, review_rel, attempt, canonical_json(outcome))
+    outcome_bytes = canonical_json(outcome)
+    pointer = dict(outcome)
+    pointer["schema"] = REVIEW_SCHEMA
+    pointer.pop("attempt", None)
+    pointer.pop("output_attempt", None)
+    pointer_bytes = canonical_json(pointer)
+    _write_attempt_outcome(records, bound_review_rel, outcome_bytes)
+    _publish_latest(records, review_rel, attempt_output, pointer_bytes)
     result_dict: dict[str, Any] = {
         "ok": True,
         "change_id": change_id,
@@ -299,6 +425,7 @@ async def profile_run_review(
         "review": review_rel,
         "review_ref": review_ref,
         "attempt": attempt,
+        "output_attempt": attempt_output,
         "status": status,
         "agent": config.review_agent,
         "model": config.review_model,

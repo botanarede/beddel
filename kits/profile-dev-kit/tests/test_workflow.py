@@ -58,16 +58,20 @@ def test_preflight_change_bind_impact_gate_review_and_each_step_fails_closed() -
         "change",
         "bind_inventory",
         "impact",
+        "attempt",
         "gate",
         "review",
+        "evidence",
     ]
     assert [s.config["tool"] for s in steps] == [
         "profile_preflight",
         "profile_record_change",
         "profile_bind_inventory",
         "profile_derive_impact",
+        "profile_open_attempt",
         "profile_run_gate",
         "profile_run_review",
+        "profile_capture_evidence",
     ]
     assert _raw_inputs(WORKFLOW_PATH) == [
         "repo_path",
@@ -90,8 +94,10 @@ def test_allowlist_equals_the_tools_the_steps_name() -> None:
         "profile_record_change",
         "profile_bind_inventory",
         "profile_derive_impact",
+        "profile_open_attempt",
         "profile_run_gate",
         "profile_run_review",
+        "profile_capture_evidence",
     ]
     assert len(list(WORKFLOWS_DIR.glob("*.yaml"))) == 3
 
