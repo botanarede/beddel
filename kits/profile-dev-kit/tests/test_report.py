@@ -20,7 +20,7 @@ from beddel_profile_dev.tools.attempt import profile_open_attempt
 from beddel_profile_dev.tools.bind import profile_bind_inventory
 from beddel_profile_dev.tools.change import profile_record_change
 from beddel_profile_dev.tools.determine import profile_declare_non_applicability
-from beddel_profile_dev.tools.evidence import profile_capture_evidence
+from beddel_profile_dev.tools.evidence import EVIDENCE_SCHEMA, profile_capture_evidence
 from beddel_profile_dev.tools.gate import profile_run_gate
 from beddel_profile_dev.tools.impact import profile_derive_impact
 from beddel_profile_dev.tools.report import profile_read_report, profile_record_report
@@ -501,3 +501,83 @@ def test_malformed_required_evidence_is_unbound(
 
     assert info.value.code == PROFILE_IMPACT_UNBOUND
     assert not (records / "changes" / "c1" / "report").exists()
+
+
+def test_forged_evidence_of_a_timed_out_review_stays_unrecorded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, _, revision = _prepare(tmp_path)
+    monkeypatch.setattr(cfg, "GATE_COMMANDS", (("git", "status", "--porcelain"),))
+    attempt = profile_open_attempt(str(repo), "c1", revision)["attempt"]
+    profile_run_gate(str(repo), "c1", revision, attempt)
+    monkeypatch.setattr(
+        _adapters,
+        "get_review_adapter",
+        lambda agent_name, *, timeout_seconds: FakeReviewAdapter("timeout"),
+    )
+    asyncio.run(profile_run_review(str(repo), "c1", revision, attempt))
+    profile_capture_evidence(str(repo), "c1", revision, attempt)
+    records = records_root(repo, "records/profile-dev")
+    revision_dir = records / f"changes/c1/revisions/{revision}"
+    impact = json.loads((revision_dir / "impact.json").read_text())
+    requirement = next(
+        item for item in impact["required_evidence"] if item["kind"] == "review"
+    )
+    outcome_path = revision_dir / f"attempts/{attempt}/review.json"
+    outcome = json.loads(outcome_path.read_text())
+    assert outcome["status"] == "timed_out"
+    review_path = records / outcome["review_ref"]
+    review_path.parent.mkdir(parents=True, exist_ok=True)
+    review_path.write_text("stale review text\n")
+    review_output = review_path.read_bytes()
+    forged = {
+        "schema": EVIDENCE_SCHEMA,
+        "attempt": attempt,
+        "change_id": "c1",
+        "revision": revision,
+        "class": requirement["class"],
+        "affected_point": requirement["affected_point"],
+        "criterion": requirement["criterion"],
+        "kind": "review",
+        "outcome_ref": f"changes/c1/revisions/{revision}/attempts/{attempt}/review.json",
+        "outcome_sha256": hashlib.sha256(outcome_path.read_bytes()).hexdigest(),
+        "result": {
+            "agent": outcome["agent"],
+            "model": outcome["model"],
+            "review_ref": outcome["review_ref"],
+            "review_sha256": hashlib.sha256(review_output).hexdigest(),
+        },
+    }
+    name = f"{requirement['class']}+{requirement['affected_point']}+{requirement['criterion']}.json"
+    evidence_dir = revision_dir / f"attempts/{attempt}/evidence"
+    evidence_dir.mkdir(exist_ok=True)
+    (evidence_dir / name).write_text(json.dumps(forged))
+
+    result = profile_record_report(str(repo), "c1", revision)
+
+    report = json.loads((records / result["report"]).read_text())
+    pending = report["items"]["pendencies"]
+    assert pending["status"] == "present"
+    assert [item["kind"] for item in pending["value"]] == ["review"]
+    assert all(
+        item["kind"] != "review" for item in report["items"]["evidence"]["value"]
+    )
+
+
+def test_broken_latest_attempt_directory_ignores_the_older_valid_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, _, revision = _prepare(tmp_path)
+    _run_results(repo, revision, monkeypatch)
+    records = records_root(repo, "records/profile-dev")
+    attempts = records / f"changes/c1/revisions/{revision}/attempts"
+    (attempts / "2").mkdir()
+
+    result = profile_record_report(str(repo), "c1", revision)
+
+    report = json.loads((records / result["report"]).read_text())
+    assert report["attempt"] == 2
+    assert report["attempt_state"] == "indeterminate"
+    assert report["items"]["evidence"] == {"status": "absent"}
+    assert len(report["items"]["pendencies"]["value"]) == 2
+    assert all("/attempts/1/" not in item["ref"] for item in report["reads"])

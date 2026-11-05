@@ -424,6 +424,9 @@ def _validated_evidence(
             "gate_ref": outcome_data["gate_ref"],
         }
     else:
+        # Capture writes Review Evidence only for a completed review.
+        if outcome_data.get("status") != "completed" or "error_code" in outcome_data:
+            return None
         output = reader.read(outcome_data["review_ref"])
         if output is None:
             return None
