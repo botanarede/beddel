@@ -456,6 +456,24 @@ async def test_the_prompt_carries_the_derived_set_and_the_diff(
     assert json.dumps(impact["footprint"], indent=2) in prompt
     assert json.dumps(impact["affected_points"], sort_keys=True, indent=2) in prompt
     assert json.dumps(impact["required_evidence"], sort_keys=True, indent=2) in prompt
+    assert "BEDDEL-ASSESSMENT-BEGIN" in prompt
+    assert "BEDDEL-ASSESSMENT-END" in prompt
+    assert '"schema": "profile-dev/review-assessment/1"' in prompt
+    assert '"class": "review-arch"' in prompt
+    expected_ids = json.dumps(
+        [
+            {
+                "class": "review-arch",
+                "affected_point": "api",
+                "criterion": "arch-ok",
+            }
+        ],
+        sort_keys=True,
+        indent=2,
+    )
+    assert f"Review-class Requirement IDs: {expected_ids}\n" in prompt
+    assert '"divergences": []' in prompt
+    assert "file:1 differs from the recorded requirement" not in prompt
     assert "-x = 1" in prompt and "+x = 2" in prompt  # the base..revision diff
     assert "read-only" in prompt
 

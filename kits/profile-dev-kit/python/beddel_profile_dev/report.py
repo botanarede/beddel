@@ -1,4 +1,4 @@
-"""Pure assembly of the seven Story 4.1 Verification Report items."""
+"""Pure assembly of the Story 4 Verification Report items."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Any
 
 __all__ = ["REPORT_SCHEMA", "build_items"]
 
-REPORT_SCHEMA = "profile-dev/verification-report/1"
+REPORT_SCHEMA = "profile-dev/verification-report/2"
 _REQUIREMENT_KEYS = ("class", "affected_point", "criterion")
 _MISSING = object()
 
@@ -61,12 +61,15 @@ def build_items(
     attempt_state: str,
     evidence: Mapping[object, Mapping[str, Any]] | Iterable[Mapping[str, Any]],
     determinations: Mapping[object, Mapping[str, Any]] | Iterable[Mapping[str, Any]],
+    findings: Iterable[Mapping[str, Any]],
+    assessments: Iterable[Mapping[str, Any]],
 ) -> dict[str, dict[str, Any]]:
-    """Build the seven Report items without reading or writing anything.
+    """Build the Report items without reading or writing anything.
 
     ``evidence`` and ``determinations`` contain only records already validated
     by the I/O layer. Each link entry carries ``ref`` and ``sha256``; Evidence
-    entries also carry the stored record under ``record``.
+    entries also carry the stored record under ``record``. Findings and
+    assessments are pure-domain results supplied by ``findings.py``.
     """
     if attempt_state not in {"valid", "indeterminate", "none"}:
         raise ValueError("invalid attempt state")
@@ -136,6 +139,16 @@ def build_items(
             }
         )
 
+    finding_list = [dict(item) for item in findings]
+    assessment_list = [dict(item) for item in assessments]
+    states = [item.get("state") for item in assessment_list]
+    if finding_list:
+        divergences = _status("present", finding_list)
+    elif states and all(state == "no_divergence" for state in states):
+        divergences = _status("absent")
+    else:
+        divergences = _status("not_assessed")
+
     return {
         "specification": _status("absent"),
         "applicable_criteria": (
@@ -159,7 +172,7 @@ def build_items(
             if recorded_evidence
             else _status("absent")
         ),
-        "divergences": _status("not_assessed"),
+        "divergences": divergences,
         "pendencies": (
             _status("present", pendencies) if pendencies else _status("not_assessed")
         ),

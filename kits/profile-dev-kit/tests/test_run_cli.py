@@ -195,6 +195,9 @@ def test_ratify_then_verify_change_passes_all_nine_steps(tmp_path: Path) -> None
     report = json.loads(report_path.read_text())
     assert report["attempt"] == 1
     assert report["attempt_state"] == "valid"
+    assert report["schema"] == "profile-dev/verification-report/2"
+    assert report["items"]["divergences"]["status"] == "not_assessed"
+    assert len(report["assessments"]) == len(impact["required_evidence"])
     assert set(report["items"]) == {
         "specification",
         "applicable_criteria",

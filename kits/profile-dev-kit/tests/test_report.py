@@ -16,6 +16,11 @@ from beddel_profile_dev._errors import (
     ProfileError,
 )
 from beddel_profile_dev._io import records_root
+from beddel_profile_dev.findings import (
+    ASSESSMENT_BEGIN,
+    ASSESSMENT_END,
+    REVIEW_ASSESSMENT_SCHEMA,
+)
 from beddel_profile_dev.tools.attempt import profile_open_attempt
 from beddel_profile_dev.tools.bind import profile_bind_inventory
 from beddel_profile_dev.tools.change import profile_record_change
@@ -26,7 +31,7 @@ from beddel_profile_dev.tools.impact import profile_derive_impact
 from beddel_profile_dev.tools.report import profile_read_report, profile_record_report
 from beddel_profile_dev.tools.review import profile_run_review
 
-from ._helpers import FakeReviewAdapter, change_fixture
+from ._helpers import FakeReviewAdapter, change_fixture, stub_gate_tools
 
 _FORBIDDEN_KEYS = {"verdict", "approval", "approved", "blocking", "finding", "passed"}
 
@@ -51,14 +56,41 @@ def _prepare(tmp_path: Path) -> tuple[Path, str, str]:
     return repo, base, revision
 
 
-def _run_results(repo: Path, revision: str, monkeypatch: pytest.MonkeyPatch) -> int:
+def _run_results(
+    repo: Path,
+    revision: str,
+    monkeypatch: pytest.MonkeyPatch,
+    review_output: str | None = None,
+) -> int:
+    if review_output is None:
+        review_output = (
+            f"{ASSESSMENT_BEGIN}\n"
+            + json.dumps(
+                {
+                    "schema": REVIEW_ASSESSMENT_SCHEMA,
+                    "assessments": [
+                        {
+                            "class": "review-arch",
+                            "affected_point": "api",
+                            "criterion": "arch-ok",
+                            "divergences": [],
+                        }
+                    ],
+                    "unassociated": [],
+                },
+                separators=(",", ":"),
+            )
+            + f"\n{ASSESSMENT_END}\n"
+        )
     monkeypatch.setattr(cfg, "GATE_COMMANDS", (("git", "status", "--porcelain"),))
     attempt = profile_open_attempt(str(repo), "c1", revision)["attempt"]
     profile_run_gate(str(repo), "c1", revision, attempt)
     monkeypatch.setattr(
         _adapters,
         "get_review_adapter",
-        lambda agent_name, *, timeout_seconds: FakeReviewAdapter("completed"),
+        lambda agent_name, *, timeout_seconds: FakeReviewAdapter(
+            "completed", output=review_output
+        ),
     )
     asyncio.run(profile_run_review(str(repo), "c1", revision, attempt))
     assert profile_capture_evidence(str(repo), "c1", revision, attempt)["evidence"] == 2
@@ -76,6 +108,7 @@ def test_full_report_has_seven_items_and_sorted_reads(
     report = json.loads(path.read_text())
     _assert_no_forbidden_keys(report)
     assert report["record"] == 1
+    assert report["schema"] == "profile-dev/verification-report/2"
     assert report["attempt"] == attempt
     assert report["attempt_state"] == "valid"
     assert set(report["items"]) == {
@@ -158,7 +191,267 @@ def test_full_report_has_seven_items_and_sorted_reads(
         "status": "present",
         "value": expected_evidence,
     }
+    assert report["items"]["divergences"] == {"status": "absent"}
+    assert report["assessments"] == [
+        {
+            "class": "gate-unit",
+            "affected_point": "api",
+            "criterion": "tests-pass",
+            "kind": "gate",
+            "state": "no_divergence",
+        },
+        {
+            "class": "review-arch",
+            "affected_point": "api",
+            "criterion": "arch-ok",
+            "kind": "review",
+            "state": "no_divergence",
+        },
+    ]
+
+
+def test_review_divergence_is_persisted_as_a_finding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, _, revision = _prepare(tmp_path)
+    output = json.dumps(
+        {
+            "schema": REVIEW_ASSESSMENT_SCHEMA,
+            "assessments": [
+                {
+                    "class": "review-arch",
+                    "affected_point": "api",
+                    "criterion": "arch-ok",
+                    "divergences": [
+                        {
+                            "between": ["specification", "implementation"],
+                            "description": "the API differs from the requirement",
+                        }
+                    ],
+                }
+            ],
+            "unassociated": [],
+        },
+        separators=(",", ":"),
+    )
+    review_output = f"{ASSESSMENT_BEGIN}\n{output}\n{ASSESSMENT_END}\n"
+    _run_results(repo, revision, monkeypatch, review_output)
+
+    result = profile_record_report(str(repo), "c1", revision)
+    report = json.loads(
+        (records_root(repo, "records/profile-dev") / result["report"]).read_text()
+    )
+
+    review_assessment = next(
+        item for item in report["assessments"] if item["kind"] == "review"
+    )
+    assert review_assessment["state"] == "divergent"
+    assert report["items"]["divergences"]["status"] == "present"
+    assert report["items"]["divergences"]["value"] == [
+        {
+            "source": "review",
+            "association": "requirement",
+            "class": "review-arch",
+            "affected_point": "api",
+            "criterion": "arch-ok",
+            "kind": "review",
+            "between": ["specification", "implementation"],
+            "detail": {
+                "description": "the API differs from the requirement",
+                "review_ref": next(
+                    item["result"]["review_ref"]
+                    for item in report["items"]["evidence"]["value"]
+                    if item["kind"] == "review"
+                ),
+                "review_sha256": next(
+                    item["result"]["review_sha256"]
+                    for item in report["items"]["evidence"]["value"]
+                    if item["kind"] == "review"
+                ),
+            },
+        }
+    ]
+
+
+def test_gate_failure_is_persisted_as_a_finding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, _, revision = _prepare(tmp_path)
+    monkeypatch.setattr(cfg, "GATE_COMMANDS", (("pytest", "-q"),))
+    monkeypatch.setattr(cfg, "GATE_TOTAL_TIMEOUT_SECONDS", None)
+    monkeypatch.setenv("PATH", stub_gate_tools(tmp_path))
+    monkeypatch.setenv("STUB_EXIT_PYTEST", "1")
+    attempt = profile_open_attempt(str(repo), "c1", revision)["attempt"]
+    profile_run_gate(str(repo), "c1", revision, attempt)
+    monkeypatch.setattr(
+        _adapters,
+        "get_review_adapter",
+        lambda agent_name, *, timeout_seconds: FakeReviewAdapter(
+            "completed",
+            output=(
+                f"{ASSESSMENT_BEGIN}\n"
+                + json.dumps(
+                    {
+                        "schema": REVIEW_ASSESSMENT_SCHEMA,
+                        "assessments": [
+                            {
+                                "class": "review-arch",
+                                "affected_point": "api",
+                                "criterion": "arch-ok",
+                                "divergences": [],
+                            }
+                        ],
+                        "unassociated": [],
+                    },
+                    separators=(",", ":"),
+                )
+                + f"\n{ASSESSMENT_END}\n"
+            ),
+        ),
+    )
+    asyncio.run(profile_run_review(str(repo), "c1", revision, attempt))
+    profile_capture_evidence(str(repo), "c1", revision, attempt)
+
+    result = profile_record_report(str(repo), "c1", revision)
+    report = json.loads(
+        (records_root(repo, "records/profile-dev") / result["report"]).read_text()
+    )
+    gate_assessment = next(
+        item for item in report["assessments"] if item["kind"] == "gate"
+    )
+    assert gate_assessment["state"] == "divergent"
+    findings = report["items"]["divergences"]["value"]
+    assert len(findings) == 1
+    assert findings[0]["source"] == "gate"
+    assert findings[0]["detail"]["exit_code"] == 1
+
+
+def test_gate_timeout_is_indeterminate_without_a_finding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, _, revision = _prepare(tmp_path)
+    monkeypatch.setattr(cfg, "GATE_COMMANDS", (("pytest", "-q"),))
+    monkeypatch.setattr(cfg, "GATE_TIMEOUT_SECONDS", 1)
+    monkeypatch.setattr(cfg, "GATE_TOTAL_TIMEOUT_SECONDS", None)
+    monkeypatch.setenv("PATH", stub_gate_tools(tmp_path))
+    monkeypatch.setenv("STUB_SLEEP_PYTEST", "2")
+    attempt = profile_open_attempt(str(repo), "c1", revision)["attempt"]
+    profile_run_gate(str(repo), "c1", revision, attempt)
+    monkeypatch.setattr(
+        _adapters,
+        "get_review_adapter",
+        lambda agent_name, *, timeout_seconds: FakeReviewAdapter(
+            "completed",
+            output=(
+                f"{ASSESSMENT_BEGIN}\n"
+                + json.dumps(
+                    {
+                        "schema": REVIEW_ASSESSMENT_SCHEMA,
+                        "assessments": [
+                            {
+                                "class": "review-arch",
+                                "affected_point": "api",
+                                "criterion": "arch-ok",
+                                "divergences": [],
+                            }
+                        ],
+                        "unassociated": [],
+                    },
+                    separators=(",", ":"),
+                )
+                + f"\n{ASSESSMENT_END}\n"
+            ),
+        ),
+    )
+    asyncio.run(profile_run_review(str(repo), "c1", revision, attempt))
+    profile_capture_evidence(str(repo), "c1", revision, attempt)
+
+    result = profile_record_report(str(repo), "c1", revision)
+    report = json.loads(
+        (records_root(repo, "records/profile-dev") / result["report"]).read_text()
+    )
+    gate_assessment = next(
+        item for item in report["assessments"] if item["kind"] == "gate"
+    )
+    assert gate_assessment["state"] == "indeterminate"
     assert report["items"]["divergences"] == {"status": "not_assessed"}
+
+
+def test_read_report_accepts_an_older_schema_one_record_unchanged(
+    tmp_path: Path,
+) -> None:
+    repo, _, _ = _prepare(tmp_path)
+    records = records_root(repo, "records/profile-dev")
+    report_dir = records / "changes" / "c1" / "report"
+    report_dir.mkdir()
+    old = {
+        "schema": "profile-dev/verification-report/1",
+        "record": 1,
+        "change_id": "c1",
+        "base": "a" * 40,
+        "revision": "b" * 40,
+        "attempt": None,
+        "attempt_state": "none",
+        "reads": [],
+        "items": {},
+    }
+    raw = json.dumps(old, separators=(",", ":")).encode()
+    (report_dir / "1.json").write_bytes(raw)
+    result = profile_read_report(str(repo), "c1")
+    assert result["report"] == old
+    assert result["history"][0]["content"] == old
+    assert (report_dir / "1.json").read_bytes() == raw
+
+
+def test_read_report_rejects_schema_two_without_assessments(tmp_path: Path) -> None:
+    repo, _, _ = _prepare(tmp_path)
+    records = records_root(repo, "records/profile-dev")
+    report_dir = records / "changes" / "c1" / "report"
+    report_dir.mkdir()
+    (report_dir / "1.json").write_text(
+        json.dumps(
+            {
+                "schema": "profile-dev/verification-report/2",
+                "record": 1,
+                "change_id": "c1",
+            },
+            separators=(",", ":"),
+        )
+    )
+    with pytest.raises(ProfileError) as info:
+        profile_read_report(str(repo), "c1")
+    assert info.value.code == PROFILE_REPOSITORY_INVALID
+
+
+def test_read_report_preserves_mixed_schema_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, _, revision = _prepare(tmp_path)
+    records = records_root(repo, "records/profile-dev")
+    report_dir = records / "changes" / "c1" / "report"
+    report_dir.mkdir()
+    old = {
+        "schema": "profile-dev/verification-report/1",
+        "record": 1,
+        "change_id": "c1",
+        "base": "a" * 40,
+        "revision": "b" * 40,
+        "attempt": None,
+        "attempt_state": "none",
+        "reads": [],
+        "items": {},
+    }
+    old_raw = json.dumps(old, separators=(",", ":")).encode()
+    (report_dir / "1.json").write_bytes(old_raw)
+    _run_results(repo, revision, monkeypatch)
+    profile_record_report(str(repo), "c1", revision)
+    result = profile_read_report(str(repo), "c1")
+    assert [item["content"]["schema"] for item in result["history"]] == [
+        "profile-dev/verification-report/1",
+        "profile-dev/verification-report/2",
+    ]
+    assert result["history"][0]["content"] == old
+    assert (report_dir / "1.json").read_bytes() == old_raw
 
 
 def test_rerun_appends_report_without_rewriting_previous_record(
@@ -217,6 +510,9 @@ def test_no_attempt_is_none_and_all_requirements_are_pending(tmp_path: Path) -> 
     assert report["attempt"] is None
     assert report["attempt_state"] == "none"
     assert report["items"]["evidence"] == {"status": "absent"}
+    assert report["items"]["divergences"] == {"status": "not_assessed"}
+    assert report["assessments"]
+    assert all(item["state"] == "not_assessed" for item in report["assessments"])
     assert len(report["items"]["pendencies"]["value"]) == 2
 
 
@@ -234,6 +530,9 @@ def test_broken_latest_attempt_is_indeterminate_and_older_attempt_is_ignored(
     assert report["attempt"] == 3
     assert report["attempt_state"] == "indeterminate"
     assert report["items"]["evidence"] == {"status": "absent"}
+    assert report["items"]["divergences"] == {"status": "not_assessed"}
+    assert report["assessments"]
+    assert all(item["state"] == "not_assessed" for item in report["assessments"])
     assert report["items"]["pendencies"]["status"] == "present"
     assert len(report["items"]["pendencies"]["value"]) == 2
     assert all("/attempts/1/" not in item["ref"] for item in report["reads"])
