@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ast
+import hashlib
 import json
 import os
 import shutil
@@ -26,6 +28,7 @@ KITS_DIR = KIT_ROOT.parent
 WORKFLOW = KIT_ROOT / "workflows" / "verify-change.yaml"
 RATIFY = KIT_ROOT / "workflows" / "ratify-inventory.yaml"
 DECLARE = KIT_ROOT / "workflows" / "declare-non-applicability.yaml"
+READ_REPORT = KIT_ROOT / "workflows" / "read-report.yaml"
 RECORDS = "changes"
 
 
@@ -151,7 +154,7 @@ def _fixture(tmp_path: Path, data: object = None) -> Path:
     return repo
 
 
-def test_ratify_then_verify_change_passes_all_eight_steps(tmp_path: Path) -> None:
+def test_ratify_then_verify_change_passes_all_nine_steps(tmp_path: Path) -> None:
     repo = _fixture(tmp_path)
     _ratify(repo, tmp_path)
     base = commit_all(repo)
@@ -168,6 +171,7 @@ def test_ratify_then_verify_change_passes_all_eight_steps(tmp_path: Path) -> Non
         "profile_run_gate",
         "profile_run_review",
         "profile_capture_evidence",
+        "profile_record_report",
     ):
         assert f"'tool': '{tool}'" in result.stdout
     assert (_records(repo) / "revisions" / sha / "snapshot.json").is_file()
@@ -186,6 +190,20 @@ def test_ratify_then_verify_change_passes_all_eight_steps(tmp_path: Path) -> Non
     assert (attempt_dir / "gate.json").is_file()
     assert (attempt_dir / "review.json").is_file()
     assert len(list((attempt_dir / "evidence").glob("*.json"))) == 2
+    report_path = _records(repo) / "changes" / "c1" / "report" / "1.json"
+    assert report_path.is_file()
+    report = json.loads(report_path.read_text())
+    assert report["attempt"] == 1
+    assert report["attempt_state"] == "valid"
+    assert set(report["items"]) == {
+        "specification",
+        "applicable_criteria",
+        "affected_points",
+        "implementation",
+        "evidence",
+        "divergences",
+        "pendencies",
+    }
 
 
 def _gate_json(repo: Path, sha: str) -> dict[str, object]:
@@ -569,3 +587,128 @@ def test_the_review_step_alone_stops_without_an_impact_record(tmp_path: Path) ->
     assert not (revision_dir / "review.json").exists()
     assert not (revision_dir / "review-output").exists()
     assert not (tmp_path / "review-calls.jsonl").exists()  # the route was never called
+
+
+def test_report_step_fails_on_unbound_impact_without_writing(
+    tmp_path: Path,
+) -> None:
+    repo, base, sha = _committed_change(tmp_path)
+    completed = _run(str(repo), tmp_path, revision=sha, base=base)
+    assert completed.returncode == 0, completed.stderr
+    impact_path = _records(repo) / "changes" / "c1" / "revisions" / sha / "impact.json"
+    impact_path.unlink()
+    workflow = tmp_path / "report-only.yaml"
+    workflow.write_text(
+        "id: report-only\n"
+        "name: Report only\n"
+        "description: Runs the report step without the earlier steps.\n"
+        'version: "1.0"\n'
+        "requires_kits:\n"
+        "  - profile-dev-kit\n"
+        "allowed_tools:\n"
+        "  - profile_record_report\n"
+        "inputs:\n"
+        "  - repo_path\n"
+        "  - change_id\n"
+        "  - revision\n"
+        "steps:\n"
+        "  - id: report\n"
+        "    primitive: tool\n"
+        "    config:\n"
+        "      tool: profile_record_report\n"
+        "      arguments:\n"
+        '        repo_path: "$input.repo_path"\n'
+        '        change_id: "$input.change_id"\n'
+        '        revision: "$input.revision"\n'
+    )
+    records = _records(repo)
+    before = {
+        path.relative_to(records): path.read_bytes()
+        for path in records.rglob("*")
+        if path.is_file()
+    }
+    result = _run_workflow(
+        workflow,
+        {"repo_path": str(repo), "change_id": "c1", "revision": sha},
+        tmp_path,
+    )
+    assert result.returncode != 0
+    assert "Step 'report' failed" in result.stderr
+    assert "PROFILE_IMPACT_UNBOUND" in result.stderr
+    after = {
+        path.relative_to(records): path.read_bytes()
+        for path in records.rglob("*")
+        if path.is_file()
+    }
+    assert after == before
+
+
+def test_read_report_fails_on_an_unrecorded_change_without_writing(
+    tmp_path: Path,
+) -> None:
+    repo, _, _ = _committed_change(tmp_path)
+    records = _records(repo)
+    before = {
+        path.relative_to(records): path.read_bytes()
+        for path in records.rglob("*")
+        if path.is_file()
+    }
+    result = _run_workflow(
+        READ_REPORT,
+        {"repo_path": str(repo), "change_id": "c1"},
+        tmp_path,
+    )
+    assert result.returncode != 0
+    assert "Step 'read' failed" in result.stderr
+    assert "PROFILE_IMPACT_UNBOUND" in result.stderr
+    after = {
+        path.relative_to(records): path.read_bytes()
+        for path in records.rglob("*")
+        if path.is_file()
+    }
+    assert after == before
+
+
+def test_read_report_returns_latest_and_history_without_writing(tmp_path: Path) -> None:
+    repo, base, sha = _committed_change(tmp_path)
+    first = _run(str(repo), tmp_path, revision=sha, base=base)
+    assert first.returncode == 0, first.stderr
+    records = _records(repo)
+    before = {
+        path.relative_to(records): path.read_bytes()
+        for path in records.rglob("*")
+        if path.is_file()
+    }
+    result = _run_workflow(
+        READ_REPORT,
+        {"repo_path": str(repo), "change_id": "c1"},
+        tmp_path,
+    )
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.splitlines()
+    step = lines.index("[read]")
+    payload = ast.literal_eval("\n".join(lines[step + 1 :]).strip())
+    assert payload["tool"] == "profile_read_report"
+    read_result = payload["result"]
+    assert set(read_result) == {"ok", "change_id", "report", "history"}
+    assert read_result["ok"] is True
+    assert read_result["change_id"] == "c1"
+    stored_report = json.loads(
+        (records / "changes" / "c1" / "report" / "1.json").read_text()
+    )
+    assert read_result["report"] == stored_report
+    assert read_result["history"] == [
+        {
+            "ref": "changes/c1/report/1.json",
+            "sha256": hashlib.sha256(
+                (records / "changes" / "c1" / "report" / "1.json").read_bytes()
+            ).hexdigest(),
+            "content": stored_report,
+        }
+    ]
+    after = {
+        path.relative_to(records): path.read_bytes()
+        for path in records.rglob("*")
+        if path.is_file()
+    }
+    assert after == before

@@ -12,6 +12,7 @@ from beddel.domain.parser import WorkflowParser
 WORKFLOWS_DIR = Path(__file__).resolve().parent.parent / "workflows"
 WORKFLOW_PATH = WORKFLOWS_DIR / "verify-change.yaml"
 RATIFY_PATH = WORKFLOWS_DIR / "ratify-inventory.yaml"
+READ_REPORT_PATH = WORKFLOWS_DIR / "read-report.yaml"
 
 
 def _load() -> Workflow:
@@ -50,7 +51,9 @@ def test_parses_and_requires_kit() -> None:
     assert wf.requires_kits == ["profile-dev-kit"]
 
 
-def test_preflight_change_bind_impact_gate_review_and_each_step_fails_closed() -> None:
+def test_preflight_change_bind_impact_gate_review_evidence_report_and_each_step_fails_closed() -> (
+    None
+):
     wf = _load()
     steps = wf.steps
     assert [s.id for s in steps] == [
@@ -62,6 +65,7 @@ def test_preflight_change_bind_impact_gate_review_and_each_step_fails_closed() -
         "gate",
         "review",
         "evidence",
+        "report",
     ]
     assert [s.config["tool"] for s in steps] == [
         "profile_preflight",
@@ -72,6 +76,7 @@ def test_preflight_change_bind_impact_gate_review_and_each_step_fails_closed() -
         "profile_run_gate",
         "profile_run_review",
         "profile_capture_evidence",
+        "profile_record_report",
     ]
     assert _raw_inputs(WORKFLOW_PATH) == [
         "repo_path",
@@ -98,8 +103,9 @@ def test_allowlist_equals_the_tools_the_steps_name() -> None:
         "profile_run_gate",
         "profile_run_review",
         "profile_capture_evidence",
+        "profile_record_report",
     ]
-    assert len(list(WORKFLOWS_DIR.glob("*.yaml"))) == 3
+    assert len(list(WORKFLOWS_DIR.glob("*.yaml"))) == 4
 
 
 def test_review_step_outlives_the_largest_accepted_review_budget() -> None:
@@ -164,3 +170,14 @@ steps:
 """
     )
     assert _tool_names(wf.steps) - set(wf.allowed_tools or []) == {"sneaky"}
+
+
+def test_read_report_workflow_is_one_allowlisted_step() -> None:
+    wf = WorkflowParser.parse(READ_REPORT_PATH.read_text())
+    assert wf.id == "read-report"
+    assert wf.requires_kits == ["profile-dev-kit"]
+    assert _raw_inputs(READ_REPORT_PATH) == ["repo_path", "change_id"]
+    assert wf.allowed_tools == ["profile_read_report"]
+    assert [s.id for s in wf.steps] == ["read"]
+    assert wf.steps[0].config["tool"] == "profile_read_report"
+    assert wf.steps[0].execution_strategy.type is StrategyType.FAIL
