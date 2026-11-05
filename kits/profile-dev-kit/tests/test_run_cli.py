@@ -26,6 +26,7 @@ KITS_DIR = KIT_ROOT.parent
 WORKFLOW = KIT_ROOT / "workflows" / "verify-change.yaml"
 RATIFY = KIT_ROOT / "workflows" / "ratify-inventory.yaml"
 DECLARE = KIT_ROOT / "workflows" / "declare-non-applicability.yaml"
+READ_REPORT = KIT_ROOT / "workflows" / "read-report.yaml"
 RECORDS = "changes"
 
 
@@ -151,7 +152,7 @@ def _fixture(tmp_path: Path, data: object = None) -> Path:
     return repo
 
 
-def test_ratify_then_verify_change_passes_all_eight_steps(tmp_path: Path) -> None:
+def test_ratify_then_verify_change_passes_all_nine_steps(tmp_path: Path) -> None:
     repo = _fixture(tmp_path)
     _ratify(repo, tmp_path)
     base = commit_all(repo)
@@ -168,6 +169,7 @@ def test_ratify_then_verify_change_passes_all_eight_steps(tmp_path: Path) -> Non
         "profile_run_gate",
         "profile_run_review",
         "profile_capture_evidence",
+        "profile_record_report",
     ):
         assert f"'tool': '{tool}'" in result.stdout
     assert (_records(repo) / "revisions" / sha / "snapshot.json").is_file()
@@ -186,6 +188,20 @@ def test_ratify_then_verify_change_passes_all_eight_steps(tmp_path: Path) -> Non
     assert (attempt_dir / "gate.json").is_file()
     assert (attempt_dir / "review.json").is_file()
     assert len(list((attempt_dir / "evidence").glob("*.json"))) == 2
+    report_path = _records(repo) / "changes" / "c1" / "report" / "1.json"
+    assert report_path.is_file()
+    report = json.loads(report_path.read_text())
+    assert report["attempt"] == 1
+    assert report["attempt_state"] == "valid"
+    assert set(report["items"]) == {
+        "specification",
+        "applicable_criteria",
+        "affected_points",
+        "implementation",
+        "evidence",
+        "divergences",
+        "pendencies",
+    }
 
 
 def _gate_json(repo: Path, sha: str) -> dict[str, object]:
@@ -569,3 +585,20 @@ def test_the_review_step_alone_stops_without_an_impact_record(tmp_path: Path) ->
     assert not (revision_dir / "review.json").exists()
     assert not (revision_dir / "review-output").exists()
     assert not (tmp_path / "review-calls.jsonl").exists()  # the route was never called
+
+
+def test_read_report_returns_latest_and_history_without_writing(tmp_path: Path) -> None:
+    repo, base, sha = _committed_change(tmp_path)
+    first = _run(str(repo), tmp_path, revision=sha, base=base)
+    assert first.returncode == 0, first.stderr
+    report_dir = _records(repo) / "changes" / "c1" / "report"
+    before = {path.name: path.read_bytes() for path in report_dir.iterdir()}
+    result = _run_workflow(
+        READ_REPORT,
+        {"repo_path": str(repo), "change_id": "c1"},
+        tmp_path,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "'tool': 'profile_read_report'" in result.stdout
+    assert "history" in result.stdout
+    assert {path.name: path.read_bytes() for path in report_dir.iterdir()} == before

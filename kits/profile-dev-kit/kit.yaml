@@ -8,8 +8,8 @@ description: >
   exit codes, never Evidence or a Verdict), the external Review of that derived
   set through the configured agent route (an operational outcome of completed,
   timed out or errored, never Evidence or a Verdict), append-only Evidence for
-  matching attempt-bound results and the recorded determination of
-  non-applicability.
+  matching attempt-bound results, the persisted Verification Report and its
+  read-only history, and the recorded determination of non-applicability.
 author: Beddel Team
 category: profile # descriptive only; SolutionKit ignores it
 
@@ -69,6 +69,14 @@ tools:
     target: "beddel_profile_dev.tools.evidence:profile_capture_evidence"
     description: "Capture append-only Evidence for the matching results of one VerificationAttempt"
     category: profile
+  - name: profile_record_report
+    target: "beddel_profile_dev.tools.report:profile_record_report"
+    description: "Build and persist one append-only Verification Report for a Change"
+    category: profile
+  - name: profile_read_report
+    target: "beddel_profile_dev.tools.report:profile_read_report"
+    description: "Read the latest persisted Verification Report and its append-only history"
+    category: profile
   - name: profile_declare_non_applicability
     target: "beddel_profile_dev.tools.determine:profile_declare_non_applicability"
     description: "Record the maintainer's determination that an obligation with an absent target is not applicable (transport only)"
@@ -77,7 +85,10 @@ tools:
 workflows:
   - name: verify-change
     path: workflows/verify-change.yaml
-    description: Entry workflow of the development profile (preflight, Change, inventory binding, Impact, VerificationAttempt, Gate, Review and Evidence)
+    description: Entry workflow of the development profile (preflight, Change, inventory binding, Impact, VerificationAttempt, Gate, Review, Evidence and Report)
+  - name: read-report
+    path: workflows/read-report.yaml
+    description: Reads the latest persisted Verification Report and its history without running verification or writing records
   - name: ratify-inventory
     path: workflows/ratify-inventory.yaml
     description: Records the ratification of an inventory version
@@ -109,6 +120,10 @@ targets:
         target: "beddel_profile_dev.tools.review:profile_run_review"
       - name: profile_capture_evidence
         target: "beddel_profile_dev.tools.evidence:profile_capture_evidence"
+      - name: profile_record_report
+        target: "beddel_profile_dev.tools.report:profile_record_report"
+      - name: profile_read_report
+        target: "beddel_profile_dev.tools.report:profile_read_report"
       - name: profile_declare_non_applicability
         target: "beddel_profile_dev.tools.determine:profile_declare_non_applicability"
   typescript:

@@ -5,12 +5,12 @@ Development profile kit for Beddel. It provides the entry workflow
 the target path is a Git work tree, the gate executables resolve on `PATH`, and
 the required environment keys are present (key names only, never values).
 
-Status: Story 3.3. Entry workflows `verify-change`, `ratify-inventory` and
-`declare-non-applicability`; tools `profile_preflight`,
+Status: Story 4.1. Entry workflows `verify-change`, `read-report`,
+`ratify-inventory` and `declare-non-applicability`; tools `profile_preflight`,
 `profile_ratify_inventory`, `profile_bind_inventory`, `profile_record_change`,
 `profile_derive_impact`, `profile_open_attempt`, `profile_run_gate`,
-`profile_run_review`, `profile_capture_evidence` and
-`profile_declare_non_applicability`.
+`profile_run_review`, `profile_capture_evidence`, `profile_record_report`,
+`profile_read_report` and `profile_declare_non_applicability`.
 
 ## Layout
 
@@ -48,9 +48,11 @@ numbers. Unknown keys are rejected.
   A ratified version is immutable; a change is a new version.
 - `verify-change` (inputs `repo_path`, `change_id`, `base`, `revision`,
   `inventory_version`) runs `preflight`, `change`, `bind_inventory`, `impact`,
-  `attempt`, `gate`, `review` and `evidence`. `bind_inventory` reads the version and its
-  ratification from the tree of `revision`, validates identity formation and
-  resolution, and either records one integrity block
+  `attempt`, `gate`, `review`, `evidence` and `report`. `read-report` (inputs
+  `repo_path`, `change_id`) returns the latest Report and its append-only history
+  without running verification or writing records. `bind_inventory` reads the
+  version and its ratification from the tree of `revision`, validates identity
+  formation and resolution, and either records one integrity block
   (`PROFILE_INVENTORY_INTEGRITY_BLOCK`) or writes `binding.json` and the
   canonical `snapshot.json` under the setup-relative records root (local files,
   never committed by the kit). An unratified version stops with
@@ -247,3 +249,17 @@ bound outcomes and writes one create-only file per matching Requirement ID. Gate
 Evidence preserves its commands and reference. Completed Review Evidence keeps
 the reviewer reference and the SHA-256 of non-blank stored output. Timed-out,
 errored or blank Reviews produce no Review Evidence.
+
+## Verification Report (Story 4.1)
+
+`report` (`profile_record_report`) runs after Evidence and appends one canonical
+JSON Report under `changes/<change_id>/report/<n>.json`. It selects only the
+greatest persisted attempt ordinal for the Change and revision. A valid attempt
+links the seven Report items to the recorded snapshot, Impact and validated
+Evidence; a missing or malformed latest attempt is recorded as indeterminate.
+Reports are create-only and never rewrite earlier records.
+
+`read-report` invokes `profile_read_report` with `repo_path` and `change_id`.
+It returns the latest Report plus every stored record in ordinal order, each
+with its reference, SHA-256 and content. It performs no Gate, Review or write.
+Until a Report exists it returns `report: null` and an empty `history`.

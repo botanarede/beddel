@@ -13,6 +13,7 @@ allowed_tools:
   - profile_run_gate
   - profile_run_review
   - profile_capture_evidence
+  - profile_record_report
 inputs:
   - repo_path
   - change_id
@@ -88,3 +89,11 @@ steps:
         change_id: "$input.change_id"
         revision: "$input.revision"
         attempt: "$stepResult.attempt.result.attempt"
+  - id: report
+    primitive: tool
+    config:
+      tool: profile_record_report
+      arguments:
+        repo_path: "$input.repo_path"
+        change_id: "$input.change_id"
+        revision: "$input.revision"

@@ -23,6 +23,8 @@ _TOOLS = [
     "profile_run_gate",
     "profile_run_review",
     "profile_capture_evidence",
+    "profile_record_report",
+    "profile_read_report",
     "profile_declare_non_applicability",
 ]
 
@@ -90,6 +92,7 @@ def test_manifest_declares_all_workflows_and_python_targets() -> None:
     manifest = _manifest()
     assert [w["name"] for w in manifest["workflows"]] == [
         "verify-change",
+        "read-report",
         "ratify-inventory",
         "declare-non-applicability",
     ]
