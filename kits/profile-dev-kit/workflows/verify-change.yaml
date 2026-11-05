@@ -1,6 +1,6 @@
 id: verify-change
 name: Verify Change
-description: Entry workflow of the development profile. Runs the fail-closed preflight, records the Change and its Analyzed revision, binds the ratified inventory version to the revision, derives the Impact of the Change, opens an immutable VerificationAttempt, runs the configured local Gate over that attempt, runs the external Review over that attempt and captures Evidence for matching results.
+description: Entry workflow of the development profile. Runs the fail-closed preflight, records the Change and its Analyzed revision, binds the ratified inventory version to the revision, derives the Impact of the Change, opens an immutable VerificationAttempt, runs the configured local Gate over that attempt, runs the external Review over that attempt, captures Evidence for matching results, and records the persisted Verification Report.
 version: "1.0"
 requires_kits:
   - profile-dev-kit

@@ -165,13 +165,16 @@ def test_rerun_appends_report_without_rewriting_previous_record(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo, _, revision = _prepare(tmp_path)
-    _run_results(repo, revision, monkeypatch)
+    first_attempt = _run_results(repo, revision, monkeypatch)
     first = profile_record_report(str(repo), "c1", revision)
     records = records_root(repo, "records/profile-dev")
     first_path = records / first["report"]
     first_bytes = first_path.read_bytes()
+    second_attempt = _run_results(repo, revision, monkeypatch)
     second = profile_record_report(str(repo), "c1", revision)
+    assert (first_attempt, second_attempt) == (1, 2)
     assert second["record"] == 2
+    assert second["attempt"] == 2
     assert first_path.read_bytes() == first_bytes
 
 
@@ -224,7 +227,7 @@ def test_broken_latest_attempt_is_indeterminate_and_older_attempt_is_ignored(
     attempt = profile_open_attempt(str(repo), "c1", revision)["attempt"]
     records = records_root(repo, "records/profile-dev")
     attempts = records / f"changes/c1/revisions/{revision}/attempts"
-    (attempts / "3").mkdir()
+    (attempts / "3").write_text("stray attempt entry\n")
     result = profile_record_report(str(repo), "c1", revision)
     report = json.loads((records / result["report"]).read_text())
     assert attempt == 1
@@ -253,6 +256,38 @@ def test_tampered_evidence_stays_unrecorded(
     report = json.loads((records / result["report"]).read_text())
     assert report["items"]["pendencies"]["status"] == "present"
     assert len(report["items"]["pendencies"]["value"]) == 1
+
+
+def test_tampered_completed_review_with_error_code_stays_unrecorded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, _, revision = _prepare(tmp_path)
+    attempt = _run_results(repo, revision, monkeypatch)
+    records = records_root(repo, "records/profile-dev")
+    review_path = (
+        records / f"changes/c1/revisions/{revision}/attempts/{attempt}/review.json"
+    )
+    review = json.loads(review_path.read_text())
+    review["error_code"] = "BEDDEL-AGENT-701"
+    review_path.write_text(json.dumps(review))
+    evidence_path = (
+        records / f"changes/c1/revisions/{revision}/attempts/{attempt}/evidence/"
+        "review-arch+api+arch-ok.json"
+    )
+    evidence = json.loads(evidence_path.read_text())
+    evidence["outcome_sha256"] = hashlib.sha256(review_path.read_bytes()).hexdigest()
+    evidence_path.write_text(json.dumps(evidence))
+
+    result = profile_record_report(str(repo), "c1", revision)
+    report = json.loads((records / result["report"]).read_text())
+    assert report["items"]["pendencies"]["value"] == [
+        {
+            "class": "review-arch",
+            "affected_point": "api",
+            "criterion": "arch-ok",
+            "kind": "review",
+        }
+    ]
 
 
 def test_unbound_change_writes_nothing(tmp_path: Path) -> None:
@@ -435,5 +470,34 @@ def test_non_object_impact_is_unbound_and_writes_nothing(tmp_path: Path) -> None
     impact_path.write_text("[]")
     with pytest.raises(ProfileError) as info:
         profile_record_report(str(repo), "c1", revision)
+    assert info.value.code == PROFILE_IMPACT_UNBOUND
+    assert not (records / "changes" / "c1" / "report").exists()
+
+
+@pytest.mark.parametrize(
+    "required_evidence",
+    [
+        {"affected_point": "api", "criterion": "tests-pass", "kind": "gate"},
+        {
+            "class": "gate-unit",
+            "affected_point": "api",
+            "criterion": 7,
+            "kind": "gate",
+        },
+    ],
+)
+def test_malformed_required_evidence_is_unbound(
+    tmp_path: Path, required_evidence: dict[str, object]
+) -> None:
+    repo, _, revision = _prepare(tmp_path)
+    records = records_root(repo, "records/profile-dev")
+    impact_path = records / "changes" / "c1" / "revisions" / revision / "impact.json"
+    impact = json.loads(impact_path.read_text())
+    impact["required_evidence"][0] = required_evidence
+    impact_path.write_text(json.dumps(impact))
+
+    with pytest.raises(ProfileError) as info:
+        profile_record_report(str(repo), "c1", revision)
+
     assert info.value.code == PROFILE_IMPACT_UNBOUND
     assert not (records / "changes" / "c1" / "report").exists()

@@ -150,6 +150,16 @@ def _load_scope(
         or snapshot is None
         or impact is None
         or not isinstance(impact, dict)
+        or not isinstance(impact.get("required_evidence"), list)
+        or not all(
+            isinstance(item, dict)
+            and all(
+                isinstance(item.get(key), str) and is_valid_id(item[key])
+                for key in ("class", "affected_point", "criterion")
+            )
+            and item.get("kind") in {"gate", "review"}
+            for item in impact["required_evidence"]
+        )
         or set(binding)
         != {
             "schema",
@@ -202,7 +212,7 @@ def _latest_attempt(records: Path, revision_rel: str) -> int | None:
     values = [
         int(match.group(1))
         for entry in directory.iterdir()
-        if entry.is_dir() and (match := _ORDINAL.fullmatch(entry.name)) is not None
+        if (match := _ORDINAL.fullmatch(entry.name)) is not None
     ]
     return max(values) if values else None
 
@@ -271,9 +281,20 @@ def _valid_outcome(
         or data.get("revision") != revision
         or data.get("inventory_version") != inventory_version
         or data.get("inventory_sha256") != inventory_sha256
-        or data.get("status") != "completed"
     ):
         return None
+    if kind == "gate":
+        if data.get("status") != "completed":
+            return None
+    else:
+        status = data.get("status")
+        has_error = "error_code" in data
+        if (
+            status not in {"completed", "timed_out", "errored"}
+            or ((status == "completed") == has_error)
+            or (has_error and not isinstance(data["error_code"], str))
+        ):
+            return None
     if kind == "gate":
         commands = data.get("commands")
         gate_ref = data.get("gate_ref")
