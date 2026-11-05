@@ -28,6 +28,7 @@ from beddel_profile_dev._io import (
     write_create_only,
 )
 from beddel_profile_dev.config import load_config
+from beddel_profile_dev.findings import derive_findings
 from beddel_profile_dev.inventory import is_valid_id
 from beddel_profile_dev.report import REPORT_SCHEMA, build_items
 from beddel_profile_dev.tools.bind import BINDING_SCHEMA, SNAPSHOT_SCHEMA
@@ -39,6 +40,7 @@ from beddel_profile_dev.tools.review import _read_scope
 
 __all__ = ["REPORT_SCHEMA", "profile_read_report", "profile_record_report"]
 
+_REPORT_SCHEMAS = {"profile-dev/verification-report/1", REPORT_SCHEMA}
 _FULL_SHA = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
 _DIGEST = re.compile(r"[0-9a-f]{64}")
 _ORDINAL = re.compile(r"([1-9][0-9]*)")
@@ -418,6 +420,7 @@ def _validated_evidence(
     outcome_data, outcome_raw = outcome
     if data["outcome_sha256"] != hashlib.sha256(outcome_raw).hexdigest():
         return None
+    output: bytes | None = None
     if requirement["kind"] == "gate":
         expected_result = {
             "commands": outcome_data["commands"],
@@ -438,7 +441,14 @@ def _validated_evidence(
         }
     if data.get("result") != expected_result:
         return None
-    return {"ref": relative, "sha256": hashlib.sha256(raw).hexdigest(), "record": data}
+    result: dict[str, Any] = {
+        "ref": relative,
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "record": data,
+    }
+    if requirement["kind"] == "review":
+        result["review_output"] = output
+    return result
 
 
 def _validated_determinations(
@@ -558,7 +568,27 @@ def profile_record_report(
         str(snapshot["inventory_version"]),
         str(snapshot["inventory_sha256"]),
     )
-    items = build_items(impact, snapshot, attempt_state, validated, determinations)
+    review_output = next(
+        (
+            item["review_output"]
+            for item in validated
+            if item.get("kind") == "review"
+            and isinstance(item.get("review_output"), bytes)
+        ),
+        None,
+    )
+    findings, assessments = derive_findings(
+        requirements, attempt_state, validated, review_output
+    )
+    items = build_items(
+        impact,
+        snapshot,
+        attempt_state,
+        validated,
+        determinations,
+        findings,
+        assessments,
+    )
     report_without_ordinal = {
         "schema": REPORT_SCHEMA,
         "record": 0,
@@ -569,6 +599,7 @@ def profile_record_report(
         "attempt_state": attempt_state,
         "reads": reader.result(),
         "items": items,
+        "assessments": assessments,
     }
     report_rel = f"changes/{change_id}/report"
     ordinal = _next_report(records, report_rel)
@@ -626,7 +657,11 @@ def profile_read_report(repo_path: str, change_id: str) -> dict[str, Any]:
             content = None
         if (
             not isinstance(content, dict)
-            or content.get("schema") != REPORT_SCHEMA
+            or content.get("schema") not in _REPORT_SCHEMAS
+            or (
+                content.get("schema") == REPORT_SCHEMA
+                and not isinstance(content.get("assessments"), list)
+            )
             or type(content.get("record")) is not int
             or content.get("record") != ordinal
             or content.get("change_id") != change_id

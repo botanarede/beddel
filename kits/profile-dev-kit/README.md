@@ -5,7 +5,7 @@ Development profile kit for Beddel. It provides the entry workflow
 the target path is a Git work tree, the gate executables resolve on `PATH`, and
 the required environment keys are present (key names only, never values).
 
-Status: Story 4.1. Entry workflows `verify-change`, `read-report`,
+Status: Story 4.3. Entry workflows `verify-change`, `read-report`,
 `ratify-inventory` and `declare-non-applicability`; tools `profile_preflight`,
 `profile_ratify_inventory`, `profile_bind_inventory`, `profile_record_change`,
 `profile_derive_impact`, `profile_open_attempt`, `profile_run_gate`,
@@ -250,16 +250,48 @@ Evidence preserves its commands and reference. Completed Review Evidence keeps
 the reviewer reference and the SHA-256 of non-blank stored output. Timed-out,
 errored or blank Reviews produce no Review Evidence.
 
-## Verification Report (Story 4.1)
+## Verification Report (Stories 4.1 and 4.3)
 
 `report` (`profile_record_report`) runs after Evidence and appends one canonical
-JSON Report under `changes/<change_id>/report/<n>.json`. It selects only the
-greatest persisted attempt ordinal for the Change and revision. A valid attempt
-links the seven Report items to the recorded snapshot, Impact and validated
-Evidence; a missing or malformed latest attempt is recorded as indeterminate.
-Reports are create-only and never rewrite earlier records.
+JSON Report under `changes/<change_id>/report/<n>.json`. New records use schema
+`profile-dev/verification-report/2`; the read-only workflow also returns older
+schema `/1` records unchanged. It selects only the greatest persisted attempt
+ordinal for the Change and revision. A valid attempt links the seven Report
+items to the recorded snapshot, Impact and validated Evidence; a missing or
+malformed latest attempt is recorded as indeterminate. Reports are create-only
+and never rewrite earlier records.
+
+The top-level `assessments` list contains one state for every Requirement ID,
+sorted by class, Affected point and criterion. States are `no_divergence`,
+`divergent`, `indeterminate` or `not_assessed`. A gate non-zero exit produces a
+Finding between implementation and validation; a timeout or null exit makes
+that assessment indeterminate. Review Findings come from the verified Review
+output only. Each Finding records its source, Requirement association (or
+`unknown`), the two disagreeing constituents and a detail containing the gate
+or Review reference.
+
+The Review prompt requires exactly one UTF-8 JSON block between
+`BEDDEL-ASSESSMENT-BEGIN` and `BEDDEL-ASSESSMENT-END`. Its schema is
+`profile-dev/review-assessment/1` with `assessments` for the review-class IDs
+and `unassociated` entries for divergences with no matching ID. The stored
+output is parsed only after its SHA-256 matches Review Evidence. An unreadable,
+missing or duplicated assessment leaves the affected Review assessment
+indeterminate and creates no Finding from that entry.
 
 `read-report` invokes `profile_read_report` with `repo_path` and `change_id`.
 It returns the latest Report plus every stored record in ordinal order, each
 with its reference, SHA-256 and content. It performs no Gate, Review or write.
 Until a Report exists it returns `report: null` and an empty `history`.
+
+A Finding has `source`, `association`, `class`, `affected_point`, `criterion`,
+`kind`, `between` and `detail`. `association` is `requirement` when the entry
+names a Requirement ID, otherwise `unknown`; `kind` is the Requirement kind or
+`null` for an unknown association. Each `between` value contains two distinct
+members of `specification`, `implementation`, `validation` and `affected_point`.
+
+The `divergences` item is `present` when at least one Finding exists. It is
+`absent` only when the assessment state list is non-empty and every state is
+`no_divergence`; otherwise it is `not_assessed`. A Review assessment block with
+extra keys, duplicate JSON keys, invalid values or a Markdown code fence inside
+the markers is unreadable. Marker lines may carry trailing whitespace only. Unreadable blocks produce no Review Findings and leave applicable
+Review states indeterminate.

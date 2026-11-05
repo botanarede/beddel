@@ -42,6 +42,7 @@ from beddel_profile_dev._io import (
     write_create_only,
 )
 from beddel_profile_dev.config import load_config
+from beddel_profile_dev.findings import ASSESSMENT_BEGIN, ASSESSMENT_END
 from beddel_profile_dev.inventory import is_valid_id
 from beddel_profile_dev.tools.impact import IMPACT_SCHEMA
 
@@ -233,6 +234,20 @@ def _dump(value: Any) -> str:
 def _build_prompt(scope: dict[str, Any], diff: str, truncated: bool) -> str:
     """Assemble the reviewer prompt from the recorded scope and the diff only."""
     note = f"\n[diff truncated at {_MAX_DIFF_BYTES} bytes]" if truncated else ""
+    review_requirements = [
+        {key: item[key] for key in ("class", "affected_point", "criterion")}
+        for item in scope["required_evidence"]
+        if item.get("kind") == "review"
+    ]
+    example_assessments = [{**item, "divergences": []} for item in review_requirements]
+    assessment_example = json.dumps(
+        {
+            "schema": "profile-dev/review-assessment/1",
+            "assessments": example_assessments,
+            "unassociated": [],
+        },
+        ensure_ascii=True,
+    )
     return (
         "You are an independent code reviewer. Review ONLY the change described "
         "below. You are read-only: do not modify, create or delete any file and "
@@ -245,6 +260,19 @@ def _build_prompt(scope: dict[str, Any], diff: str, truncated: bool) -> str:
         f"Inventory sha256: {scope['inventory_sha256']}\n\n"
         "For each Affected point, report whether the diff gives the Required "
         "evidence it names, citing file and line, and list any defect you find.\n\n"
+        "After reviewing, emit exactly one assessment block between the following "
+        "marker lines. The JSON must use schema profile-dev/review-assessment/1, "
+        "include exactly one assessment entry for every review-class Requirement "
+        "ID listed below, with no extra keys, and use an empty divergences list "
+        "when it is clean. Put divergences that match no listed Requirement ID "
+        "in unassociated. Each divergence object is {between: [two distinct of "
+        "specification|implementation|validation|affected_point], description: "
+        "non-empty string}. Output exactly one block; text outside the block is "
+        "ignored. Do not wrap the JSON in a Markdown code fence.\n"
+        f"Review-class Requirement IDs: {_dump(review_requirements)}\n"
+        f"{ASSESSMENT_BEGIN}\n"
+        f"{assessment_example}\n"
+        f"{ASSESSMENT_END}\n\n"
         "=== FOOTPRINT ===\n"
         f"{_dump(scope['footprint'])}\n"
         "=== AFFECTED POINTS ===\n"
