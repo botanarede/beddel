@@ -104,11 +104,13 @@ def parse_review_assessment(output: bytes) -> dict[str, Any] | None:
         text = output.decode("utf-8", "strict")
     except UnicodeDecodeError:
         return None
-    lines = text.splitlines()
+    # Split on LF only: str.splitlines() also breaks on U+2028, U+2029 and U+0085,
+    # which are legal unescaped inside JSON strings.
+    lines = text.replace("\r\n", "\n").split("\n")
     begin = [
-        index for index, line in enumerate(lines) if line.strip() == ASSESSMENT_BEGIN
+        index for index, line in enumerate(lines) if line.rstrip() == ASSESSMENT_BEGIN
     ]
-    end = [index for index, line in enumerate(lines) if line.strip() == ASSESSMENT_END]
+    end = [index for index, line in enumerate(lines) if line.rstrip() == ASSESSMENT_END]
     if len(begin) != 1 or len(end) != 1 or begin[0] >= end[0]:
         return None
     payload = "\n".join(lines[begin[0] + 1 : end[0]]).strip()

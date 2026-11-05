@@ -292,6 +292,6 @@ members of `specification`, `implementation`, `validation` and `affected_point`.
 The `divergences` item is `present` when at least one Finding exists. It is
 `absent` only when the assessment state list is non-empty and every state is
 `no_divergence`; otherwise it is `not_assessed`. A Review assessment block with
-extra keys, duplicate JSON keys, invalid values or a Markdown code fence is
-unreadable. Unreadable blocks produce no Review Findings and leave applicable
+extra keys, duplicate JSON keys, invalid values or a Markdown code fence inside
+the markers is unreadable. Marker lines may carry trailing whitespace only. Unreadable blocks produce no Review Findings and leave applicable
 Review states indeterminate.

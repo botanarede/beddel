@@ -198,6 +198,9 @@ def test_ratify_then_verify_change_passes_all_nine_steps(tmp_path: Path) -> None
     assert report["schema"] == "profile-dev/verification-report/2"
     assert report["items"]["divergences"]["status"] == "not_assessed"
     assert len(report["assessments"]) == len(impact["required_evidence"])
+    assert {
+        item["state"] for item in report["assessments"] if item["kind"] == "review"
+    } == {"indeterminate"}
     assert set(report["items"]) == {
         "specification",
         "applicable_criteria",

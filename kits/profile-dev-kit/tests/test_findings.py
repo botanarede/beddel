@@ -482,8 +482,33 @@ def test_review_parser_rejects_unreadable_blocks(output: bytes) -> None:
 
 def test_review_parser_accepts_trailing_marker_whitespace() -> None:
     payload = json.dumps(_assessment_payload())
-    output = (f"  {ASSESSMENT_BEGIN}  \r\n{payload}\n{ASSESSMENT_END}\t \r\n").encode()
+    output = (f"{ASSESSMENT_BEGIN}  \r\n{payload}\n{ASSESSMENT_END}\t \r\n").encode()
     assert parse_review_assessment(output) == _assessment_payload()
+
+
+def test_review_parser_rejects_leading_marker_whitespace() -> None:
+    payload = json.dumps(_assessment_payload())
+    output = f"  {ASSESSMENT_BEGIN}\n{payload}\n{ASSESSMENT_END}\n".encode()
+    assert parse_review_assessment(output) is None
+
+
+@pytest.mark.parametrize("separator", ["\u2028", "\u2029", "\u0085"])
+def test_review_parser_keeps_unicode_line_separators_inside_json_strings(
+    separator: str,
+) -> None:
+    payload = _assessment_payload()
+    payload["unassociated"] = [
+        {
+            "between": ["specification", "implementation"],
+            "description": f"a{separator}b",
+        }
+    ]
+    output = (
+        f"{ASSESSMENT_BEGIN}\n"
+        + json.dumps(payload, ensure_ascii=False)
+        + f"\n{ASSESSMENT_END}\n"
+    ).encode()
+    assert parse_review_assessment(output) == payload
 
 
 @pytest.mark.parametrize(
