@@ -216,6 +216,52 @@ def test_review_divergence_and_unknown_association_are_recorded() -> None:
     assert assessments[1]["state"] == "divergent"
 
 
+def test_duplicated_gate_class_and_unknown_entries_keep_every_finding() -> None:
+    divergence = {
+        "between": ["specification", "implementation"],
+        "description": "differs",
+    }
+    gate_entry = {
+        "class": "gate-unit",
+        "affected_point": "api",
+        "criterion": "tests-pass",
+        "divergences": [divergence],
+    }
+    unknown_entry = {
+        "class": "other",
+        "affected_point": "api",
+        "criterion": "unknown",
+        "divergences": [divergence],
+    }
+    output = _review_output(
+        [_clean_review(), gate_entry, gate_entry, unknown_entry, unknown_entry]
+    )
+    findings, assessments = derive_findings(
+        REQUIREMENTS,
+        "valid",
+        [
+            _gate(
+                [
+                    {
+                        "name": "pytest",
+                        "argv": ["pytest"],
+                        "exit_code": 0,
+                        "timed_out": False,
+                    }
+                ]
+            ),
+            _review(output),
+        ],
+        output,
+    )
+    assert [item["association"] for item in findings].count("requirement") == 2
+    assert [item["association"] for item in findings].count("unknown") == 2
+    assert [item["state"] for item in assessments] == [
+        "no_divergence",
+        "no_divergence",
+    ]
+
+
 def test_partial_and_duplicate_review_entries_are_indeterminate_without_findings() -> (
     None
 ):
@@ -292,7 +338,7 @@ def test_partial_and_duplicate_review_entries_are_indeterminate_without_findings
         ],
         output,
     )
-    assert not any(item["association"] == "unknown" for item in findings)
+    assert [item["association"] for item in findings] == ["unknown", "unknown"]
     assert assessments[1]["state"] == "indeterminate"
 
 

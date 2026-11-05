@@ -378,28 +378,32 @@ def derive_findings(
 
     if parsed_review is not None and review_source is not None:
         for key, entries in review_entries.items():
-            if len(entries) != 1:
-                continue
             matched_requirement = by_key.get(key)
-            if (
+            is_review_class = (
                 matched_requirement is not None
                 and matched_requirement.get("kind") == "review"
-                and assessment_states.get(key) != "divergent"
+            )
+            if is_review_class and (
+                len(entries) != 1 or assessment_states.get(key) != "divergent"
             ):
+                # A review-class ID with several entries is indeterminate and
+                # yields no Finding; only gate-class and unknown IDs keep every
+                # entry, because no state of theirs can absorb a duplicate.
                 continue
-            for divergence in entries[0]["divergences"]:
-                findings.append(
-                    _finding(
-                        source="review",
-                        requirement=matched_requirement,
-                        between=divergence["between"],
-                        detail={
-                            "description": divergence["description"],
-                            "review_ref": review_source[0],
-                            "review_sha256": review_source[1],
-                        },
+            for entry in entries:
+                for divergence in entry["divergences"]:
+                    findings.append(
+                        _finding(
+                            source="review",
+                            requirement=matched_requirement,
+                            between=divergence["between"],
+                            detail={
+                                "description": divergence["description"],
+                                "review_ref": review_source[0],
+                                "review_sha256": review_source[1],
+                            },
+                        )
                     )
-                )
 
     findings.sort(key=_finding_sort_key)
     return findings, assessments
