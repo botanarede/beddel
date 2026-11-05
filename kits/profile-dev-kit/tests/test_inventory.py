@@ -188,3 +188,34 @@ def test_yaml_is_loaded_with_safe_load_only() -> None:
     with pytest.raises(yaml.YAMLError):
         yaml.safe_load("!!python/object/apply:os.system ['true']")
     assert GOOD["version"] == "v1"
+
+
+def test_optional_blocking_boolean_is_exposed_without_changing_legacy_criteria() -> (
+    None
+):
+    data = good()
+    data["criteria"][0]["blocking"] = True
+    inventory, failures = validate_inventory(data, "v1")
+    assert failures == []
+    assert inventory is not None
+    assert inventory.criteria == (
+        ("tests-pass", "Unit tests pass"),
+        ("arch-ok", "Architecture reviewed"),
+    )
+    assert inventory.blocking == (("tests-pass", True),)
+
+
+@pytest.mark.parametrize("value", [None, 0, 1, "yes", "true", []])
+def test_non_boolean_blocking_is_an_inventory_integrity_failure(value: object) -> None:
+    data = good()
+    data["criteria"][0]["blocking"] = value
+    assert ("criteria[0].blocking", "schema.type") in _codes(data)
+
+
+def test_false_blocking_is_accepted_and_exposed() -> None:
+    data = good()
+    data["criteria"][0]["blocking"] = False
+    inventory, failures = validate_inventory(data, "v1")
+    assert failures == []
+    assert inventory is not None
+    assert inventory.blocking == (("tests-pass", False),)

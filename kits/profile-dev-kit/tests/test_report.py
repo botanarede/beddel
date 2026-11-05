@@ -31,9 +31,15 @@ from beddel_profile_dev.tools.impact import profile_derive_impact
 from beddel_profile_dev.tools.report import profile_read_report, profile_record_report
 from beddel_profile_dev.tools.review import profile_run_review
 
-from ._helpers import FakeReviewAdapter, change_fixture, stub_gate_tools
+from ._helpers import (
+    FakeReviewAdapter,
+    change_fixture,
+    commit_all,
+    good,
+    stub_gate_tools,
+)
 
-_FORBIDDEN_KEYS = {"verdict", "approval", "approved", "blocking", "finding", "passed"}
+_FORBIDDEN_KEYS = {"approval", "approved", "blocking", "finding", "passed"}
 
 
 def _assert_no_forbidden_keys(value: object) -> None:
@@ -46,9 +52,11 @@ def _assert_no_forbidden_keys(value: object) -> None:
             _assert_no_forbidden_keys(nested)
 
 
-def _prepare(tmp_path: Path) -> tuple[Path, str, str]:
+def _prepare(tmp_path: Path, data: object = None) -> tuple[Path, str, str]:
     repo, base, revision = change_fixture(
-        tmp_path, lambda path: (path / "src" / "api.py").write_text("x = 2\n")
+        tmp_path,
+        lambda path: (path / "src" / "api.py").write_text("x = 2\n"),
+        data=data,
     )
     profile_record_change(str(repo), "c1", base, revision)
     profile_bind_inventory(str(repo), revision, "v1")
@@ -108,7 +116,7 @@ def test_full_report_has_seven_items_and_sorted_reads(
     report = json.loads(path.read_text())
     _assert_no_forbidden_keys(report)
     assert report["record"] == 1
-    assert report["schema"] == "profile-dev/verification-report/2"
+    assert report["schema"] == "profile-dev/verification-report/3"
     assert report["attempt"] == attempt
     assert report["attempt_state"] == "valid"
     assert set(report["items"]) == {
@@ -121,7 +129,8 @@ def test_full_report_has_seven_items_and_sorted_reads(
         "pendencies",
     }
     assert report["items"]["evidence"]["status"] == "present"
-    assert report["items"]["pendencies"] == {"status": "not_assessed"}
+    assert report["items"]["pendencies"] == {"status": "absent"}
+    assert report["verdict"] == "consistent"
     assert report["reads"] == sorted(report["reads"], key=lambda item: item["ref"])
     assert any(item["ref"].endswith("/attempt.json") for item in report["reads"])
 
@@ -255,6 +264,7 @@ def test_review_divergence_is_persisted_as_a_finding(
             "affected_point": "api",
             "criterion": "arch-ok",
             "kind": "review",
+            "classification": "unclassified",
             "between": ["specification", "implementation"],
             "detail": {
                 "description": "the API differs from the requirement",
@@ -271,6 +281,17 @@ def test_review_divergence_is_persisted_as_a_finding(
             },
         }
     ]
+    assert report["items"]["pendencies"]["value"] == [
+        {
+            "reason": "finding_unclassified",
+            "class": "review-arch",
+            "affected_point": "api",
+            "criterion": "arch-ok",
+            "kind": "review",
+            "finding_index": 0,
+        }
+    ]
+    assert report["verdict"] == "has pendency"
 
 
 def test_gate_failure_is_persisted_as_a_finding(
@@ -448,7 +469,7 @@ def test_read_report_preserves_mixed_schema_history(
     result = profile_read_report(str(repo), "c1")
     assert [item["content"]["schema"] for item in result["history"]] == [
         "profile-dev/verification-report/1",
-        "profile-dev/verification-report/2",
+        "profile-dev/verification-report/3",
     ]
     assert result["history"][0]["content"] == old
     assert (report_dir / "1.json").read_bytes() == old_raw
@@ -493,12 +514,14 @@ def test_timeout_review_is_recorded_as_pendency(
     assert report["items"]["pendencies"]["status"] == "present"
     assert report["items"]["pendencies"]["value"] == [
         {
+            "reason": "evidence_unrecorded",
             "class": "review-arch",
             "affected_point": "api",
             "criterion": "arch-ok",
             "kind": "review",
         }
     ]
+    assert report["verdict"] == "has pendency"
 
 
 def test_no_attempt_is_none_and_all_requirements_are_pending(tmp_path: Path) -> None:
@@ -513,7 +536,7 @@ def test_no_attempt_is_none_and_all_requirements_are_pending(tmp_path: Path) -> 
     assert report["items"]["divergences"] == {"status": "not_assessed"}
     assert report["assessments"]
     assert all(item["state"] == "not_assessed" for item in report["assessments"])
-    assert len(report["items"]["pendencies"]["value"]) == 2
+    assert len(report["items"]["pendencies"]["value"]) == 3
 
 
 def test_broken_latest_attempt_is_indeterminate_and_older_attempt_is_ignored(
@@ -534,7 +557,7 @@ def test_broken_latest_attempt_is_indeterminate_and_older_attempt_is_ignored(
     assert report["assessments"]
     assert all(item["state"] == "not_assessed" for item in report["assessments"])
     assert report["items"]["pendencies"]["status"] == "present"
-    assert len(report["items"]["pendencies"]["value"]) == 2
+    assert len(report["items"]["pendencies"]["value"]) == 3
     assert all("/attempts/1/" not in item["ref"] for item in report["reads"])
 
 
@@ -581,6 +604,7 @@ def test_tampered_completed_review_with_error_code_stays_unrecorded(
     report = json.loads((records / result["report"]).read_text())
     assert report["items"]["pendencies"]["value"] == [
         {
+            "reason": "evidence_unrecorded",
             "class": "review-arch",
             "affected_point": "api",
             "criterion": "arch-ok",
@@ -625,7 +649,7 @@ def test_several_attempts_read_only_the_greatest_ordinal(
     assert report["attempt"] == 2
     assert report["attempt_state"] == "valid"
     assert report["items"]["evidence"]["status"] == "present"
-    assert report["items"]["pendencies"] == {"status": "not_assessed"}
+    assert report["items"]["pendencies"] == {"status": "absent"}
     assert all("/attempts/1/" not in item["ref"] for item in report["reads"])
 
 
@@ -701,8 +725,14 @@ def test_non_applicability_is_listed_but_remains_a_pendency(tmp_path: Path) -> N
         "sha256": determination_sha256,
     }
     assert {
-        item["affected_point"] for item in report["items"]["pendencies"]["value"]
+        item["affected_point"]
+        for item in report["items"]["pendencies"]["value"]
+        if item["affected_point"] is not None
     } == {"api", "contracts"}
+    assert any(
+        item["reason"] == "attempt_not_valid"
+        for item in report["items"]["pendencies"]["value"]
+    )
 
     tampered = json.loads(determination_path.read_text())
     tampered["inventory_sha256"] = "0" * 64
@@ -878,5 +908,306 @@ def test_broken_latest_attempt_directory_ignores_the_older_valid_attempt(
     assert report["attempt"] == 2
     assert report["attempt_state"] == "indeterminate"
     assert report["items"]["evidence"] == {"status": "absent"}
-    assert len(report["items"]["pendencies"]["value"]) == 2
+    assert len(report["items"]["pendencies"]["value"]) == 3
     assert all("/attempts/1/" not in item["ref"] for item in report["reads"])
+
+
+def _review_divergence_output(criterion: str = "arch-ok") -> str:
+    return (
+        f"{ASSESSMENT_BEGIN}\n"
+        + json.dumps(
+            {
+                "schema": REVIEW_ASSESSMENT_SCHEMA,
+                "assessments": [
+                    {
+                        "class": "review-arch",
+                        "affected_point": "api",
+                        "criterion": criterion,
+                        "divergences": [
+                            {
+                                "between": ["specification", "implementation"],
+                                "description": "the API differs from the requirement",
+                            }
+                        ],
+                    }
+                ],
+                "unassociated": [],
+            },
+            separators=(",", ":"),
+        )
+        + f"\n{ASSESSMENT_END}\n"
+    )
+
+
+def test_blocking_finding_derives_has_pendency_and_classification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data = good()
+    data["criteria"][1]["blocking"] = True
+    repo, _, revision = _prepare(tmp_path, data)
+    _run_results(repo, revision, monkeypatch, _review_divergence_output())
+    result = profile_record_report(str(repo), "c1", revision)
+    report = json.loads(
+        (records_root(repo, "records/profile-dev") / result["report"]).read_text()
+    )
+    _assert_no_forbidden_keys(report)
+    finding = report["items"]["divergences"]["value"][0]
+    assert finding["classification"] == "blocking"
+    assert report["items"]["pendencies"]["value"][-1] == {
+        "reason": "finding_blocking",
+        "class": "review-arch",
+        "affected_point": "api",
+        "criterion": "arch-ok",
+        "kind": "review",
+        "finding_index": 0,
+    }
+    assert report["verdict"] == "has pendency"
+    assert result["verdict"] == "has pendency"
+    for pendency in report["items"]["pendencies"]["value"]:
+        if pendency["reason"].startswith("finding_"):
+            finding = report["items"]["divergences"]["value"][pendency["finding_index"]]
+            assert {
+                key: finding[key]
+                for key in ("class", "affected_point", "criterion", "kind")
+            } == {
+                key: pendency[key]
+                for key in ("class", "affected_point", "criterion", "kind")
+            }
+
+
+def test_non_blocking_finding_keeps_report_consistent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data = good()
+    data["criteria"][1]["blocking"] = False
+    repo, _, revision = _prepare(tmp_path, data)
+    _run_results(repo, revision, monkeypatch, _review_divergence_output())
+    result = profile_record_report(str(repo), "c1", revision)
+    report = json.loads(
+        (records_root(repo, "records/profile-dev") / result["report"]).read_text()
+    )
+    assert report["items"]["divergences"]["value"][0]["classification"] == (
+        "non_blocking"
+    )
+    assert report["items"]["pendencies"] == {"status": "absent"}
+    assert report["verdict"] == "consistent"
+
+
+def test_earlier_revision_finding_requires_reverification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base, first_revision = _prepare(tmp_path)
+    _run_results(repo, first_revision, monkeypatch, _review_divergence_output())
+    profile_record_report(str(repo), "c1", first_revision)
+
+    (repo / "src" / "api.py").write_text("x = 3\n")
+    second_revision = commit_all(repo, "fix")
+    profile_record_change(str(repo), "c1", base, second_revision)
+    profile_bind_inventory(str(repo), second_revision, "v1")
+    profile_derive_impact(str(repo), "c1", second_revision)
+    _run_results(repo, second_revision, monkeypatch)
+    result = profile_record_report(str(repo), "c1", second_revision)
+    report = json.loads(
+        (records_root(repo, "records/profile-dev") / result["report"]).read_text()
+    )
+    assert report["items"]["pendencies"]["value"][-1] == {
+        "reason": "reverification_unrecorded",
+        "class": None,
+        "affected_point": None,
+        "criterion": None,
+        "kind": None,
+        "revisions": [first_revision],
+    }
+    records = records_root(repo, "records/profile-dev")
+    earlier_report = records / "changes" / "c1" / "report" / "1.json"
+    assert {
+        "ref": "changes/c1/report/1.json",
+        "sha256": hashlib.sha256(earlier_report.read_bytes()).hexdigest(),
+    } in report["reads"]
+    assert report["verdict"] == "has pendency"
+
+
+def test_invalid_earlier_schema_three_is_rejected_before_write(
+    tmp_path: Path,
+) -> None:
+    repo, _, revision = _prepare(tmp_path)
+    records = records_root(repo, "records/profile-dev")
+    report_dir = records / "changes" / "c1" / "report"
+    report_dir.mkdir()
+    (report_dir / "1.json").write_text(
+        json.dumps(
+            {
+                "schema": "profile-dev/verification-report/3",
+                "record": 1,
+                "change_id": "c1",
+                "verdict": "maybe",
+            },
+            separators=(",", ":"),
+        )
+    )
+    before = (report_dir / "1.json").read_bytes()
+    with pytest.raises(ProfileError) as info:
+        profile_record_report(str(repo), "c1", revision)
+    assert info.value.code == PROFILE_REPOSITORY_INVALID
+    assert (report_dir / "1.json").read_bytes() == before
+    assert not (report_dir / "2.json").exists()
+
+
+def test_same_revision_rerun_does_not_create_reverification_pendency(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, _, revision = _prepare(tmp_path)
+    _run_results(repo, revision, monkeypatch, _review_divergence_output())
+    profile_record_report(str(repo), "c1", revision)
+    _run_results(repo, revision, monkeypatch)
+    result = profile_record_report(str(repo), "c1", revision)
+    report = json.loads(
+        (records_root(repo, "records/profile-dev") / result["report"]).read_text()
+    )
+    assert report["verdict"] == "consistent"
+    assert report["items"]["pendencies"] == {"status": "absent"}
+
+
+@pytest.mark.parametrize("timed_out", [False, True])
+def test_clean_reports_at_two_revisions_stay_consistent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, timed_out: bool
+) -> None:
+    repo, base, first_revision = _prepare(tmp_path)
+    if timed_out:
+        monkeypatch.setattr(cfg, "GATE_COMMANDS", (("git", "status", "--porcelain"),))
+        attempt = profile_open_attempt(str(repo), "c1", first_revision)["attempt"]
+        profile_run_gate(str(repo), "c1", first_revision, attempt)
+        monkeypatch.setattr(
+            _adapters,
+            "get_review_adapter",
+            lambda agent_name, *, timeout_seconds: FakeReviewAdapter("timeout"),
+        )
+        asyncio.run(profile_run_review(str(repo), "c1", first_revision, attempt))
+        profile_capture_evidence(str(repo), "c1", first_revision, attempt)
+    else:
+        _run_results(repo, first_revision, monkeypatch)
+    first = profile_record_report(str(repo), "c1", first_revision)
+    first_report = json.loads(
+        (records_root(repo, "records/profile-dev") / first["report"]).read_text()
+    )
+    if timed_out:
+        assert first_report["items"]["divergences"] == {"status": "not_assessed"}
+
+    (repo / "src" / "api.py").write_text("x = 3\n")
+    second_revision = commit_all(repo, "second revision")
+    profile_record_change(str(repo), "c1", base, second_revision)
+    profile_bind_inventory(str(repo), second_revision, "v1")
+    profile_derive_impact(str(repo), "c1", second_revision)
+    _run_results(repo, second_revision, monkeypatch)
+    second = profile_record_report(str(repo), "c1", second_revision)
+    second_report = json.loads(
+        (records_root(repo, "records/profile-dev") / second["report"]).read_text()
+    )
+    assert second_report["items"]["pendencies"] == {"status": "absent"}
+    assert second_report["verdict"] == "consistent"
+
+
+def test_earlier_non_blocking_finding_still_requires_reverification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data = good()
+    data["criteria"][1]["blocking"] = False
+    repo, base, first_revision = _prepare(tmp_path, data)
+    _run_results(repo, first_revision, monkeypatch, _review_divergence_output())
+    first = profile_record_report(str(repo), "c1", first_revision)
+    first_report = json.loads(
+        (records_root(repo, "records/profile-dev") / first["report"]).read_text()
+    )
+    assert first_report["items"]["pendencies"] == {"status": "absent"}
+
+    (repo / "src" / "api.py").write_text("x = 3\n")
+    second_revision = commit_all(repo, "second revision")
+    profile_record_change(str(repo), "c1", base, second_revision)
+    profile_bind_inventory(str(repo), second_revision, "v1")
+    profile_derive_impact(str(repo), "c1", second_revision)
+    _run_results(repo, second_revision, monkeypatch)
+    second = profile_record_report(str(repo), "c1", second_revision)
+    report = json.loads(
+        (records_root(repo, "records/profile-dev") / second["report"]).read_text()
+    )
+    assert report["items"]["pendencies"]["value"][-1]["reason"] == (
+        "reverification_unrecorded"
+    )
+
+
+@pytest.mark.parametrize("tamper", ["verdict", "revision", "items"])
+def test_tampered_schema_three_history_stops_record_without_writing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tamper: str
+) -> None:
+    repo, _, revision = _prepare(tmp_path)
+    _run_results(repo, revision, monkeypatch)
+    first = profile_record_report(str(repo), "c1", revision)
+    records = records_root(repo, "records/profile-dev")
+    report_path = records / first["report"]
+    content = json.loads(report_path.read_text())
+    if tamper == "verdict":
+        content["verdict"] = "has pendency"
+    elif tamper == "revision":
+        del content["revision"]
+    else:
+        content["items"] = []
+    report_path.write_text(json.dumps(content))
+    with pytest.raises(ProfileError) as info:
+        profile_record_report(str(repo), "c1", revision)
+    assert info.value.code == PROFILE_REPOSITORY_INVALID
+    assert not (records / "changes" / "c1" / "report" / "2.json").exists()
+
+
+@pytest.mark.parametrize("tamper", ["non_bool", "extra"])
+def test_tampered_snapshot_criteria_is_repository_invalid(
+    tmp_path: Path, tamper: str
+) -> None:
+    repo, _, revision = _prepare(tmp_path)
+    records = records_root(repo, "records/profile-dev")
+    snapshot_path = records / f"revisions/{revision}/snapshot.json"
+    snapshot = json.loads(snapshot_path.read_text())
+    if tamper == "non_bool":
+        snapshot["criteria"][0]["blocking"] = "yes"
+    else:
+        snapshot["criteria"][0]["extra"] = True
+    snapshot_path.write_text(json.dumps(snapshot))
+    with pytest.raises(ProfileError) as info:
+        profile_record_report(str(repo), "c1", revision)
+    assert info.value.code == PROFILE_REPOSITORY_INVALID
+    assert not (records / "changes" / "c1" / "report").exists()
+
+
+def test_deeply_nested_report_record_is_repository_invalid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, _, revision = _prepare(tmp_path)
+    _run_results(repo, revision, monkeypatch)
+    first = profile_record_report(str(repo), "c1", revision)
+    records = records_root(repo, "records/profile-dev")
+    report_dir = records / "changes" / "c1" / "report"
+    (report_dir / "2.json").write_bytes(b"[" * 100000)
+    with pytest.raises(ProfileError) as info:
+        profile_record_report(str(repo), "c1", revision)
+    assert info.value.code == PROFILE_REPOSITORY_INVALID
+    assert not (report_dir / "3.json").exists()
+    with pytest.raises(ProfileError) as info:
+        profile_read_report(str(repo), "c1")
+    assert info.value.code == PROFILE_REPOSITORY_INVALID
+    assert (records / first["report"]).exists()
+
+
+def test_deeply_nested_evidence_is_unrecorded_without_recursion_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, _, revision = _prepare(tmp_path)
+    _run_results(repo, revision, monkeypatch)
+    records = records_root(repo, "records/profile-dev")
+    evidence_dir = records / f"changes/c1/revisions/{revision}/attempts/1/evidence"
+    tampered = next(evidence_dir.glob("*.json"))
+    tampered.write_bytes(b"[" * 100000)
+    result = profile_record_report(str(repo), "c1", revision)
+    report = json.loads((records / result["report"]).read_text())
+    assert any(
+        item["reason"] == "evidence_unrecorded"
+        for item in report["items"]["pendencies"]["value"]
+    )

@@ -37,10 +37,15 @@ from beddel_profile_dev.tools.evidence import EVIDENCE_SCHEMA
 from beddel_profile_dev.tools.evidence import _attempt as validate_attempt
 from beddel_profile_dev.tools.impact import IMPACT_SCHEMA, _bound_snapshot
 from beddel_profile_dev.tools.review import _read_scope
+from beddel_profile_dev.verdict import classify_findings, derive_verdict
 
 __all__ = ["REPORT_SCHEMA", "profile_read_report", "profile_record_report"]
 
-_REPORT_SCHEMAS = {"profile-dev/verification-report/1", REPORT_SCHEMA}
+_REPORT_SCHEMAS = {
+    "profile-dev/verification-report/1",
+    "profile-dev/verification-report/2",
+    REPORT_SCHEMA,
+}
 _FULL_SHA = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
 _DIGEST = re.compile(r"[0-9a-f]{64}")
 _ORDINAL = re.compile(r"([1-9][0-9]*)")
@@ -66,7 +71,7 @@ class _Reader:
             return None
         try:
             value = json.loads(raw)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, RecursionError):
             return None
         return value if isinstance(value, dict) else None
 
@@ -135,11 +140,11 @@ def _load_scope(
     impact_raw = reader.read(impact_rel)
     try:
         snapshot = json.loads(snapshot_raw) if snapshot_raw is not None else None
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, RecursionError):
         snapshot = None
     try:
         impact = json.loads(impact_raw) if impact_raw is not None else None
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, RecursionError):
         impact = None
     try:
         _bound_snapshot(reader.root, sha, snapshot_raw=snapshot_raw)
@@ -147,6 +152,22 @@ def _load_scope(
         if error.code == PROFILE_REPOSITORY_INVALID:
             raise
         raise _unbound() from None
+    if isinstance(snapshot, dict) and (
+        not isinstance(snapshot.get("criteria"), list)
+        or not all(
+            isinstance(item, dict)
+            and set(item)
+            in (
+                {"id", "description"},
+                {"id", "description", "blocking"},
+            )
+            and isinstance(item["id"], str)
+            and isinstance(item["description"], str)
+            and ("blocking" not in item or isinstance(item["blocking"], bool))
+            for item in snapshot["criteria"]
+        )
+    ):
+        raise _invalid_repo()
     if (
         binding is None
         or snapshot is None
@@ -181,9 +202,14 @@ def _load_scope(
         or not isinstance(snapshot.get("criteria"), list)
         or not all(
             isinstance(item, dict)
-            and set(item) == {"id", "description"}
+            and set(item)
+            in (
+                {"id", "description"},
+                {"id", "description", "blocking"},
+            )
             and isinstance(item["id"], str)
             and isinstance(item["description"], str)
+            and ("blocking" not in item or isinstance(item["blocking"], bool))
             for item in snapshot["criteria"]
         )
         or impact_raw is None
@@ -234,7 +260,7 @@ def _valid_outcome(
         return None
     try:
         data = json.loads(raw)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, RecursionError):
         return None
     if not isinstance(data, dict):
         return None
@@ -372,7 +398,7 @@ def _validated_evidence(
         return None
     try:
         data = json.loads(raw)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, RecursionError):
         return None
     expected = {
         "schema",
@@ -470,7 +496,7 @@ def _validated_determinations(
             continue
         try:
             data = json.loads(raw)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, RecursionError):
             continue
         if (
             not isinstance(data, dict)
@@ -495,6 +521,67 @@ def _validated_determinations(
             }
         )
     return result
+
+
+def _validate_report_content(
+    content: object, ordinal: int, change_id: str
+) -> dict[str, Any]:
+    if not isinstance(content, dict):
+        raise _invalid_repo()
+    schema = content.get("schema")
+    if schema not in _REPORT_SCHEMAS:
+        raise _invalid_repo()
+    if type(content.get("record")) is not int or content.get("record") != ordinal:
+        raise _invalid_repo()
+    if content.get("change_id") != change_id:
+        raise _invalid_repo()
+    if schema in {
+        "profile-dev/verification-report/2",
+        REPORT_SCHEMA,
+    } and not isinstance(content.get("assessments"), list):
+        raise _invalid_repo()
+    if schema == REPORT_SCHEMA:
+        items = content.get("items")
+        if (
+            not isinstance(items, dict)
+            or not isinstance(items.get("pendencies"), dict)
+            or items["pendencies"].get("status") not in {"absent", "present"}
+            or not isinstance(content.get("revision"), str)
+            or content.get("verdict")
+            != (
+                "consistent"
+                if items["pendencies"]["status"] == "absent"
+                else "has pendency"
+            )
+        ):
+            raise _invalid_repo()
+    return content
+
+
+def _report_history(
+    reader: _Reader, records: Path, change_id: str
+) -> list[tuple[int, dict[str, Any]]]:
+    report_rel = f"changes/{change_id}/report"
+    directory = confined(records, report_rel)
+    if not directory.exists():
+        return []
+    if not directory.is_dir():
+        raise _invalid_repo()
+    entries = [
+        (int(match.group(1)), entry.name)
+        for entry in directory.iterdir()
+        if (match := _REPORT_ORDINAL.fullmatch(entry.name)) is not None
+    ]
+    history: list[tuple[int, dict[str, Any]]] = []
+    for ordinal, name in sorted(entries):
+        relative = f"{report_rel}/{name}"
+        raw = reader.read(relative)
+        try:
+            content = json.loads(raw) if raw is not None else None
+        except (TypeError, ValueError, RecursionError):
+            content = None
+        history.append((ordinal, _validate_report_content(content, ordinal, change_id)))
+    return history
 
 
 def _next_report(records: Path, report_rel: str) -> int:
@@ -529,6 +616,16 @@ def profile_record_report(
     reader = _Reader(records)
     revision_rel = f"changes/{change_id}/revisions/{sha}"
     base, snapshot, impact, impact_raw, _, _ = _load_scope(reader, repo, change_id, sha)
+    history = _report_history(reader, records, change_id)
+    earlier_revisions = [
+        content["revision"]
+        for _, content in history
+        if content.get("revision") != sha
+        and isinstance(content.get("revision"), str)
+        and isinstance(content.get("items"), dict)
+        and isinstance(content["items"].get("divergences"), dict)
+        and content["items"]["divergences"].get("status") == "present"
+    ]
     attempt = _latest_attempt(records, revision_rel)
     attempt_state = "none"
     attempt_record: dict[str, Any] | None = None
@@ -580,14 +677,24 @@ def profile_record_report(
     findings, assessments = derive_findings(
         requirements, attempt_state, validated, review_output
     )
+    classified_findings = classify_findings(findings, snapshot)
+    pendencies, verdict = derive_verdict(
+        requirements,
+        attempt_state,
+        validated,
+        assessments,
+        classified_findings,
+        earlier_revisions,
+    )
     items = build_items(
         impact,
         snapshot,
         attempt_state,
         validated,
         determinations,
-        findings,
+        classified_findings,
         assessments,
+        pendencies,
     )
     report_without_ordinal = {
         "schema": REPORT_SCHEMA,
@@ -600,6 +707,7 @@ def profile_record_report(
         "reads": reader.result(),
         "items": items,
         "assessments": assessments,
+        "verdict": verdict,
     }
     report_rel = f"changes/{change_id}/report"
     ordinal = _next_report(records, report_rel)
@@ -615,6 +723,7 @@ def profile_record_report(
                 "report": f"{report_rel}/{ordinal}.json",
                 "attempt": attempt,
                 "attempt_state": attempt_state,
+                "verdict": verdict,
             }
         ordinal += 1
     raise _invalid_repo()
@@ -636,47 +745,17 @@ def profile_read_report(repo_path: str, change_id: str) -> dict[str, Any]:
     change = reader.json(f"changes/{change_id}/change.json")
     if not _valid_change(change, change_id):
         raise _unbound()
-    report_rel = f"changes/{change_id}/report"
-    directory = confined(records, report_rel)
-    if not directory.exists():
-        return {"ok": True, "change_id": change_id, "report": None, "history": []}
-    if not directory.is_dir():
-        raise _invalid_repo()
-    entries: list[tuple[int, str]] = []
-    for entry in directory.iterdir():
-        match = _REPORT_ORDINAL.fullmatch(entry.name)
-        if match is not None:
-            entries.append((int(match.group(1)), entry.name))
-    history: list[dict[str, Any]] = []
-    for ordinal, name in sorted(entries):
-        relative = f"{report_rel}/{name}"
-        raw = reader.read(relative)
-        try:
-            content = json.loads(raw) if raw is not None else None
-        except (TypeError, ValueError):
-            content = None
-        if (
-            not isinstance(content, dict)
-            or content.get("schema") not in _REPORT_SCHEMAS
-            or (
-                content.get("schema") == REPORT_SCHEMA
-                and not isinstance(content.get("assessments"), list)
-            )
-            or type(content.get("record")) is not int
-            or content.get("record") != ordinal
-            or content.get("change_id") != change_id
-        ):
-            raise _invalid_repo()
-        history.append(
-            {
-                "ref": relative,
-                "sha256": hashlib.sha256(raw or b"").hexdigest(),
-                "content": content,
-            }
-        )
+    history = _report_history(reader, records, change_id)
     return {
         "ok": True,
         "change_id": change_id,
-        "report": history[-1]["content"] if history else None,
-        "history": history,
+        "report": history[-1][1] if history else None,
+        "history": [
+            {
+                "ref": f"changes/{change_id}/report/{ordinal}.json",
+                "sha256": reader.reads[f"changes/{change_id}/report/{ordinal}.json"],
+                "content": content,
+            }
+            for ordinal, content in history
+        ],
     }
