@@ -679,7 +679,11 @@ def _validate_report_content(
 
 
 def _report_history(
-    reader: _Reader, records: Path, change_id: str
+    reader: _Reader,
+    records: Path,
+    change_id: str,
+    *,
+    before: int | None = None,
 ) -> list[tuple[int, dict[str, Any]]]:
     report_rel = f"changes/{change_id}/report"
     directory = confined(records, report_rel)
@@ -691,6 +695,7 @@ def _report_history(
         (int(match.group(1)), entry.name)
         for entry in directory.iterdir()
         if (match := _REPORT_ORDINAL.fullmatch(entry.name)) is not None
+        and (before is None or int(match.group(1)) < before)
     ]
     history: list[tuple[int, dict[str, Any]]] = []
     for ordinal, name in sorted(entries):
@@ -718,25 +723,17 @@ def _next_report(records: Path, report_rel: str) -> int:
     return max(values, default=0) + 1
 
 
-@beddel_tool(
-    name="profile_record_report",
-    description="Build and persist one append-only Verification Report for a Change",
-    category="profile",
-)
-def profile_record_report(
-    repo_path: str, change_id: str, revision: str
+def _derive_report(
+    reader: _Reader,
+    repo: Path,
+    records: Path,
+    change_id: str,
+    sha: str,
+    history: list[tuple[int, dict[str, Any]]],
 ) -> dict[str, Any]:
-    """Build and append a Report for the designated attempt of a revision."""
-    config = load_config()
-    if not is_valid_id(change_id):
-        raise ProfileError(PROFILE_CHANGE_INVALID, "change id invalid")
-    repo = real_repo_root(repo_path)
-    sha = resolve_revision(repo, revision)
-    records = records_root(repo, config.records_dir)
-    reader = _Reader(records)
+    """Derive the canonical report body without assigning its ordinal."""
     revision_rel = f"changes/{change_id}/revisions/{sha}"
     base, snapshot, impact, impact_raw, _, _ = _load_scope(reader, repo, change_id, sha)
-    history = _report_history(reader, records, change_id)
     earlier_revision, earlier = select_earlier_findings(history, sha, change_id)
     attempt = _latest_attempt(records, revision_rel)
     attempt_state = "none"
@@ -825,7 +822,7 @@ def profile_record_report(
     )
     if not _valid_reverification(reverification, change_id, sha):
         raise _invalid_repo()
-    report_without_ordinal = {
+    return {
         "schema": REPORT_SCHEMA,
         "record": 0,
         "change_id": change_id,
@@ -839,6 +836,29 @@ def profile_record_report(
         "verdict": verdict,
         "reverification": reverification,
     }
+
+
+@beddel_tool(
+    name="profile_record_report",
+    description="Build and persist one append-only Verification Report for a Change",
+    category="profile",
+)
+def profile_record_report(
+    repo_path: str, change_id: str, revision: str
+) -> dict[str, Any]:
+    """Build and append a Report for the designated attempt of a revision."""
+    config = load_config()
+    if not is_valid_id(change_id):
+        raise ProfileError(PROFILE_CHANGE_INVALID, "change id invalid")
+    repo = real_repo_root(repo_path)
+    sha = resolve_revision(repo, revision)
+    records = records_root(repo, config.records_dir)
+    reader = _Reader(records)
+    _load_scope(reader, repo, change_id, sha)
+    history = _report_history(reader, records, change_id)
+    report_without_ordinal = _derive_report(
+        reader, repo, records, change_id, sha, history
+    )
     report_rel = f"changes/{change_id}/report"
     ordinal = _next_report(records, report_rel)
     for _ in range(100):
@@ -851,10 +871,10 @@ def profile_record_report(
                 "revision": sha,
                 "record": ordinal,
                 "report": f"{report_rel}/{ordinal}.json",
-                "attempt": attempt,
-                "attempt_state": attempt_state,
-                "verdict": verdict,
-                "reverification": reverification["status"],
+                "attempt": report_without_ordinal["attempt"],
+                "attempt_state": report_without_ordinal["attempt_state"],
+                "verdict": report_without_ordinal["verdict"],
+                "reverification": report_without_ordinal["reverification"]["status"],
             }
         ordinal += 1
     raise _invalid_repo()

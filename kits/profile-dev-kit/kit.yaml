@@ -81,6 +81,10 @@ tools:
     target: "beddel_profile_dev.tools.determine:profile_declare_non_applicability"
     description: "Record the maintainer's determination that an obligation with an absent target is not applicable (transport only)"
     category: profile
+  - name: profile_approve_change
+    target: "beddel_profile_dev.tools.approval:profile_approve_change"
+    description: "Revalidate a Change and refuse its Approval request"
+    category: profile
 
 workflows:
   - name: verify-change
@@ -95,6 +99,9 @@ workflows:
   - name: declare-non-applicability
     path: workflows/declare-non-applicability.yaml
     description: Records the determination of non-applicability of one obligation with an absent target
+  - name: approve-change
+    path: workflows/approve-change.yaml
+    description: Revalidates a Change and refuses every Approval until Story 5.2 accepts a decision
 
 targets:
   python:
@@ -126,6 +133,8 @@ targets:
         target: "beddel_profile_dev.tools.report:profile_read_report"
       - name: profile_declare_non_applicability
         target: "beddel_profile_dev.tools.determine:profile_declare_non_applicability"
+      - name: profile_approve_change
+        target: "beddel_profile_dev.tools.approval:profile_approve_change"
   typescript:
     status: unavailable
     unavailable_reason: >

@@ -29,6 +29,7 @@ WORKFLOW = KIT_ROOT / "workflows" / "verify-change.yaml"
 RATIFY = KIT_ROOT / "workflows" / "ratify-inventory.yaml"
 DECLARE = KIT_ROOT / "workflows" / "declare-non-applicability.yaml"
 READ_REPORT = KIT_ROOT / "workflows" / "read-report.yaml"
+APPROVE = KIT_ROOT / "workflows" / "approve-change.yaml"
 RECORDS = "changes"
 
 
@@ -759,3 +760,31 @@ def test_beddel_run_reverifies_a_gate_finding_at_the_corrected_revision(
         for item in report["reads"]
         if "ref" in item
     )
+
+
+def test_approve_change_refuses_has_pendency_without_writing(
+    tmp_path: Path,
+) -> None:
+    repo, base, sha = _committed_change(tmp_path)
+    verified = _run(str(repo), tmp_path, revision=sha, base=base)
+    assert verified.returncode == 0, verified.stderr
+    records = _records(repo)
+    before = {
+        path.relative_to(records): path.read_bytes()
+        for path in records.rglob("*")
+        if path.is_file()
+    }
+    result = _run_workflow(
+        APPROVE,
+        {"repo_path": str(repo), "change_id": "c1", "revision": sha, "actor": "owner"},
+        tmp_path,
+    )
+    assert result.returncode != 0
+    assert "PROFILE_APPROVAL_REFUSED" in result.stderr
+    assert "verdict.has_pendency" in result.stderr
+    after = {
+        path.relative_to(records): path.read_bytes()
+        for path in records.rglob("*")
+        if path.is_file()
+    }
+    assert after == before
