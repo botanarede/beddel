@@ -11,6 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from beddel_profile_dev._io import records_root
 
 from ._helpers import (
@@ -776,7 +777,13 @@ def test_approve_change_refuses_has_pendency_without_writing(
     }
     result = _run_workflow(
         APPROVE,
-        {"repo_path": str(repo), "change_id": "c1", "revision": sha, "actor": "owner"},
+        {
+            "repo_path": str(repo),
+            "change_id": "c1",
+            "revision": sha,
+            "actor": "owner",
+            "decision_commit": sha,
+        },
         tmp_path,
     )
     assert result.returncode != 0
@@ -788,3 +795,74 @@ def test_approve_change_refuses_has_pendency_without_writing(
         if path.is_file()
     }
     assert after == before
+
+
+def test_beddel_run_records_commits_and_accepts_approval_decision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base, sha = _committed_change(tmp_path)
+    from beddel_profile_dev.tools.bind import profile_bind_inventory
+    from beddel_profile_dev.tools.change import profile_record_change
+    from beddel_profile_dev.tools.impact import profile_derive_impact
+    from beddel_profile_dev.tools.report import profile_record_report
+
+    from .test_report import _run_results
+
+    profile_record_change(str(repo), "c1", base, sha)
+    profile_bind_inventory(str(repo), sha, "v1")
+    profile_derive_impact(str(repo), "c1", sha)
+    _run_results(repo, sha, monkeypatch)
+    assert profile_record_report(str(repo), "c1", sha)["verdict"] == "consistent"
+
+    recorded = _run_workflow(
+        KIT_ROOT / "workflows" / "record-approval-decision.yaml",
+        {
+            "repo_path": str(repo),
+            "change_id": "c1",
+            "revision": sha,
+            "actor": "owner",
+        },
+        tmp_path,
+    )
+    assert recorded.returncode == 0, recorded.stderr
+    decision_commit = commit_all(repo, "record Approval decision")
+
+    approved = _run_workflow(
+        APPROVE,
+        {
+            "repo_path": str(repo),
+            "change_id": "c1",
+            "revision": sha,
+            "actor": "owner",
+            "decision_commit": decision_commit,
+        },
+        tmp_path,
+    )
+    assert approved.returncode == 0, approved.stderr
+    assert "profile_approve_change" in approved.stdout
+    approval_path = _records(repo) / "changes" / "c1" / "approval.json"
+    approval = json.loads(approval_path.read_text())
+    assert set(approval) == {
+        "schema",
+        "change_id",
+        "revision",
+        "report",
+        "report_sha256",
+        "attempt",
+        "approved_by",
+        "proof",
+    }
+    assert approval["approved_by"] == "owner"
+    assert approval["proof"]["commit"] == decision_commit
+
+    read = _run_workflow(
+        KIT_ROOT / "workflows" / "read-approval.yaml",
+        {"repo_path": str(repo), "change_id": "c1"},
+        tmp_path,
+    )
+    assert read.returncode == 0, read.stderr
+    lines = read.stdout.splitlines()
+    step = lines.index("[read]")
+    payload = ast.literal_eval("\n".join(lines[step + 1 :]).strip())
+    assert payload["tool"] == "profile_read_approval"
+    assert payload["result"]["approval"] == approval

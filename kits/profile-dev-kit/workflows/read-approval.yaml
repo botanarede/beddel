@@ -1,0 +1,19 @@
+id: read-approval
+name: Read Approval
+description: Reads the stored Change Approval without writing records.
+version: "1.0"
+requires_kits:
+  - profile-dev-kit
+allowed_tools:
+  - profile_read_approval
+inputs:
+  - repo_path
+  - change_id
+steps:
+  - id: read
+    primitive: tool
+    config:
+      tool: profile_read_approval
+      arguments:
+        repo_path: "$input.repo_path"
+        change_id: "$input.change_id"

@@ -1,6 +1,6 @@
 id: approve-change
 name: Approve Change
-description: Revalidates a Change and refuses every Approval until Story 5.2 accepts a decision.
+description: Revalidates a Change and accepts Approval from a committed decision.
 version: "1.0"
 requires_kits:
   - profile-dev-kit
@@ -11,6 +11,7 @@ inputs:
   - change_id
   - revision
   - actor
+  - decision_commit
 steps:
   - id: approve
     primitive: tool
@@ -21,3 +22,4 @@ steps:
         change_id: "$input.change_id"
         revision: "$input.revision"
         actor: "$input.actor"
+        decision_commit: "$input.decision_commit"
