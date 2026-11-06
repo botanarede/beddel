@@ -68,6 +68,7 @@ class Inventory:
     components: tuple[Component, ...]
     criteria: tuple[tuple[str, str], ...]
     obligations: tuple[RequirementId, ...]
+    blocking: tuple[tuple[str, bool], ...] = ()
 
 
 def is_valid_id(value: object) -> bool:
@@ -86,7 +87,7 @@ def _valid_path(value: str) -> bool:
 def _entries(
     data: Mapping[str, object],
     key: str,
-    keys: frozenset[str],
+    keys: frozenset[str] | tuple[frozenset[str], ...],
     failures: list[Failure],
 ) -> list[tuple[int, Mapping[str, object]]]:
     """Return the well-formed mapping entries of a list, recording the rest."""
@@ -94,11 +95,12 @@ def _entries(
     if not isinstance(raw, list):
         failures.append(Failure(key, "schema.type"))
         return []
+    expected_keys = (keys,) if isinstance(keys, frozenset) else keys
     entries: list[tuple[int, Mapping[str, object]]] = []
     for index, item in enumerate(raw):
         if not isinstance(item, dict):
             failures.append(Failure(f"{key}[{index}]", "schema.type"))
-        elif set(item) != keys:
+        elif set(item) not in expected_keys:
             failures.append(Failure(f"{key}[{index}]", "schema.keys"))
         else:
             entries.append((index, item))
@@ -149,7 +151,13 @@ def validate_inventory(
         data, "components", frozenset({"id", "kind", "path"}), failures
     )
     criterion_entries = _entries(
-        data, "criteria", frozenset({"id", "description"}), failures
+        data,
+        "criteria",
+        (
+            frozenset({"id", "description"}),
+            frozenset({"id", "description", "blocking"}),
+        ),
+        failures,
     )
     obligation_entries = _entries(
         data,
@@ -174,6 +182,8 @@ def validate_inventory(
     for index, item in criterion_entries:
         if not isinstance(item["description"], str):
             failures.append(Failure(f"criteria[{index}].description", "schema.type"))
+        if "blocking" in item and not isinstance(item["blocking"], bool):
+            failures.append(Failure(f"criteria[{index}].blocking", "schema.type"))
 
     obligations: list[RequirementId] = []
     composed: set[RequirementId] = set()
@@ -218,6 +228,11 @@ def validate_inventory(
             ),
             criteria=tuple(
                 (str(i["id"]), str(i["description"])) for _, i in criterion_entries
+            ),
+            blocking=tuple(
+                (str(i["id"]), i["blocking"])
+                for _, i in criterion_entries
+                if "blocking" in i and isinstance(i["blocking"], bool)
             ),
             obligations=tuple(obligations),
         ),

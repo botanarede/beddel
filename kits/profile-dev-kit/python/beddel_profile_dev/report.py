@@ -7,7 +7,7 @@ from typing import Any
 
 __all__ = ["REPORT_SCHEMA", "build_items"]
 
-REPORT_SCHEMA = "profile-dev/verification-report/2"
+REPORT_SCHEMA = "profile-dev/verification-report/3"
 _REQUIREMENT_KEYS = ("class", "affected_point", "criterion")
 _MISSING = object()
 
@@ -63,13 +63,15 @@ def build_items(
     determinations: Mapping[object, Mapping[str, Any]] | Iterable[Mapping[str, Any]],
     findings: Iterable[Mapping[str, Any]],
     assessments: Iterable[Mapping[str, Any]],
+    pendency_list: Iterable[Mapping[str, Any]],
 ) -> dict[str, dict[str, Any]]:
     """Build the Report items without reading or writing anything.
 
     ``evidence`` and ``determinations`` contain only records already validated
     by the I/O layer. Each link entry carries ``ref`` and ``sha256``; Evidence
-    entries also carry the stored record under ``record``. Findings and
-    assessments are pure-domain results supplied by ``findings.py``.
+    entries also carry the stored record under ``record``. Findings,
+    assessments and Pendencies are pure-domain results supplied by their
+    derivation modules.
     """
     if attempt_state not in {"valid", "indeterminate", "none"}:
         raise ValueError("invalid attempt state")
@@ -85,7 +87,6 @@ def build_items(
 
     applicable: list[dict[str, Any]] = []
     recorded_evidence: list[dict[str, Any]] = []
-    pendencies: list[dict[str, Any]] = []
     descriptions = _criteria(snapshot)
     for requirement in requirements:
         key = _requirement_key(requirement)
@@ -107,25 +108,9 @@ def build_items(
 
         evidence_link = evidence_by_id.get(key)
         if evidence_link is None:
-            pendencies.append(
-                {
-                    "class": requirement["class"],
-                    "affected_point": requirement["affected_point"],
-                    "criterion": requirement["criterion"],
-                    "kind": requirement.get("kind"),
-                }
-            )
             continue
         record = evidence_link.get("record")
         if not isinstance(record, Mapping):
-            pendencies.append(
-                {
-                    "class": requirement["class"],
-                    "affected_point": requirement["affected_point"],
-                    "criterion": requirement["criterion"],
-                    "kind": requirement.get("kind"),
-                }
-            )
             continue
         recorded_evidence.append(
             {
@@ -141,6 +126,7 @@ def build_items(
 
     finding_list = [dict(item) for item in findings]
     assessment_list = [dict(item) for item in assessments]
+    pendencies = [dict(item) for item in pendency_list]
     states = [item.get("state") for item in assessment_list]
     if finding_list:
         divergences = _status("present", finding_list)
@@ -174,6 +160,6 @@ def build_items(
         ),
         "divergences": divergences,
         "pendencies": (
-            _status("present", pendencies) if pendencies else _status("not_assessed")
+            _status("present", pendencies) if pendencies else _status("absent")
         ),
     }

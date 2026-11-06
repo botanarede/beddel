@@ -426,3 +426,46 @@ def test_sources_use_safe_load_only() -> None:
         text = path.read_text()
         assert "yaml.load(" not in text and "unsafe_load" not in text, path
         assert "shell=True" not in text and "os.system" not in text, path
+
+
+def test_snapshot_emits_only_defined_blocking_values(tmp_path: Path) -> None:
+    data = good()
+    data["criteria"][0]["blocking"] = True
+    repo, sha = _ratified(tmp_path, data)
+    result = profile_bind_inventory(str(repo), sha, "v1")
+    snapshot = json.loads((_records(repo) / result["snapshot"]).read_text())
+    assert snapshot["criteria"] == [
+        {"id": "arch-ok", "description": "Architecture reviewed"},
+        {"id": "tests-pass", "description": "Unit tests pass", "blocking": True},
+    ]
+
+
+@pytest.mark.parametrize("value", [None, 0, 1, "yes", "true", []])
+def test_non_boolean_blocking_is_recorded_in_the_integrity_block(
+    tmp_path: Path, value: object
+) -> None:
+    data = good()
+    data["criteria"][0]["blocking"] = value
+    repo, sha = _ratified(tmp_path, data)
+    error = _fails(repo, sha)
+    assert error.code == PROFILE_INVENTORY_INTEGRITY_BLOCK
+    block = json.loads(
+        next(
+            (_records(repo) / RECORDS / sha / "integrity-blocks").glob("*.json")
+        ).read_text()
+    )
+    assert block["failures"] == [
+        {"locator": "criteria[0].blocking", "code": "schema.type"}
+    ]
+
+
+def test_false_blocking_is_kept_in_the_snapshot(tmp_path: Path) -> None:
+    data = good()
+    data["criteria"][0]["blocking"] = False
+    repo, sha = _ratified(tmp_path, data)
+    result = profile_bind_inventory(str(repo), sha, "v1")
+    snapshot = json.loads((_records(repo) / result["snapshot"]).read_text())
+    assert snapshot["criteria"] == [
+        {"id": "arch-ok", "description": "Architecture reviewed"},
+        {"id": "tests-pass", "description": "Unit tests pass", "blocking": False},
+    ]

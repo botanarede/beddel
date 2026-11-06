@@ -5,7 +5,7 @@ Development profile kit for Beddel. It provides the entry workflow
 the target path is a Git work tree, the gate executables resolve on `PATH`, and
 the required environment keys are present (key names only, never values).
 
-Status: Story 4.3. Entry workflows `verify-change`, `read-report`,
+Status: Story 4.2. Entry workflows `verify-change`, `read-report`,
 `ratify-inventory` and `declare-non-applicability`; tools `profile_preflight`,
 `profile_ratify_inventory`, `profile_bind_inventory`, `profile_record_change`,
 `profile_derive_impact`, `profile_open_attempt`, `profile_run_gate`,
@@ -38,7 +38,10 @@ An inventory version lives in the verified repository at
 `.beddel-profile/inventory/<version>.yaml`: a mapping with exactly `version`
 (equal to the file stem), `classes` (`{id, kind: gate|review}`), `components`
 (`{id, kind: component|shared_contract, path}`), `criteria`
-(`{id, description}`) and `obligations` (`{class, affected_point, criterion}`).
+(`{id, description}` or `{id, description, blocking}`) and `obligations`
+(`{class, affected_point, criterion}`). A criterion's optional `blocking` must
+be a YAML boolean. It is copied into the bound snapshot only when defined;
+older criteria keep the byte-identical snapshot shape.
 Ids match `^[a-z0-9][a-z0-9._-]{0,63}$`; quote ids that YAML would read as
 numbers. Unknown keys are rejected.
 
@@ -250,16 +253,23 @@ Evidence preserves its commands and reference. Completed Review Evidence keeps
 the reviewer reference and the SHA-256 of non-blank stored output. Timed-out,
 errored or blank Reviews produce no Review Evidence.
 
-## Verification Report (Stories 4.1 and 4.3)
+## Verification Report (Stories 4.1, 4.3 and 4.2)
 
 `report` (`profile_record_report`) runs after Evidence and appends one canonical
 JSON Report under `changes/<change_id>/report/<n>.json`. New records use schema
-`profile-dev/verification-report/2`; the read-only workflow also returns older
-schema `/1` records unchanged. It selects only the greatest persisted attempt
-ordinal for the Change and revision. A valid attempt links the seven Report
-items to the recorded snapshot, Impact and validated Evidence; a missing or
-malformed latest attempt is recorded as indeterminate. Reports are create-only
-and never rewrite earlier records.
+`profile-dev/verification-report/3`; `read-report` accepts `/1`, `/2` and `/3`
+records and returns earlier records unchanged; stored records are never
+rewritten. It selects only the greatest
+persisted attempt ordinal for the Change and revision. A valid attempt links the
+seven Report items to the recorded snapshot, Impact and validated Evidence; a
+missing or malformed latest attempt is recorded as indeterminate. Reports are
+create-only and never rewrite earlier records.
+
+The ratified criterion may define `blocking: true` or `blocking: false`. The
+bound snapshot carries that field only when it was defined, preserving the
+legacy snapshot bytes otherwise. Each Finding receives `classification`:
+`blocking`, `non_blocking` or `unclassified`. An unknown association or a
+criterion without a blocking definition is `unclassified`.
 
 The top-level `assessments` list contains one state for every Requirement ID,
 sorted by class, Affected point and criterion. States are `no_divergence`,
@@ -269,6 +279,23 @@ that assessment indeterminate. Review Findings come from the verified Review
 output only. Each Finding records its source, Requirement association (or
 `unknown`), the two disagreeing constituents and a detail containing the gate
 or Review reference.
+
+The Report has exactly one `verdict`: `consistent` when `pendencies` is absent,
+or `has pendency` otherwise. A pendency entry has the shape
+`{reason, class, affected_point, criterion, kind}`. Its `reason` is one of
+`attempt_not_valid`, `evidence_unrecorded`, `assessment_indeterminate`,
+`finding_blocking`, `finding_unclassified` or `reverification_unrecorded`.
+Finding entries also carry `finding_index`; reverification entries carry sorted
+`revisions`. Change-level pendencies use `null` for the constituent fields.
+Entries are emitted in deterministic list order. A non-blocking Finding creates
+no pendency in its own revision, but its Report still causes
+`reverification_unrecorded` at a later revision until Story 4.4.
+
+The `pendencies` item is `absent` for an empty list and `present` otherwise.
+A malformed earlier Report, including any accepted schema, stops
+`record-report` with `PROFILE_REPOSITORY_INVALID` before it writes a new
+record. New Reports list earlier Report records in `reads` with their
+references and SHA-256 digests.
 
 The Review prompt requires exactly one UTF-8 JSON block between
 `BEDDEL-ASSESSMENT-BEGIN` and `BEDDEL-ASSESSMENT-END`. Its schema is
@@ -284,14 +311,16 @@ with its reference, SHA-256 and content. It performs no Gate, Review or write.
 Until a Report exists it returns `report: null` and an empty `history`.
 
 A Finding has `source`, `association`, `class`, `affected_point`, `criterion`,
-`kind`, `between` and `detail`. `association` is `requirement` when the entry
-names a Requirement ID, otherwise `unknown`; `kind` is the Requirement kind or
-`null` for an unknown association. Each `between` value contains two distinct
-members of `specification`, `implementation`, `validation` and `affected_point`.
+`kind`, `between`, `detail` and `classification`. `association` is
+`requirement` when the entry names a Requirement ID, otherwise `unknown`; `kind`
+is the Requirement kind or `null` for an unknown association. Each `between`
+value contains two distinct members of `specification`, `implementation`,
+`validation` and `affected_point`.
 
 The `divergences` item is `present` when at least one Finding exists. It is
 `absent` only when the assessment state list is non-empty and every state is
 `no_divergence`; otherwise it is `not_assessed`. A Review assessment block with
 extra keys, duplicate JSON keys, invalid values or a Markdown code fence inside
-the markers is unreadable. Marker lines may carry trailing whitespace only. Unreadable blocks produce no Review Findings and leave applicable
-Review states indeterminate.
+the markers is unreadable. Marker lines may carry trailing whitespace only.
+Unreadable blocks produce no Review Findings and leave applicable Review states
+indeterminate.

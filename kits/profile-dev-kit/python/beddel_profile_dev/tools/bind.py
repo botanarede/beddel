@@ -134,6 +134,13 @@ def _snapshot(
     obligations = sorted(
         (o.class_id, o.affected_point_id, o.criterion_id) for o in inventory.obligations
     )
+    blocking = dict(inventory.blocking)
+    criteria: list[dict[str, Any]] = []
+    for criterion_id, description in sorted(inventory.criteria):
+        criterion: dict[str, Any] = {"id": criterion_id, "description": description}
+        if criterion_id in blocking:
+            criterion["blocking"] = blocking[criterion_id]
+        criteria.append(criterion)
     return {
         "schema": SNAPSHOT_SCHEMA,
         "revision": revision,
@@ -144,9 +151,7 @@ def _snapshot(
             {"id": c.id, "kind": c.kind, "path": c.path}
             for c in sorted(inventory.components, key=lambda c: c.id)
         ],
-        "criteria": [
-            {"id": i, "description": d} for i, d in sorted(inventory.criteria)
-        ],
+        "criteria": criteria,
         "obligations": [
             {
                 "class": c,

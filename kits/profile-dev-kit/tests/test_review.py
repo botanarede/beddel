@@ -104,7 +104,15 @@ OUTCOME_KEYS = {
     "status",
     "review_ref",
 }
-FORBIDDEN = ("verdict", "evidence", "finding", "pendency", "passed", "satisfied")
+FORBIDDEN = (
+    "verdict",
+    "classification",
+    "evidence",
+    "finding",
+    "pendency",
+    "passed",
+    "satisfied",
+)
 KIT_ROOT = Path(__file__).resolve().parent.parent
 
 
