@@ -195,7 +195,7 @@ def test_ratify_then_verify_change_passes_all_nine_steps(tmp_path: Path) -> None
     report = json.loads(report_path.read_text())
     assert report["attempt"] == 1
     assert report["attempt_state"] == "valid"
-    assert report["schema"] == "profile-dev/verification-report/3"
+    assert report["schema"] == "profile-dev/verification-report/4"
     assert report["verdict"] == "has pendency"
     assert report["items"]["divergences"]["status"] == "not_assessed"
     assert len(report["assessments"]) == len(impact["required_evidence"])
@@ -719,3 +719,42 @@ def test_read_report_returns_latest_and_history_without_writing(tmp_path: Path) 
         if path.is_file()
     }
     assert after == before
+
+
+def test_beddel_run_reverifies_a_gate_finding_at_the_corrected_revision(
+    tmp_path: Path,
+) -> None:
+    repo = _fixture(tmp_path)
+    _ratify(repo, tmp_path)
+    base = commit_all(repo)
+    (repo / "src" / "api.py").write_text("x = 2\n")
+    first = commit_all(repo, "failing revision")
+    first_result = _run(
+        str(repo),
+        tmp_path,
+        revision=first,
+        base=base,
+        STUB_EXIT_PYTEST="1",
+    )
+    assert first_result.returncode == 0, first_result.stderr
+
+    (repo / "src" / "api.py").write_text("x = 3\n")
+    second = commit_all(repo, "corrected revision")
+    second_result = _run(str(repo), tmp_path, revision=second, base=base)
+    assert second_result.returncode == 0, second_result.stderr
+
+    report_path = _records(repo) / "changes" / "c1" / "report" / "2.json"
+    report = json.loads(report_path.read_text())
+    assert report["schema"] == "profile-dev/verification-report/4"
+    gate_links = [
+        link
+        for link in report["reverification"]["links"]
+        if link["class"] == "gate-unit"
+    ]
+    assert gate_links
+    assert all(link["result"] == "resolved" for link in gate_links)
+    assert all(
+        f"/revisions/{first}/" not in item["ref"]
+        for item in report["reads"]
+        if "ref" in item
+    )

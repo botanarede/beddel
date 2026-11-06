@@ -116,7 +116,7 @@ def test_full_report_has_seven_items_and_sorted_reads(
     report = json.loads(path.read_text())
     _assert_no_forbidden_keys(report)
     assert report["record"] == 1
-    assert report["schema"] == "profile-dev/verification-report/3"
+    assert report["schema"] == "profile-dev/verification-report/4"
     assert report["attempt"] == attempt
     assert report["attempt_state"] == "valid"
     assert set(report["items"]) == {
@@ -469,7 +469,7 @@ def test_read_report_preserves_mixed_schema_history(
     result = profile_read_report(str(repo), "c1")
     assert [item["content"]["schema"] for item in result["history"]] == [
         "profile-dev/verification-report/1",
-        "profile-dev/verification-report/3",
+        "profile-dev/verification-report/4",
     ]
     assert result["history"][0]["content"] == old
     assert (report_dir / "1.json").read_bytes() == old_raw
@@ -514,10 +514,27 @@ def test_read_report_preserves_valid_schema_two_history_and_reverification(
     assert (report_dir / "1.json").read_bytes() == raw
     assert written["record"] == 2
     report = json.loads((records / written["report"]).read_text())
-    assert report["schema"] == "profile-dev/verification-report/3"
+    assert report["reverification"] == {
+        "status": "recorded",
+        "earlier_revision": "b" * 40,
+        "links": [
+            {
+                "report_ref": "changes/c1/report/1.json",
+                "finding_index": 0,
+                "association": None,
+                "class": None,
+                "affected_point": None,
+                "criterion": None,
+                "kind": None,
+                "state": None,
+                "result": "not_reverified",
+                "reason": "outside_scope",
+            }
+        ],
+    }
     reverification = report["items"]["pendencies"]["value"][-1]
-    assert reverification["reason"] == "reverification_unrecorded"
-    assert reverification["revisions"] == ["b" * 40]
+    assert reverification["reason"] == "earlier_finding_not_reverified"
+    assert reverification["link_index"] == 0
 
 
 @pytest.mark.parametrize(
@@ -1118,24 +1135,22 @@ def test_earlier_revision_finding_requires_reverification(
     report = json.loads(
         (records_root(repo, "records/profile-dev") / result["report"]).read_text()
     )
-    assert report["items"]["pendencies"]["value"][-1] == {
-        "reason": "reverification_unrecorded",
-        "class": None,
-        "affected_point": None,
-        "criterion": None,
-        "kind": None,
-        "revisions": [first_revision],
-    }
-    records = records_root(repo, "records/profile-dev")
-    earlier_report = records / "changes" / "c1" / "report" / "1.json"
+    assert report["reverification"]["status"] == "recorded"
+    assert report["reverification"]["earlier_revision"] == first_revision
+    assert report["reverification"]["links"][0]["result"] == "resolved"
+    assert report["reverification"]["links"][0]["state"] == "no_divergence"
+    earlier_report = (
+        records_root(repo, "records/profile-dev") / "changes/c1/report/1.json"
+    )
     assert {
         "ref": "changes/c1/report/1.json",
         "sha256": hashlib.sha256(earlier_report.read_bytes()).hexdigest(),
     } in report["reads"]
-    assert report["verdict"] == "has pendency"
+    assert report["items"]["pendencies"] == {"status": "absent"}
+    assert report["verdict"] == "consistent"
 
 
-def test_invalid_earlier_schema_three_is_rejected_before_write(
+def test_invalid_earlier_schema_four_is_rejected_before_write(
     tmp_path: Path,
 ) -> None:
     repo, _, revision = _prepare(tmp_path)
@@ -1145,7 +1160,7 @@ def test_invalid_earlier_schema_three_is_rejected_before_write(
     (report_dir / "1.json").write_text(
         json.dumps(
             {
-                "schema": "profile-dev/verification-report/3",
+                "schema": "profile-dev/verification-report/4",
                 "record": 1,
                 "change_id": "c1",
                 "verdict": "maybe",
@@ -1238,9 +1253,9 @@ def test_earlier_non_blocking_finding_still_requires_reverification(
     report = json.loads(
         (records_root(repo, "records/profile-dev") / second["report"]).read_text()
     )
-    assert report["items"]["pendencies"]["value"][-1]["reason"] == (
-        "reverification_unrecorded"
-    )
+    assert report["reverification"]["links"][0]["result"] == "resolved"
+    assert report["items"]["pendencies"] == {"status": "absent"}
+    assert report["verdict"] == "consistent"
 
 
 @pytest.mark.parametrize(
@@ -1357,3 +1372,251 @@ def test_deeply_nested_evidence_is_unrecorded_without_recursion_error(
         item["reason"] == "evidence_unrecorded"
         for item in report["items"]["pendencies"]["value"]
     )
+
+
+def _prepare_next_revision(repo: Path, base: str) -> str:
+    (repo / "src" / "api.py").write_text("x = 3\n")
+    revision = commit_all(repo, "next revision")
+    profile_record_change(str(repo), "c1", base, revision)
+    profile_bind_inventory(str(repo), revision, "v1")
+    profile_derive_impact(str(repo), "c1", revision)
+    return revision
+
+
+def test_current_finding_is_still_divergent_in_reverification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base, first_revision = _prepare(tmp_path)
+    _run_results(repo, first_revision, monkeypatch, _review_divergence_output())
+    profile_record_report(str(repo), "c1", first_revision)
+    second_revision = _prepare_next_revision(repo, base)
+    _run_results(repo, second_revision, monkeypatch, _review_divergence_output())
+    result = profile_record_report(str(repo), "c1", second_revision)
+    report = json.loads(
+        (records_root(repo, "records/profile-dev") / result["report"]).read_text()
+    )
+    assert report["reverification"]["links"][0]["result"] == "still_divergent"
+    assert report["verdict"] == "has pendency"
+    assert any(
+        item["reason"] == "finding_unclassified"
+        for item in report["items"]["pendencies"]["value"]
+    )
+    assert not any(
+        item["reason"] == "earlier_finding_not_reverified"
+        for item in report["items"]["pendencies"]["value"]
+    )
+
+
+def test_indeterminate_current_review_is_not_reverified(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base, first_revision = _prepare(tmp_path)
+    _run_results(repo, first_revision, monkeypatch, _review_divergence_output())
+    profile_record_report(str(repo), "c1", first_revision)
+    second_revision = _prepare_next_revision(repo, base)
+    monkeypatch.setattr(cfg, "GATE_COMMANDS", (("git", "status", "--porcelain"),))
+    attempt = profile_open_attempt(str(repo), "c1", second_revision)["attempt"]
+    profile_run_gate(str(repo), "c1", second_revision, attempt)
+    monkeypatch.setattr(
+        _adapters,
+        "get_review_adapter",
+        lambda agent_name, *, timeout_seconds: FakeReviewAdapter("timeout"),
+    )
+    asyncio.run(profile_run_review(str(repo), "c1", second_revision, attempt))
+    profile_capture_evidence(str(repo), "c1", second_revision, attempt)
+    result = profile_record_report(str(repo), "c1", second_revision)
+    report = json.loads(
+        (records_root(repo, "records/profile-dev") / result["report"]).read_text()
+    )
+    assert report["reverification"]["links"][0]["result"] == "not_reverified"
+    assert report["reverification"]["links"][0]["reason"] == "indeterminate"
+    assert any(
+        item["reason"] == "earlier_finding_not_reverified"
+        for item in report["items"]["pendencies"]["value"]
+    )
+
+
+def test_rerun_at_earlier_revision_does_not_clear_its_findings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base, first_revision = _prepare(tmp_path)
+    _run_results(repo, first_revision, monkeypatch, _review_divergence_output())
+    profile_record_report(str(repo), "c1", first_revision)
+    _run_results(repo, first_revision, monkeypatch)
+    profile_record_report(str(repo), "c1", first_revision)
+    second_revision = _prepare_next_revision(repo, base)
+    _run_results(repo, second_revision, monkeypatch)
+    result = profile_record_report(str(repo), "c1", second_revision)
+    report = json.loads(
+        (records_root(repo, "records/profile-dev") / result["report"]).read_text()
+    )
+    assert report["reverification"]["earlier_revision"] == first_revision
+    assert report["reverification"]["links"]
+    assert all(
+        link["result"] == "resolved" for link in report["reverification"]["links"]
+    )
+
+
+def test_rerun_at_current_revision_keeps_the_earlier_reverification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base, first_revision = _prepare(tmp_path)
+    _run_results(repo, first_revision, monkeypatch, _review_divergence_output())
+    profile_record_report(str(repo), "c1", first_revision)
+    second_revision = _prepare_next_revision(repo, base)
+    _run_results(repo, second_revision, monkeypatch)
+    profile_record_report(str(repo), "c1", second_revision)
+    _run_results(repo, second_revision, monkeypatch)
+    result = profile_record_report(str(repo), "c1", second_revision)
+    report = json.loads(
+        (records_root(repo, "records/profile-dev") / result["report"]).read_text()
+    )
+    assert report["reverification"]["earlier_revision"] == first_revision
+    assert report["reverification"]["links"]
+    assert all(
+        link["result"] == "resolved" for link in report["reverification"]["links"]
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing_reverification",
+        "earlier_revision_not_sha",
+        "earlier_revision_same_revision",
+        "empty_links",
+        "wrong_link_keys",
+        "bad_report_ref",
+        "negative_finding_index",
+        "boolean_finding_index",
+        "unknown_result",
+        "reason_result_mismatch",
+        "outside_scope_with_state",
+        "resolved_with_wrong_state",
+        "not_applicable_extra_keys",
+    ],
+)
+def test_malformed_schema_four_reverification_writes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str
+) -> None:
+    repo, _, revision = _prepare(tmp_path)
+    _run_results(repo, revision, monkeypatch)
+    first = profile_record_report(str(repo), "c1", revision)
+    records = records_root(repo, "records/profile-dev")
+    report_path = records / first["report"]
+    content = json.loads(report_path.read_text())
+    link = {
+        "report_ref": "changes/c1/report/1.json",
+        "finding_index": 0,
+        "association": "requirement",
+        "class": "gate-unit",
+        "affected_point": "api",
+        "criterion": "tests-pass",
+        "kind": "gate",
+        "state": "no_divergence",
+        "result": "resolved",
+        "reason": None,
+    }
+    reverification = {
+        "status": "recorded",
+        "earlier_revision": "b" * 40,
+        "links": [link],
+    }
+    if mutation == "missing_reverification":
+        del content["reverification"]
+    elif mutation == "earlier_revision_not_sha":
+        reverification["earlier_revision"] = "not-a-sha"
+        content["reverification"] = reverification
+    elif mutation == "earlier_revision_same_revision":
+        reverification["earlier_revision"] = revision
+        content["reverification"] = reverification
+    elif mutation == "empty_links":
+        reverification["links"] = []
+        content["reverification"] = reverification
+    elif mutation == "wrong_link_keys":
+        del link["reason"]
+        content["reverification"] = reverification
+    elif mutation == "bad_report_ref":
+        link["report_ref"] = "changes/other/report/1.json"
+        content["reverification"] = reverification
+    elif mutation == "negative_finding_index":
+        link["finding_index"] = -1
+        content["reverification"] = reverification
+    elif mutation == "boolean_finding_index":
+        link["finding_index"] = True
+        content["reverification"] = reverification
+    elif mutation == "unknown_result":
+        link["result"] = "unknown"
+        content["reverification"] = reverification
+    elif mutation == "reason_result_mismatch":
+        link["reason"] = "indeterminate"
+        content["reverification"] = reverification
+    elif mutation == "outside_scope_with_state":
+        link["result"] = "not_reverified"
+        link["reason"] = "outside_scope"
+        link["state"] = "indeterminate"
+        content["reverification"] = reverification
+    elif mutation == "resolved_with_wrong_state":
+        link["state"] = "divergent"
+        content["reverification"] = reverification
+    else:
+        content["reverification"] = {"status": "not_applicable", "extra": True}
+    report_path.write_text(json.dumps(content))
+    before = report_path.read_bytes()
+
+    with pytest.raises(ProfileError) as info:
+        profile_record_report(str(repo), "c1", revision)
+
+    assert info.value.code == PROFILE_REPOSITORY_INVALID
+    assert report_path.read_bytes() == before
+    assert not (records / "changes" / "c1" / "report" / "2.json").exists()
+
+
+def test_valid_schema_three_is_preserved_and_accepted_as_earlier_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base, first_revision = _prepare(tmp_path)
+    _run_results(repo, first_revision, monkeypatch, _review_divergence_output())
+    first = profile_record_report(str(repo), "c1", first_revision)
+    records = records_root(repo, "records/profile-dev")
+    first_path = records / first["report"]
+    content = json.loads(first_path.read_text())
+    content["schema"] = "profile-dev/verification-report/3"
+    del content["reverification"]
+    raw = json.dumps(content, separators=(",", ":")).encode()
+    first_path.write_bytes(raw)
+
+    second_revision = _prepare_next_revision(repo, base)
+    _run_results(repo, second_revision, monkeypatch)
+    second = profile_record_report(str(repo), "c1", second_revision)
+    result = profile_read_report(str(repo), "c1")
+
+    assert first_path.read_bytes() == raw
+    assert result["history"][0]["content"] == content
+    report = json.loads((records / second["report"]).read_text())
+    assert report["schema"] == "profile-dev/verification-report/4"
+    assert report["reverification"]["earlier_revision"] == first_revision
+    assert report["reverification"]["links"][0]["result"] == "resolved"
+
+
+def test_malformed_schema_three_is_rejected_before_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, _, revision = _prepare(tmp_path)
+    _run_results(repo, revision, monkeypatch)
+    first = profile_record_report(str(repo), "c1", revision)
+    records = records_root(repo, "records/profile-dev")
+    report_path = records / first["report"]
+    content = json.loads(report_path.read_text())
+    content["schema"] = "profile-dev/verification-report/3"
+    content.pop("reverification")
+    content["verdict"] = "maybe"
+    report_path.write_text(json.dumps(content))
+    before = report_path.read_bytes()
+
+    with pytest.raises(ProfileError) as info:
+        profile_record_report(str(repo), "c1", revision)
+
+    assert info.value.code == PROFILE_REPOSITORY_INVALID
+    assert report_path.read_bytes() == before
+    assert not (records / "changes" / "c1" / "report" / "2.json").exists()

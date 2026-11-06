@@ -181,3 +181,24 @@ def test_read_report_workflow_is_one_allowlisted_step() -> None:
     assert [s.id for s in wf.steps] == ["read"]
     assert wf.steps[0].config["tool"] == "profile_read_report"
     assert wf.steps[0].execution_strategy.type is StrategyType.FAIL
+
+
+def test_no_workflow_declares_mcp_servers_or_mcp_server_steps() -> None:
+    def walk(value: object) -> Iterator[dict[object, object]]:
+        if isinstance(value, dict):
+            yield value
+            for nested in value.values():
+                yield from walk(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                yield from walk(nested)
+
+    for path in sorted(WORKFLOWS_DIR.glob("*.yaml")):
+        document = yaml.safe_load(path.read_text())
+        assert isinstance(document, dict)
+        assert "mcp_servers" not in document
+        assert all(
+            item.get("primitive") != "mcp_server"
+            for item in walk(document)
+            if isinstance(item, dict)
+        ), path.name

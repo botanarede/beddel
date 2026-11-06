@@ -7,7 +7,7 @@ from typing import Any
 
 __all__ = ["REPORT_SCHEMA", "build_items"]
 
-REPORT_SCHEMA = "profile-dev/verification-report/3"
+REPORT_SCHEMA = "profile-dev/verification-report/4"
 _REQUIREMENT_KEYS = ("class", "affected_point", "criterion")
 _MISSING = object()
 

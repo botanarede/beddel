@@ -83,7 +83,7 @@ def _derive(
     evidence: list[dict[str, Any]] | None = None,
     assessments: list[dict[str, Any]] | None = None,
     findings: list[dict[str, Any]] | None = None,
-    earlier: list[str] | None = None,
+    links: list[dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], str]:
     return derive_verdict(
         REQUIREMENTS,
@@ -91,7 +91,7 @@ def _derive(
         EVIDENCE if evidence is None else evidence,
         CLEAN_ASSESSMENTS if assessments is None else assessments,
         [] if findings is None else findings,
-        [] if earlier is None else earlier,
+        [] if links is None else links,
     )
 
 
@@ -197,19 +197,48 @@ def test_missing_attempt_and_evidence_are_both_reported() -> None:
     assert verdict == "has pendency"
 
 
-def test_earlier_findings_require_reverification_and_sort_revisions() -> None:
-    pendencies, verdict = _derive(earlier=["b" * 40, "a" * 40, "b" * 40])
-    assert pendencies == [
-        {
-            "reason": "reverification_unrecorded",
-            "class": None,
-            "affected_point": None,
-            "criterion": None,
-            "kind": None,
-            "revisions": ["a" * 40, "b" * 40],
-        }
-    ]
+def test_not_reverified_link_is_a_pendency_after_finding_pendencies() -> None:
+    link = {
+        "report_ref": "changes/c1/report/1.json",
+        "finding_index": 0,
+        "association": "requirement",
+        "class": "gate-unit",
+        "affected_point": "api",
+        "criterion": "tests-pass",
+        "kind": "gate",
+        "state": "indeterminate",
+        "result": "not_reverified",
+        "reason": "indeterminate",
+    }
+    pendencies, verdict = _derive(
+        findings=[finding(classification="blocking")], links=[link]
+    )
+    assert pendencies[-1] == {
+        "reason": "earlier_finding_not_reverified",
+        "class": "gate-unit",
+        "affected_point": "api",
+        "criterion": "tests-pass",
+        "kind": "gate",
+        "link_index": 0,
+    }
     assert verdict == "has pendency"
+
+
+def test_resolved_and_still_divergent_links_add_no_pendency() -> None:
+    for result in ("resolved", "still_divergent"):
+        pendencies, verdict = _derive(
+            links=[
+                {
+                    "class": "gate-unit",
+                    "affected_point": "api",
+                    "criterion": "tests-pass",
+                    "kind": "gate",
+                    "result": result,
+                }
+            ]
+        )
+        assert pendencies == []
+        assert verdict == "consistent"
 
 
 def test_evidence_without_a_mapping_record_is_unrecorded() -> None:

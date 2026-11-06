@@ -115,25 +115,20 @@ def _assessment_map(
     return result
 
 
-def _revision_values(earlier_revisions: Iterable[Any]) -> list[str]:
-    values: set[str] = set()
-    for item in earlier_revisions:
-        if isinstance(item, str):
-            values.add(item)
-        elif isinstance(item, Mapping) and isinstance(item.get("revision"), str):
-            values.add(item["revision"])
-    return sorted(values)
-
-
 def derive_verdict(
     requirements: Iterable[Mapping[str, Any]] | Mapping[object, Mapping[str, Any]],
     attempt_state: str,
     evidence: Iterable[Mapping[str, Any]] | Mapping[object, Mapping[str, Any]],
     assessments: Iterable[Mapping[str, Any]],
     findings: Iterable[Mapping[str, Any]],
-    earlier_revisions: Iterable[Any],
+    links: Iterable[Mapping[str, Any]],
 ) -> tuple[list[dict[str, Any]], str]:
-    """Return deterministic Pendencies and the binary Report Verdict."""
+    """Return deterministic Pendencies and the binary Report Verdict.
+
+    ``links`` contains the pure Re-verification result for each earlier Finding;
+    new records use ``earlier_finding_not_reverified`` instead of the retired
+    ``reverification_unrecorded`` reason.
+    """
     ordered = _requirements(requirements)
     evidence_keys = _evidence_keys(evidence)
     assessment_states = _assessment_map(assessments)
@@ -172,8 +167,14 @@ def derive_verdict(
                 )
             )
 
-    revisions = _revision_values(earlier_revisions)
-    if revisions:
-        pendencies.append(_pendency("reverification_unrecorded", revisions=revisions))
+    for link_index, link in enumerate(links):
+        if link.get("result") == "not_reverified":
+            pendencies.append(
+                _pendency(
+                    "earlier_finding_not_reverified",
+                    link,
+                    link_index=link_index,
+                )
+            )
 
     return pendencies, "consistent" if not pendencies else "has pendency"
