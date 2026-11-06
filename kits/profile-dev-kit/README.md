@@ -5,19 +5,27 @@ Development profile kit for Beddel. It provides the entry workflow
 the target path is a Git work tree, the gate executables resolve on `PATH`, and
 the required environment keys are present (key names only, never values).
 
-Status: Story 4.4. Entry workflows `verify-change`, `read-report`,
-`ratify-inventory` and `declare-non-applicability`; tools `profile_preflight`,
+Status: Story 5.2. Entry workflows `verify-change`, `read-report`,
+`ratify-inventory`, `declare-non-applicability`, `record-approval-decision`,
+`approve-change` and `read-approval`; tools `profile_preflight`,
 `profile_ratify_inventory`, `profile_bind_inventory`, `profile_record_change`,
 `profile_derive_impact`, `profile_open_attempt`, `profile_run_gate`,
 `profile_run_review`, `profile_capture_evidence`, `profile_record_report`,
-`profile_read_report` and `profile_declare_non_applicability`.
+`profile_read_report`, `profile_declare_non_applicability`,
+`profile_record_approval_decision`, `profile_approve_change` and
+`profile_read_approval`.
 
 ## Layout
 
 ```
 kit.yaml                         manifest (documentation-only config block)
 python/beddel_profile_dev/       Python module (tools, config)
-workflows/                       entry workflows
+python/beddel_profile_dev/tools/approval.py
+                                 Approval verification, persistence and read-back
+python/beddel_profile_dev/tools/approval_decision.py
+                                 Approval decision transport
+workflows/                       entry workflows, including
+                                 record-approval-decision and read-approval
 tests/                           kit tests (no network, no real credential)
 ```
 
@@ -334,21 +342,62 @@ the markers is unreadable. Marker lines may carry trailing whitespace only.
 Unreadable blocks produce no Review Findings and leave applicable Review states
 indeterminate.
 
-## Change Approval (Story 5.1)
+## Change Approval (Stories 5.1 and 5.2)
+
+Approval has two human-controlled steps. `record-approval-decision` invokes
+`profile_record_approval_decision` with `repo_path`, `change_id`, `revision`
+and `actor`. It writes one YAML decision under
+`.beddel-profile/approvals/<change_id>/<report-ordinal>.yaml` with exactly
+these fields:
+
+- `schema: profile-dev/approval-decision/1`
+- `change_id`, `revision`, `report`, `report_sha256`
+- `approved_by`, `approved_at`
+
+All values must remain quoted YAML strings. The tool never commits the file;
+the maintainer commits it so its Git history is auditable. The repository must
+not gitignore `.beddel-profile/`, or the decision cannot be committed and
+verified. After committing, obtain the full decision commit SHA with
+`git rev-parse HEAD` and pass that value as `decision_commit`.
 
 `approve-change` invokes `profile_approve_change` with `repo_path`, `change_id`,
-`revision` and the explicit `actor`. It revalidates the recorded Change and
-revision link, the latest `/4` Report, its authoritative attempt, every digest
-in `reads`, and the Verdict derived by the same canonical use case as
-`profile_record_report`. It never writes a record or accepts an Approval. The
-workflow is separate from `verify-change`; `verify-change` has no Approval step.
+`revision`, `actor` and `decision_commit`. It revalidates the recorded Change
+and revision link, the latest `/4` Report, its authoritative attempt, every
+`reads` digest and the Verdict derived by the same canonical use case as
+`profile_record_report`. It then reads the decision only from the named commit,
+checks that the commit is reachable from `HEAD`, and writes one create-only
+`changes/<change_id>/approval.json` record with exactly these fields:
 
-Every refusal raises `PROFILE_APPROVAL_REFUSED` with one of these reason codes;
-an invalid repository path or records root keeps `PROFILE_REPOSITORY_INVALID`.
+- `schema: profile-dev/approval/1`
+- `change_id`, `revision`, `report`, `report_sha256`, `attempt`
+- `approved_by`
+- `proof: {commit, path, sha256}`
+
+`proof.commit` is the full commit SHA resolved from `decision_commit`; `proof.path` is the
+decision path; and `proof.sha256` is the decision blob digest. The input actor
+must equal `approved_by`; no commit author or environment identity is copied
+into the record.
+
+`read-approval` invokes `profile_read_approval` with `repo_path` and
+`change_id`. It returns the stored Approval or `null` without writing records.
+The workflows are separate from `verify-change`; `verify-change` has no
+Approval step.
+
+Refusal checks run in this order. The decision transport checks
 `id.invalid`, `actor.invalid`, `revision.invalid`, `change.unrecorded`,
-`revision.unlinked`, `report.malformed`, `report.absent`, `report.outdated`,
+`report.malformed`, `report.absent`, `revision.not_reported`,
+`decision.exists` for a work-tree path or symlink, `history.unreadable`,
+and then `decision.exists` for an index, `HEAD`-history or create-only duplicate. The Approval
+use case checks `id.invalid`, `actor.invalid`, `revision.invalid`,
+`approval.exists`, then `change.unrecorded`, `revision.unlinked`,
+`report.malformed`, `report.absent`, `report.outdated`,
 `revision.not_reported`, `attempt.superseded`, `digest.mismatch`,
-`verdict.underivable`, `verdict.mismatch`, `verdict.has_pendency` or
-`approval.unaccepted`. Refusals write nothing, including when the revalidated
-Verdict is `consistent`; no form of Approval decision is accepted until Story
-5.2.
+`verdict.underivable`, `verdict.mismatch`, `verdict.has_pendency`,
+then `decision.commit_invalid`, `decision.unreachable`, `decision.absent`,
+`decision.malformed`, `decision.unsupported`, `decision.actor_invalid`,
+`decision.target_mismatch`, `decision.digest_mismatch`, `actor.mismatch`, and
+`approval.exists` when the create-only write finds an existing record.
+
+Every refusal raises `PROFILE_APPROVAL_REFUSED` and writes nothing. An invalid
+repository path or records root keeps `PROFILE_REPOSITORY_INVALID`.
+Ratification and Approval remain separate human acts.

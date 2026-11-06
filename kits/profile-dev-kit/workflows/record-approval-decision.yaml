@@ -1,0 +1,23 @@
+id: record-approval-decision
+name: Record Approval Decision
+description: Records an Approval decision for the maintainer to commit.
+version: "1.0"
+requires_kits:
+  - profile-dev-kit
+allowed_tools:
+  - profile_record_approval_decision
+inputs:
+  - repo_path
+  - change_id
+  - revision
+  - actor
+steps:
+  - id: record
+    primitive: tool
+    config:
+      tool: profile_record_approval_decision
+      arguments:
+        repo_path: "$input.repo_path"
+        change_id: "$input.change_id"
+        revision: "$input.revision"
+        actor: "$input.actor"

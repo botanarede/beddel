@@ -14,6 +14,8 @@ WORKFLOW_PATH = WORKFLOWS_DIR / "verify-change.yaml"
 RATIFY_PATH = WORKFLOWS_DIR / "ratify-inventory.yaml"
 READ_REPORT_PATH = WORKFLOWS_DIR / "read-report.yaml"
 APPROVE_PATH = WORKFLOWS_DIR / "approve-change.yaml"
+RECORD_DECISION_PATH = WORKFLOWS_DIR / "record-approval-decision.yaml"
+READ_APPROVAL_PATH = WORKFLOWS_DIR / "read-approval.yaml"
 
 
 def _load() -> Workflow:
@@ -106,7 +108,7 @@ def test_allowlist_equals_the_tools_the_steps_name() -> None:
         "profile_capture_evidence",
         "profile_record_report",
     ]
-    assert len(list(WORKFLOWS_DIR.glob("*.yaml"))) == 5
+    assert len(list(WORKFLOWS_DIR.glob("*.yaml"))) == 7
 
 
 def test_review_step_outlives_the_largest_accepted_review_budget() -> None:
@@ -209,9 +211,44 @@ def test_approve_workflow_is_one_allowlisted_step() -> None:
     wf = WorkflowParser.parse(APPROVE_PATH.read_text())
     assert wf.id == "approve-change"
     assert wf.requires_kits == ["profile-dev-kit"]
-    assert _raw_inputs(APPROVE_PATH) == ["repo_path", "change_id", "revision", "actor"]
+    assert _raw_inputs(APPROVE_PATH) == [
+        "repo_path",
+        "change_id",
+        "revision",
+        "actor",
+        "decision_commit",
+    ]
     assert wf.allowed_tools == ["profile_approve_change"]
     assert [s.id for s in wf.steps] == ["approve"]
     assert wf.steps[0].config["tool"] == "profile_approve_change"
+    assert "timeout" not in wf.steps[0].config
+    assert wf.steps[0].execution_strategy.type is StrategyType.FAIL
+
+
+def test_record_approval_decision_workflow_is_one_allowlisted_step() -> None:
+    wf = WorkflowParser.parse(RECORD_DECISION_PATH.read_text())
+    assert wf.id == "record-approval-decision"
+    assert wf.requires_kits == ["profile-dev-kit"]
+    assert _raw_inputs(RECORD_DECISION_PATH) == [
+        "repo_path",
+        "change_id",
+        "revision",
+        "actor",
+    ]
+    assert wf.allowed_tools == ["profile_record_approval_decision"]
+    assert [s.id for s in wf.steps] == ["record"]
+    assert _tool_names(wf.steps) == {"profile_record_approval_decision"}
+    assert "timeout" not in wf.steps[0].config
+    assert wf.steps[0].execution_strategy.type is StrategyType.FAIL
+
+
+def test_read_approval_workflow_is_one_allowlisted_step() -> None:
+    wf = WorkflowParser.parse(READ_APPROVAL_PATH.read_text())
+    assert wf.id == "read-approval"
+    assert wf.requires_kits == ["profile-dev-kit"]
+    assert _raw_inputs(READ_APPROVAL_PATH) == ["repo_path", "change_id"]
+    assert wf.allowed_tools == ["profile_read_approval"]
+    assert [s.id for s in wf.steps] == ["read"]
+    assert _tool_names(wf.steps) == {"profile_read_approval"}
     assert "timeout" not in wf.steps[0].config
     assert wf.steps[0].execution_strategy.type is StrategyType.FAIL

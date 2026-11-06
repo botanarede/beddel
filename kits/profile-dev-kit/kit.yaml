@@ -83,7 +83,15 @@ tools:
     category: profile
   - name: profile_approve_change
     target: "beddel_profile_dev.tools.approval:profile_approve_change"
-    description: "Revalidate a Change and refuse its Approval request"
+    description: "Revalidate a Change and accept its Approval from a committed decision"
+    category: profile
+  - name: profile_record_approval_decision
+    target: "beddel_profile_dev.tools.approval_decision:profile_record_approval_decision"
+    description: "Record an Approval decision for the maintainer to commit"
+    category: profile
+  - name: profile_read_approval
+    target: "beddel_profile_dev.tools.approval:profile_read_approval"
+    description: "Read the stored Change Approval without writing records"
     category: profile
 
 workflows:
@@ -101,7 +109,13 @@ workflows:
     description: Records the determination of non-applicability of one obligation with an absent target
   - name: approve-change
     path: workflows/approve-change.yaml
-    description: Revalidates a Change and refuses every Approval until Story 5.2 accepts a decision
+    description: Revalidates a Change and accepts Approval from a committed decision.
+  - name: record-approval-decision
+    path: workflows/record-approval-decision.yaml
+    description: Records an Approval decision for the maintainer to commit.
+  - name: read-approval
+    path: workflows/read-approval.yaml
+    description: Reads the stored Change Approval without writing records.
 
 targets:
   python:
@@ -135,6 +149,10 @@ targets:
         target: "beddel_profile_dev.tools.determine:profile_declare_non_applicability"
       - name: profile_approve_change
         target: "beddel_profile_dev.tools.approval:profile_approve_change"
+      - name: profile_record_approval_decision
+        target: "beddel_profile_dev.tools.approval_decision:profile_record_approval_decision"
+      - name: profile_read_approval
+        target: "beddel_profile_dev.tools.approval:profile_read_approval"
   typescript:
     status: unavailable
     unavailable_reason: >
