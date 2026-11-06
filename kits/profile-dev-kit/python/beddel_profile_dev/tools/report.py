@@ -31,6 +31,7 @@ from beddel_profile_dev.config import load_config
 from beddel_profile_dev.findings import derive_findings
 from beddel_profile_dev.inventory import is_valid_id
 from beddel_profile_dev.report import REPORT_SCHEMA, build_items
+from beddel_profile_dev.reverification import link_findings, select_earlier_findings
 from beddel_profile_dev.tools.bind import BINDING_SCHEMA, SNAPSHOT_SCHEMA
 from beddel_profile_dev.tools.change import CHANGE_REVISION_SCHEMA, CHANGE_SCHEMA
 from beddel_profile_dev.tools.evidence import EVIDENCE_SCHEMA
@@ -44,6 +45,7 @@ __all__ = ["REPORT_SCHEMA", "profile_read_report", "profile_record_report"]
 _REPORT_SCHEMAS = {
     "profile-dev/verification-report/1",
     "profile-dev/verification-report/2",
+    "profile-dev/verification-report/3",
     REPORT_SCHEMA,
 }
 _FULL_SHA = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
@@ -510,6 +512,101 @@ def _validated_determinations(
     return result
 
 
+def _valid_reverification(value: object, change_id: str, revision: str) -> bool:
+    if not isinstance(value, dict):
+        return False
+    status = value.get("status")
+    if status == "not_applicable":
+        return set(value) == {"status"}
+    if status != "recorded" or set(value) != {
+        "status",
+        "earlier_revision",
+        "links",
+    }:
+        return False
+    earlier_revision = value.get("earlier_revision")
+    links = value.get("links")
+    if (
+        not isinstance(earlier_revision, str)
+        or _FULL_SHA.fullmatch(earlier_revision) is None
+        or earlier_revision == revision
+        or not isinstance(links, list)
+        or not links
+    ):
+        return False
+    link_pattern = re.compile(
+        rf"changes/{re.escape(change_id)}/report/[1-9][0-9]*\.json"
+    )
+    expected = {
+        "report_ref",
+        "finding_index",
+        "association",
+        "class",
+        "affected_point",
+        "criterion",
+        "kind",
+        "state",
+        "result",
+        "reason",
+    }
+    for link in links:
+        if not isinstance(link, dict) or set(link) != expected:
+            return False
+        if (
+            not isinstance(link.get("report_ref"), str)
+            or link_pattern.fullmatch(link["report_ref"]) is None
+            or type(link.get("finding_index")) is not int
+            or link["finding_index"] < 0
+            or not (
+                isinstance(link.get("association"), str)
+                or link.get("association") is None
+            )
+            or not all(
+                isinstance(link.get(key), str) or link.get(key) is None
+                for key in ("class", "affected_point", "criterion", "kind", "state")
+            )
+            or link.get("result")
+            not in {"still_divergent", "resolved", "not_reverified"}
+        ):
+            return False
+        result = link["result"]
+        reason = link.get("reason")
+        state = link.get("state")
+        if result in {"still_divergent", "resolved"} and reason is not None:
+            return False
+        if result == "resolved" and state != "no_divergence":
+            return False
+        if result == "still_divergent" and not isinstance(state, str):
+            return False
+        if result == "not_reverified" and reason not in {
+            "indeterminate",
+            "outside_scope",
+        }:
+            return False
+        if reason == "indeterminate" and state in {"no_divergence", "divergent"}:
+            return False
+        if reason == "outside_scope" and state is not None:
+            return False
+        if state not in {
+            None,
+            "no_divergence",
+            "divergent",
+            "indeterminate",
+            "not_assessed",
+        }:
+            return False
+        parts = [link[key] for key in ("class", "affected_point", "criterion")]
+        all_strings = all(isinstance(part, str) for part in parts)
+        all_null = all(part is None for part in parts)
+        if reason == "outside_scope":
+            # An unknown or unreadable earlier Finding carries null constituents.
+            if not (all_strings or (all_null and link["kind"] is None)):
+                return False
+        elif link["association"] != "requirement" or not all_strings:
+            return False
+    return True
+
+
 def _validate_report_content(
     content: object, ordinal: int, change_id: str
 ) -> dict[str, Any]:
@@ -520,18 +617,19 @@ def _validate_report_content(
         raise _invalid_repo()
     if type(content.get("record")) is not int or content.get("record") != ordinal:
         raise _invalid_repo()
-    if content.get("change_id") != change_id:
+    if (
+        not isinstance(content.get("change_id"), str)
+        or content.get("change_id") != change_id
+        or not isinstance(content.get("revision"), str)
+        or _FULL_SHA.fullmatch(content["revision"]) is None
+    ):
         raise _invalid_repo()
     if schema in {
         "profile-dev/verification-report/2",
-        REPORT_SCHEMA,
+        "profile-dev/verification-report/3",
+        "profile-dev/verification-report/4",
     }:
         if not isinstance(content.get("assessments"), list):
-            raise _invalid_repo()
-        if (
-            not isinstance(content.get("revision"), str)
-            or _FULL_SHA.fullmatch(content["revision"]) is None
-        ):
             raise _invalid_repo()
         items = content.get("items")
         if not isinstance(items, dict):
@@ -550,7 +648,10 @@ def _validate_report_content(
             or (divergences.get("status") != "present" and "value" in divergences)
         ):
             raise _invalid_repo()
-    if schema == REPORT_SCHEMA:
+    if schema in {
+        "profile-dev/verification-report/3",
+        "profile-dev/verification-report/4",
+    }:
         items = content.get("items")
         if not isinstance(items, dict):
             raise _invalid_repo()
@@ -570,6 +671,10 @@ def _validate_report_content(
             != ("consistent" if pendencies["status"] == "absent" else "has pendency")
         ):
             raise _invalid_repo()
+    if schema == "profile-dev/verification-report/4" and not _valid_reverification(
+        content.get("reverification"), change_id, content["revision"]
+    ):
+        raise _invalid_repo()
     return content
 
 
@@ -632,15 +737,7 @@ def profile_record_report(
     revision_rel = f"changes/{change_id}/revisions/{sha}"
     base, snapshot, impact, impact_raw, _, _ = _load_scope(reader, repo, change_id, sha)
     history = _report_history(reader, records, change_id)
-    earlier_revisions = [
-        content["revision"]
-        for _, content in history
-        if content.get("revision") != sha
-        and isinstance(content.get("revision"), str)
-        and isinstance(content.get("items"), dict)
-        and isinstance(content["items"].get("divergences"), dict)
-        and content["items"]["divergences"].get("status") == "present"
-    ]
+    earlier_revision, earlier = select_earlier_findings(history, sha, change_id)
     attempt = _latest_attempt(records, revision_rel)
     attempt_state = "none"
     attempt_record: dict[str, Any] | None = None
@@ -693,13 +790,19 @@ def profile_record_report(
         requirements, attempt_state, validated, review_output
     )
     classified_findings = classify_findings(findings, snapshot)
+    reverification_links = link_findings(
+        earlier,
+        requirements,
+        assessments,
+        classified_findings,
+    )
     pendencies, verdict = derive_verdict(
         requirements,
         attempt_state,
         validated,
         assessments,
         classified_findings,
-        earlier_revisions,
+        reverification_links,
     )
     items = build_items(
         impact,
@@ -711,6 +814,17 @@ def profile_record_report(
         assessments,
         pendencies,
     )
+    reverification = (
+        {"status": "not_applicable"}
+        if earlier_revision is None
+        else {
+            "status": "recorded",
+            "earlier_revision": earlier_revision,
+            "links": reverification_links,
+        }
+    )
+    if not _valid_reverification(reverification, change_id, sha):
+        raise _invalid_repo()
     report_without_ordinal = {
         "schema": REPORT_SCHEMA,
         "record": 0,
@@ -723,6 +837,7 @@ def profile_record_report(
         "items": items,
         "assessments": assessments,
         "verdict": verdict,
+        "reverification": reverification,
     }
     report_rel = f"changes/{change_id}/report"
     ordinal = _next_report(records, report_rel)
@@ -739,6 +854,7 @@ def profile_record_report(
                 "attempt": attempt,
                 "attempt_state": attempt_state,
                 "verdict": verdict,
+                "reverification": reverification["status"],
             }
         ordinal += 1
     raise _invalid_repo()

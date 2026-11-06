@@ -5,7 +5,7 @@ Development profile kit for Beddel. It provides the entry workflow
 the target path is a Git work tree, the gate executables resolve on `PATH`, and
 the required environment keys are present (key names only, never values).
 
-Status: Story 4.2. Entry workflows `verify-change`, `read-report`,
+Status: Story 4.4. Entry workflows `verify-change`, `read-report`,
 `ratify-inventory` and `declare-non-applicability`; tools `profile_preflight`,
 `profile_ratify_inventory`, `profile_bind_inventory`, `profile_record_change`,
 `profile_derive_impact`, `profile_open_attempt`, `profile_run_gate`,
@@ -253,12 +253,12 @@ Evidence preserves its commands and reference. Completed Review Evidence keeps
 the reviewer reference and the SHA-256 of non-blank stored output. Timed-out,
 errored or blank Reviews produce no Review Evidence.
 
-## Verification Report (Stories 4.1, 4.3 and 4.2)
+## Verification Report (Stories 4.1, 4.3, 4.2 and 4.4)
 
 `report` (`profile_record_report`) runs after Evidence and appends one canonical
 JSON Report under `changes/<change_id>/report/<n>.json`. New records use schema
-`profile-dev/verification-report/3`; `read-report` accepts `/1`, `/2` and `/3`
-records and returns earlier records unchanged; stored records are never
+`profile-dev/verification-report/4`; `read-report` accepts `/1`, `/2`, `/3` and
+`/4` records and returns earlier records unchanged; stored records are never
 rewritten. It selects only the greatest
 persisted attempt ordinal for the Change and revision. A valid attempt links the
 seven Report items to the recorded snapshot, Impact and validated Evidence; a
@@ -284,12 +284,21 @@ The Report has exactly one `verdict`: `consistent` when `pendencies` is absent,
 or `has pendency` otherwise. A pendency entry has the shape
 `{reason, class, affected_point, criterion, kind}`. Its `reason` is one of
 `attempt_not_valid`, `evidence_unrecorded`, `assessment_indeterminate`,
-`finding_blocking`, `finding_unclassified` or `reverification_unrecorded`.
-Finding entries also carry `finding_index`; reverification entries carry sorted
-`revisions`. Change-level pendencies use `null` for the constituent fields.
-Entries are emitted in deterministic list order. A non-blocking Finding creates
-no pendency in its own revision, but its Report still causes
-`reverification_unrecorded` at a later revision until Story 4.4.
+`finding_blocking`, `finding_unclassified` or
+`earlier_finding_not_reverified`. Finding entries also carry `finding_index`.
+The top-level `reverification` entry is either `{"status": "not_applicable"}`
+or `{"status": "recorded", "earlier_revision": R, "links": [...]}`.
+Each link has exactly `report_ref`, `finding_index`, `association`, `class`,
+`affected_point`, `criterion`, `kind`, `state`, `result` and `reason`; it has no
+separate Requirement ID field. `result` is `resolved`, `still_divergent` or
+`not_reverified`. A `not_reverified` link has reason `indeterminate` or
+`outside_scope`; other results have a null reason. A not-reverified link adds an
+`earlier_finding_not_reverified` Pendency with its `link_index`. The
+`profile_record_report` tool result includes the Re-verification status under
+`reverification`. Change-level Pendencies use `null` for the constituent
+fields. Entries are emitted in deterministic list order. A non-blocking Finding
+creates no pendency in its own revision, and a corrected revision records its
+Re-verification links in the top-level entry.
 
 The `pendencies` item is `absent` for an empty list and `present` otherwise.
 A malformed earlier Report, including any accepted schema, stops
