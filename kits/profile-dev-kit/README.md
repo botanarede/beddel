@@ -389,10 +389,14 @@ Refusal checks run in this order. The decision transport checks
 `decision.exists` for a work-tree path or symlink, `history.unreadable`,
 and then `decision.exists` for an index, `HEAD`-history or create-only duplicate. The Approval
 use case checks `id.invalid`, `actor.invalid`, `revision.invalid`,
-`approval.exists`, then the Story 5.1 checks through `verdict.has_pendency`,
+`approval.exists`, then `change.unrecorded`, `revision.unlinked`,
+`report.malformed`, `report.absent`, `report.outdated`,
+`revision.not_reported`, `attempt.superseded`, `digest.mismatch`,
+`verdict.underivable`, `verdict.mismatch`, `verdict.has_pendency`,
 then `decision.commit_invalid`, `decision.unreachable`, `decision.absent`,
 `decision.malformed`, `decision.unsupported`, `decision.actor_invalid`,
-`decision.target_mismatch`, `decision.digest_mismatch`, and `actor.mismatch`.
+`decision.target_mismatch`, `decision.digest_mismatch`, `actor.mismatch`, and
+`approval.exists` when the create-only write finds an existing record.
 
 Every refusal raises `PROFILE_APPROVAL_REFUSED` and writes nothing. An invalid
 repository path or records root keeps `PROFILE_REPOSITORY_INVALID`.

@@ -22,6 +22,7 @@ from beddel_profile_dev.tools.approval import (
 )
 from beddel_profile_dev.tools.bind import profile_bind_inventory
 from beddel_profile_dev.tools.change import profile_record_change
+from beddel_profile_dev.tools.determine import NON_APPLICABILITY_SCHEMA
 from beddel_profile_dev.tools.impact import profile_derive_impact
 from beddel_profile_dev.tools.report import profile_record_report
 
@@ -665,7 +666,15 @@ def _refused_without_changes(
 
 @pytest.mark.parametrize(
     "variant",
-    ["non_yaml", "non_mapping", "wrong_keys", "extra_key", "bad_types", "bad_date"],
+    [
+        "non_yaml",
+        "non_mapping",
+        "wrong_keys",
+        "extra_key",
+        "bad_types",
+        "bad_date",
+        "bad_digest",
+    ],
 )
 def test_decision_malformed_variants_refuse_without_changes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, variant: str
@@ -685,6 +694,9 @@ def test_decision_malformed_variants_refuse_without_changes(
             path.write_text(yaml.safe_dump(data, sort_keys=False))
         elif variant == "bad_types":
             data["approved_by"] = []
+            path.write_text(yaml.safe_dump(data, sort_keys=False))
+        elif variant == "bad_digest":
+            data["report_sha256"] = "0" * 63
             path.write_text(yaml.safe_dump(data, sort_keys=False))
         else:
             path.write_text(
@@ -707,7 +719,7 @@ def test_foreign_decision_records_are_unsupported(
             )
         )
     else:
-        path.write_text('{"schema":"profile-dev/determination/1"}\n')
+        path.write_text(json.dumps({"schema": NON_APPLICABILITY_SCHEMA}) + "\n")
     decision_commit = commit_all(repo, f"foreign {foreign}")
     _refused_without_changes(repo, revision, "decision.unsupported", decision_commit)
 
@@ -826,6 +838,30 @@ def test_committed_decision_cannot_pass_has_pendency(tmp_path: Path) -> None:
     profile_record_approval_decision(str(repo), "c1", revision, "tester")
     decision_commit = commit_all(repo, "decision for a has pendency Report")
     _refused_without_changes(repo, revision, "verdict.has_pendency", decision_commit)
+
+
+def test_ancestry_failure_is_unreachable_without_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, revision, decision_commit, _ = _committed_decision(tmp_path, monkeypatch)
+    from beddel_profile_dev.tools import approval
+
+    def fail(*args: object, **kwargs: object) -> bool:
+        raise ProfileError(PROFILE_REPOSITORY_INVALID, "ancestry failed")
+
+    monkeypatch.setattr(approval, "is_ancestor", fail)
+    _refused_without_changes(repo, revision, "decision.unreachable", decision_commit)
+
+
+def test_dangling_approval_symlink_counts_as_existing_approval(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, revision, decision_commit, _ = _committed_decision(tmp_path, monkeypatch)
+    approval_file = (
+        records_root(repo, "records/profile-dev") / "changes" / "c1" / "approval.json"
+    )
+    approval_file.symlink_to("missing-approval.json")
+    _refused_without_changes(repo, revision, "approval.exists", decision_commit)
 
 
 def test_approval_is_create_only_even_after_a_newer_report(
