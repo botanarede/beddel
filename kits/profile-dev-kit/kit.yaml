@@ -9,8 +9,7 @@ description: >
   set through the configured agent route (an operational outcome of completed,
   timed out or errored, never Evidence or a Verdict), append-only Evidence for
   matching attempt-bound results, the persisted Verification Report and its
-  read-only history, the recorded determination of non-applicability, and
-  Approval decisions with committed human proof.
+  read-only history, and the recorded determination of non-applicability.
 author: Beddel Team
 category: profile # descriptive only; SolutionKit ignores it
 

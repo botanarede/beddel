@@ -1,5 +1,4 @@
 id: record-approval-decision
-id: record-approval-decision
 name: Record Approval Decision
 description: Records an Approval decision for the maintainer to commit.
 version: "1.0"

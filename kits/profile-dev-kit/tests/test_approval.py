@@ -799,12 +799,33 @@ def test_decision_absent_when_only_in_worktree_or_index(
 
     profile_record_approval_decision(str(repo), "c1", revision, "tester")
     path = repo / ".beddel-profile" / "approvals" / "c1" / "1.yaml"
-    path.unlink()
+    assert path.is_file()
     _refused_without_changes(repo, revision, "decision.absent")
-    profile_record_approval_decision(str(repo), "c1", revision, "tester")
     git(repo, "add", str(path.relative_to(repo)))
     path.unlink()
     _refused_without_changes(repo, revision, "decision.absent")
+    git(repo, "rm", "-q", "--cached", str(path.relative_to(repo)))
+
+
+def test_stale_decision_after_a_newer_report_is_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, revision, decision_commit, _ = _committed_decision(tmp_path, monkeypatch)
+    newer = profile_record_report(str(repo), "c1", revision)
+    assert newer["report"].endswith("/2.json")
+    _refused_without_changes(repo, revision, "decision.absent", decision_commit)
+
+
+def test_committed_decision_cannot_pass_has_pendency(tmp_path: Path) -> None:
+    repo, _, revision = _prepare(tmp_path)
+    profile_record_report(str(repo), "c1", revision)
+    from beddel_profile_dev.tools.approval_decision import (
+        profile_record_approval_decision,
+    )
+
+    profile_record_approval_decision(str(repo), "c1", revision, "tester")
+    decision_commit = commit_all(repo, "decision for a has pendency Report")
+    _refused_without_changes(repo, revision, "verdict.has_pendency", decision_commit)
 
 
 def test_approval_is_create_only_even_after_a_newer_report(

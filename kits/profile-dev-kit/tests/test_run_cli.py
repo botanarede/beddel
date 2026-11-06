@@ -814,6 +814,14 @@ def test_beddel_run_records_commits_and_accepts_approval_decision(
     _run_results(repo, sha, monkeypatch)
     assert profile_record_report(str(repo), "c1", sha)["verdict"] == "consistent"
 
+    def records_bytes() -> dict[str, bytes]:
+        return {
+            str(path.relative_to(_records(repo))): path.read_bytes()
+            for path in _records(repo).rglob("*")
+            if path.is_file()
+        }
+
+    records_before_decision = records_bytes()
     recorded = _run_workflow(
         KIT_ROOT / "workflows" / "record-approval-decision.yaml",
         {
@@ -825,6 +833,7 @@ def test_beddel_run_records_commits_and_accepts_approval_decision(
         tmp_path,
     )
     assert recorded.returncode == 0, recorded.stderr
+    assert records_bytes() == records_before_decision
     decision_commit = commit_all(repo, "record Approval decision")
 
     approved = _run_workflow(
@@ -855,12 +864,14 @@ def test_beddel_run_records_commits_and_accepts_approval_decision(
     assert approval["approved_by"] == "owner"
     assert approval["proof"]["commit"] == decision_commit
 
+    records_before_read = records_bytes()
     read = _run_workflow(
         KIT_ROOT / "workflows" / "read-approval.yaml",
         {"repo_path": str(repo), "change_id": "c1"},
         tmp_path,
     )
     assert read.returncode == 0, read.stderr
+    assert records_bytes() == records_before_read
     lines = read.stdout.splitlines()
     step = lines.index("[read]")
     payload = ast.literal_eval("\n".join(lines[step + 1 :]).strip())

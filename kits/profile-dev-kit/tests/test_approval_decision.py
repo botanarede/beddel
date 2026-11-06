@@ -51,9 +51,11 @@ def test_records_exact_yaml_and_never_commits(
     monkeypatch.setenv("USER", "ambient-user")
     monkeypatch.setenv("GIT_AUTHOR_NAME", "ambient-author")
     git(repo, "config", "user.name", "repo-user")
+    records_before = _snapshot(records_root(repo, "records/profile-dev"))
 
     decision = profile_record_approval_decision(str(repo), "c1", revision, "tester")
 
+    assert _snapshot(records_root(repo, "records/profile-dev")) == records_before
     assert git(repo, "rev-parse", "HEAD") == before_head
     assert "?? .beddel-profile/approvals/" in git(repo, "status", "--short")
     assert commit_all(repo, "commit decision") != before_head

@@ -238,6 +238,7 @@ def test_record_approval_decision_workflow_is_one_allowlisted_step() -> None:
     assert wf.allowed_tools == ["profile_record_approval_decision"]
     assert [s.id for s in wf.steps] == ["record"]
     assert _tool_names(wf.steps) == {"profile_record_approval_decision"}
+    assert "timeout" not in wf.steps[0].config
     assert wf.steps[0].execution_strategy.type is StrategyType.FAIL
 
 
@@ -249,4 +250,5 @@ def test_read_approval_workflow_is_one_allowlisted_step() -> None:
     assert wf.allowed_tools == ["profile_read_approval"]
     assert [s.id for s in wf.steps] == ["read"]
     assert _tool_names(wf.steps) == {"profile_read_approval"}
+    assert "timeout" not in wf.steps[0].config
     assert wf.steps[0].execution_strategy.type is StrategyType.FAIL

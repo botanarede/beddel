@@ -26,8 +26,6 @@ python/beddel_profile_dev/tools/approval_decision.py
                                  Approval decision transport
 workflows/                       entry workflows, including
                                  record-approval-decision and read-approval
-workflows/record-approval-decision.yaml
-workflows/read-approval.yaml
 tests/                           kit tests (no network, no real credential)
 ```
 
@@ -375,7 +373,7 @@ checks that the commit is reachable from `HEAD`, and writes one create-only
 - `approved_by`
 - `proof: {commit, path, sha256}`
 
-`proof.commit` is the full SHA passed as `decision_commit`; `proof.path` is the
+`proof.commit` is the full commit SHA resolved from `decision_commit`; `proof.path` is the
 decision path; and `proof.sha256` is the decision blob digest. The input actor
 must equal `approved_by`; no commit author or environment identity is copied
 into the record.
@@ -388,8 +386,8 @@ Approval step.
 Refusal checks run in this order. The decision transport checks
 `id.invalid`, `actor.invalid`, `revision.invalid`, `change.unrecorded`,
 `report.malformed`, `report.absent`, `revision.not_reported`,
-`decision.exists` for a work-tree or history duplicate, `history.unreadable`,
-and then `decision.exists` for an index or create-only duplicate. The Approval
+`decision.exists` for a work-tree path or symlink, `history.unreadable`,
+and then `decision.exists` for an index, `HEAD`-history or create-only duplicate. The Approval
 use case checks `id.invalid`, `actor.invalid`, `revision.invalid`,
 `approval.exists`, then the Story 5.1 checks through `verdict.has_pendency`,
 then `decision.commit_invalid`, `decision.unreachable`, `decision.absent`,
