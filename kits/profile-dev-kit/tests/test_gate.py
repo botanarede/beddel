@@ -91,7 +91,15 @@ OUTCOME_KEYS = {
     "gate_ref",
 }
 COMMAND_KEYS = {"name", "argv", "exit_code", "timed_out"}
-FORBIDDEN = ("passed", "failed", "pendency", "finding", "verdict", "evidence")
+FORBIDDEN = (
+    "passed",
+    "failed",
+    "pendency",
+    "finding",
+    "verdict",
+    "classification",
+    "evidence",
+)
 
 
 def _touch_api(repo: Path) -> None:

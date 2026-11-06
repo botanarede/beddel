@@ -199,19 +199,6 @@ def _load_scope(
         or snapshot.get("revision") != sha
         or snapshot.get("inventory_version") != binding.get("inventory_version")
         or snapshot.get("inventory_sha256") != binding.get("inventory_sha256")
-        or not isinstance(snapshot.get("criteria"), list)
-        or not all(
-            isinstance(item, dict)
-            and set(item)
-            in (
-                {"id", "description"},
-                {"id", "description", "blocking"},
-            )
-            and isinstance(item["id"], str)
-            and isinstance(item["description"], str)
-            and ("blocking" not in item or isinstance(item["blocking"], bool))
-            for item in snapshot["criteria"]
-        )
         or impact_raw is None
         or impact.get("schema") != IMPACT_SCHEMA
     ):
@@ -538,21 +525,49 @@ def _validate_report_content(
     if schema in {
         "profile-dev/verification-report/2",
         REPORT_SCHEMA,
-    } and not isinstance(content.get("assessments"), list):
-        raise _invalid_repo()
+    }:
+        if not isinstance(content.get("assessments"), list):
+            raise _invalid_repo()
+        if (
+            not isinstance(content.get("revision"), str)
+            or _FULL_SHA.fullmatch(content["revision"]) is None
+        ):
+            raise _invalid_repo()
+        items = content.get("items")
+        if not isinstance(items, dict):
+            raise _invalid_repo()
+        divergences = items.get("divergences")
+        if (
+            not isinstance(divergences, dict)
+            or divergences.get("status") not in {"absent", "present", "not_assessed"}
+            or (
+                divergences.get("status") == "present"
+                and (
+                    not isinstance(divergences.get("value"), list)
+                    or not divergences["value"]
+                )
+            )
+            or (divergences.get("status") != "present" and "value" in divergences)
+        ):
+            raise _invalid_repo()
     if schema == REPORT_SCHEMA:
         items = content.get("items")
+        if not isinstance(items, dict):
+            raise _invalid_repo()
+        pendencies = items.get("pendencies")
         if (
-            not isinstance(items, dict)
-            or not isinstance(items.get("pendencies"), dict)
-            or items["pendencies"].get("status") not in {"absent", "present"}
-            or not isinstance(content.get("revision"), str)
-            or content.get("verdict")
-            != (
-                "consistent"
-                if items["pendencies"]["status"] == "absent"
-                else "has pendency"
+            not isinstance(pendencies, dict)
+            or pendencies.get("status") not in {"absent", "present"}
+            or (
+                pendencies.get("status") == "present"
+                and (
+                    not isinstance(pendencies.get("value"), list)
+                    or not pendencies["value"]
+                )
             )
+            or (pendencies.get("status") == "absent" and "value" in pendencies)
+            or content.get("verdict")
+            != ("consistent" if pendencies["status"] == "absent" else "has pendency")
         ):
             raise _invalid_repo()
     return content

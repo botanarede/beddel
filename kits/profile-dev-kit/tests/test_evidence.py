@@ -107,7 +107,14 @@ def test_evidence_keeps_matching_gate_and_review_results_only(
             "outcome_sha256",
             "result",
         }
-        assert not set(data) & {"passed", "verdict", "finding", "pendency", "approval"}
+        assert not set(data) & {
+            "passed",
+            "verdict",
+            "classification",
+            "finding",
+            "pendency",
+            "approval",
+        }
 
 
 def test_evidence_rejects_outcome_with_wrong_inventory_identity(

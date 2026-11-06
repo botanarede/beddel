@@ -475,6 +475,114 @@ def test_read_report_preserves_mixed_schema_history(
     assert (report_dir / "1.json").read_bytes() == old_raw
 
 
+def test_read_report_preserves_valid_schema_two_history_and_reverification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, _, revision = _prepare(tmp_path)
+    records = records_root(repo, "records/profile-dev")
+    report_dir = records / "changes" / "c1" / "report"
+    report_dir.mkdir()
+    old = {
+        "schema": "profile-dev/verification-report/2",
+        "record": 1,
+        "change_id": "c1",
+        "revision": "b" * 40,
+        "assessments": [],
+        "items": {
+            "divergences": {
+                "status": "present",
+                "value": [
+                    {
+                        "source": "review",
+                        "class": "review-arch",
+                        "affected_point": "api",
+                        "criterion": "arch-ok",
+                        "kind": "review",
+                    }
+                ],
+            }
+        },
+    }
+    raw = json.dumps(old, separators=(",", ":")).encode()
+    (report_dir / "1.json").write_bytes(raw)
+
+    _run_results(repo, revision, monkeypatch)
+    written = profile_record_report(str(repo), "c1", revision)
+    result = profile_read_report(str(repo), "c1")
+
+    assert result["history"][0]["content"] == old
+    assert (report_dir / "1.json").read_bytes() == raw
+    assert written["record"] == 2
+    report = json.loads((records / written["report"]).read_text())
+    assert report["schema"] == "profile-dev/verification-report/3"
+    reverification = report["items"]["pendencies"]["value"][-1]
+    assert reverification["reason"] == "reverification_unrecorded"
+    assert reverification["revisions"] == ["b" * 40]
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "missing_revision",
+        "items_not_dict",
+        "divergences_not_dict",
+        "divergences_empty",
+        "divergences_absent_value",
+        "divergences_not_assessed_value",
+    ],
+)
+def test_invalid_schema_two_history_stops_record_without_writing(
+    tmp_path: Path, tamper: str
+) -> None:
+    repo, _, revision = _prepare(tmp_path)
+    records = records_root(repo, "records/profile-dev")
+    report_dir = records / "changes" / "c1" / "report"
+    report_dir.mkdir()
+    old = {
+        "schema": "profile-dev/verification-report/2",
+        "record": 1,
+        "change_id": "c1",
+        "revision": "b" * 40,
+        "assessments": [],
+        "items": {
+            "divergences": {
+                "status": "present",
+                "value": [
+                    {
+                        "source": "review",
+                        "class": "review-arch",
+                        "affected_point": "api",
+                        "criterion": "arch-ok",
+                        "kind": "review",
+                    }
+                ],
+            }
+        },
+    }
+    if tamper == "missing_revision":
+        del old["revision"]
+    elif tamper == "items_not_dict":
+        old["items"] = []
+    elif tamper == "divergences_not_dict":
+        old["items"]["divergences"] = []
+    elif tamper == "divergences_empty":
+        old["items"]["divergences"] = {"status": "present", "value": []}
+    elif tamper == "divergences_absent_value":
+        old["items"]["divergences"] = {"status": "absent", "value": []}
+    else:
+        old["items"]["divergences"] = {
+            "status": "not_assessed",
+            "value": [],
+        }
+    (report_dir / "1.json").write_text(json.dumps(old, separators=(",", ":")))
+
+    with pytest.raises(ProfileError) as info:
+        profile_record_report(str(repo), "c1", revision)
+
+    assert info.value.code == PROFILE_REPOSITORY_INVALID
+    assert sorted(path.name for path in report_dir.iterdir()) == ["1.json"]
+
+
 def test_rerun_appends_report_without_rewriting_previous_record(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1135,7 +1243,22 @@ def test_earlier_non_blocking_finding_still_requires_reverification(
     )
 
 
-@pytest.mark.parametrize("tamper", ["verdict", "revision", "items"])
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "verdict",
+        "revision",
+        "revision_invalid",
+        "items",
+        "divergences",
+        "divergences_empty",
+        "divergences_absent_value",
+        "divergences_not_assessed_value",
+        "pendencies",
+        "pendencies_empty",
+        "pendencies_absent_value",
+    ],
+)
 def test_tampered_schema_three_history_stops_record_without_writing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tamper: str
 ) -> None:
@@ -1149,8 +1272,31 @@ def test_tampered_schema_three_history_stops_record_without_writing(
         content["verdict"] = "has pendency"
     elif tamper == "revision":
         del content["revision"]
-    else:
+    elif tamper == "revision_invalid":
+        content["revision"] = "x"
+    elif tamper == "items":
         content["items"] = []
+    elif tamper == "divergences":
+        content["items"]["divergences"] = []
+    elif tamper == "divergences_empty":
+        content["items"]["divergences"] = {
+            "status": "present",
+            "value": [],
+        }
+    elif tamper == "divergences_absent_value":
+        content["items"]["divergences"] = {"status": "absent", "value": []}
+    elif tamper == "divergences_not_assessed_value":
+        content["items"]["divergences"] = {
+            "status": "not_assessed",
+            "value": [],
+        }
+    elif tamper == "pendencies":
+        content["items"]["pendencies"] = []
+    elif tamper == "pendencies_empty":
+        content["items"]["pendencies"] = {"status": "present", "value": []}
+    else:
+        content["items"]["pendencies"] = {"status": "absent", "value": []}
+        content["verdict"] = "consistent"
     report_path.write_text(json.dumps(content))
     with pytest.raises(ProfileError) as info:
         profile_record_report(str(repo), "c1", revision)

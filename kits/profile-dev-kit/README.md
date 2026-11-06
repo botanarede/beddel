@@ -258,7 +258,8 @@ errored or blank Reviews produce no Review Evidence.
 `report` (`profile_record_report`) runs after Evidence and appends one canonical
 JSON Report under `changes/<change_id>/report/<n>.json`. New records use schema
 `profile-dev/verification-report/3`; `read-report` accepts `/1`, `/2` and `/3`
-records and returns earlier records byte-unchanged. It selects only the greatest
+records and returns earlier records unchanged; stored records are never
+rewritten. It selects only the greatest
 persisted attempt ordinal for the Change and revision. A valid attempt links the
 seven Report items to the recorded snapshot, Impact and validated Evidence; a
 missing or malformed latest attempt is recorded as indeterminate. Reports are
