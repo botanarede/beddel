@@ -213,4 +213,5 @@ def test_approve_workflow_is_one_allowlisted_step() -> None:
     assert wf.allowed_tools == ["profile_approve_change"]
     assert [s.id for s in wf.steps] == ["approve"]
     assert wf.steps[0].config["tool"] == "profile_approve_change"
+    assert "timeout" not in wf.steps[0].config
     assert wf.steps[0].execution_strategy.type is StrategyType.FAIL

@@ -1713,3 +1713,31 @@ def test_unbound_scope_precedes_malformed_report_history(tmp_path: Path) -> None
         profile_record_report(str(repo), "c1", revision)
 
     assert info.value.code == PROFILE_IMPACT_UNBOUND
+
+
+@pytest.mark.parametrize("consistent", [False, True])
+def test_record_report_result_shape_is_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, consistent: bool
+) -> None:
+    repo, _, revision = _prepare(tmp_path)
+    if consistent:
+        attempt = _run_results(repo, revision, monkeypatch)
+        expected_attempt = attempt
+        expected_attempt_state = "valid"
+        expected_verdict = "consistent"
+    else:
+        expected_attempt = None
+        expected_attempt_state = "none"
+        expected_verdict = "has pendency"
+
+    assert profile_record_report(str(repo), "c1", revision) == {
+        "ok": True,
+        "change_id": "c1",
+        "revision": revision,
+        "record": 1,
+        "report": "changes/c1/report/1.json",
+        "attempt": expected_attempt,
+        "attempt_state": expected_attempt_state,
+        "verdict": expected_verdict,
+        "reverification": "not_applicable",
+    }

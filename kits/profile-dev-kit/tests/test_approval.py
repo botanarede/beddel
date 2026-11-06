@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 from pathlib import Path
 
@@ -14,7 +15,7 @@ from beddel_profile_dev.tools.change import profile_record_change
 from beddel_profile_dev.tools.impact import profile_derive_impact
 from beddel_profile_dev.tools.report import profile_record_report
 
-from ._helpers import change_fixture
+from ._helpers import change_fixture, commit_all
 from .test_report import _run_results
 
 KIT_ROOT = Path(__file__).resolve().parent.parent
@@ -80,6 +81,61 @@ def test_consistent_is_still_refused_until_story_5_2(
     assert _snapshot(records) == before
 
 
+def test_later_revision_attempt_does_not_supersede_earlier_revision_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base, first_revision = _prepare(tmp_path)
+    _run_results(repo, first_revision, monkeypatch)
+    profile_record_report(str(repo), "c1", first_revision)
+
+    (repo / "src" / "api.py").write_text("x = 3\n")
+    later_revision = commit_all(repo, "later revision")
+    profile_record_change(str(repo), "c1", base, later_revision)
+    profile_bind_inventory(str(repo), later_revision, "v1")
+    profile_derive_impact(str(repo), "c1", later_revision)
+    from beddel_profile_dev.tools.attempt import profile_open_attempt
+
+    profile_open_attempt(str(repo), "c1", later_revision)
+    records = records_root(repo, "records/profile-dev")
+    before = _snapshot(records)
+    _refused(repo, first_revision, "approval.unaccepted")
+    assert _snapshot(records) == before
+
+
+def test_load_change_oserror_is_revision_unlinked_without_writing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, _, revision = _prepare(tmp_path)
+    from beddel_profile_dev.tools import approval
+
+    monkeypatch.setattr(
+        approval,
+        "_load_change",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("read failed")),
+    )
+    records = records_root(repo, "records/profile-dev")
+    before = _snapshot(records)
+    _refused(repo, revision, "revision.unlinked")
+    assert _snapshot(records) == before
+
+
+def test_report_history_oserror_is_malformed_without_writing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, _, revision = _prepare(tmp_path)
+    from beddel_profile_dev.tools import approval
+
+    monkeypatch.setattr(
+        approval,
+        "_report_history",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("read failed")),
+    )
+    records = records_root(repo, "records/profile-dev")
+    before = _snapshot(records)
+    _refused(repo, revision, "report.malformed")
+    assert _snapshot(records) == before
+
+
 def test_basic_reason_precedence_and_no_writes(tmp_path: Path) -> None:
     repo, base, revision = _prepare(tmp_path)
     records = records_root(repo, "records/profile-dev")
@@ -94,7 +150,10 @@ def test_basic_reason_precedence_and_no_writes(tmp_path: Path) -> None:
 
 def test_no_report_refuses(tmp_path: Path) -> None:
     repo, _, revision = _prepare(tmp_path)
+    records = records_root(repo, "records/profile-dev")
+    before = _snapshot(records)
     _refused(repo, revision, "report.absent")
+    assert _snapshot(records) == before
 
 
 @pytest.mark.parametrize("tamper", ["edited", "deleted"])
@@ -125,6 +184,8 @@ def test_underivable_is_a_refusal(
 ) -> None:
     repo, _, revision = _prepare(tmp_path)
     profile_record_report(str(repo), "c1", revision)
+    records = records_root(repo, "records/profile-dev")
+    before = _snapshot(records)
     from beddel_profile_dev.tools import approval
 
     monkeypatch.setattr(
@@ -133,6 +194,7 @@ def test_underivable_is_a_refusal(
         lambda *args: (_ for _ in ()).throw(ProfileError("TEST", "derivation failed")),
     )
     _refused(repo, revision, "verdict.underivable")
+    assert _snapshot(records) == before
 
 
 def test_structural_approval_boundaries() -> None:
@@ -148,6 +210,28 @@ def test_structural_approval_boundaries() -> None:
         "write_text",
     ):
         assert forbidden not in source
+    tree = ast.parse(source)
+    imported_modules = [
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    ] + [
+        node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
+    ]
+    forbidden_modules = {
+        "datetime",
+        "time",
+        "subprocess",
+        "_adapters",
+        "socket",
+        "urllib",
+        "http",
+    }
+    assert all(
+        not forbidden_modules.intersection(module.split("."))
+        for module in imported_modules
+    )
     assert (
         "profile_approve_change"
         not in (WORKFLOWS_ROOT / "verify-change.yaml").read_text()
@@ -159,17 +243,6 @@ def test_structural_approval_boundaries() -> None:
         )
         == 1
     )
-    for forbidden in (
-        "datetime",
-        "time",
-        "subprocess",
-        "_adapters",
-        "socket",
-        "urllib",
-        "http",
-    ):
-        assert f"import {forbidden}" not in source
-        assert f"from {forbidden}" not in source
 
 
 def test_malformed_report_refuses(tmp_path: Path) -> None:
@@ -177,7 +250,10 @@ def test_malformed_report_refuses(tmp_path: Path) -> None:
     report_dir = records_root(repo, "records/profile-dev") / "changes" / "c1" / "report"
     report_dir.mkdir()
     (report_dir / "1.json").write_text("not json")
+    records = records_root(repo, "records/profile-dev")
+    before = _snapshot(records)
     _refused(repo, revision, "report.malformed")
+    assert _snapshot(records) == before
 
 
 def test_outdated_report_refuses(tmp_path: Path) -> None:
@@ -187,16 +263,29 @@ def test_outdated_report_refuses(tmp_path: Path) -> None:
     report = json.loads(report_file.read_text())
     report["schema"] = "profile-dev/verification-report/3"
     report_file.write_text(json.dumps(report))
+    records = records_root(repo, "records/profile-dev")
+    before = _snapshot(records)
     _refused(repo, revision, "report.outdated")
+    assert _snapshot(records) == before
 
 
-def test_newer_attempt_at_same_revision_refuses(tmp_path: Path) -> None:
+@pytest.mark.parametrize("completed", [False, True])
+def test_newer_attempt_at_same_revision_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, completed: bool
+) -> None:
     repo, _, revision = _prepare(tmp_path)
+    _run_results(repo, revision, monkeypatch)
     profile_record_report(str(repo), "c1", revision)
-    from beddel_profile_dev.tools.attempt import profile_open_attempt
+    if completed:
+        _run_results(repo, revision, monkeypatch)
+    else:
+        from beddel_profile_dev.tools.attempt import profile_open_attempt
 
-    profile_open_attempt(str(repo), "c1", revision)
+        profile_open_attempt(str(repo), "c1", revision)
+    records = records_root(repo, "records/profile-dev")
+    before = _snapshot(records)
     _refused(repo, revision, "attempt.superseded")
+    assert _snapshot(records) == before
 
 
 def test_report_for_another_revision_refuses(
@@ -210,7 +299,10 @@ def test_report_for_another_revision_refuses(
 
     other_revision = commit_all(repo, "second revision")
     profile_record_change(str(repo), "c1", base, other_revision)
+    records = records_root(repo, "records/profile-dev")
+    before = _snapshot(records)
     _refused(repo, other_revision, "revision.not_reported")
+    assert _snapshot(records) == before
 
 
 def test_verdict_mismatch_refuses(
@@ -226,7 +318,10 @@ def test_verdict_mismatch_refuses(
         "_derive_report",
         lambda *args: {"verdict": "has pendency"},
     )
+    records = records_root(repo, "records/profile-dev")
+    before = _snapshot(records)
     _refused(repo, revision, "verdict.mismatch")
+    assert _snapshot(records) == before
 
 
 def test_invalid_repository_keeps_repository_error(tmp_path: Path) -> None:
@@ -239,6 +334,7 @@ def test_invalid_repository_keeps_repository_error(tmp_path: Path) -> None:
     "tamper",
     [
         "missing_sha256",
+        "missing_attempt",
         "non_int_attempt",
         "missing_verdict",
         "legacy_one",
@@ -255,6 +351,8 @@ def test_malformed_latest_report_is_refused_without_writing(
     report = json.loads(report_file.read_text())
     if tamper == "missing_sha256":
         del report["reads"][0]["sha256"]
+    elif tamper == "missing_attempt":
+        del report["attempt"]
     elif tamper == "non_int_attempt":
         report["attempt"] = "1"
     elif tamper == "missing_verdict":

@@ -35,6 +35,8 @@ def _refuse(reason: str) -> ProfileError:
 
 
 def _valid_latest_report(report: dict[str, Any]) -> bool:
+    if "attempt" not in report:
+        return False
     attempt = report.get("attempt")
     if attempt is not None and (type(attempt) is not int or attempt < 1):
         return False
@@ -88,12 +90,12 @@ def profile_approve_change(
         raise _refuse("change.unrecorded")
     try:
         _load_change(reader, repo, change_id, sha)
-    except ProfileError:
+    except (ProfileError, OSError, ValueError):
         raise _refuse("revision.unlinked") from None
 
     try:
         history = _report_history(reader, records, change_id)
-    except ProfileError:
+    except (ProfileError, OSError, ValueError):
         raise _refuse("report.malformed") from None
     if not history:
         raise _refuse("report.absent")
