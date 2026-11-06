@@ -587,6 +587,23 @@ def _valid_reverification(value: object, change_id: str, revision: str) -> bool:
             return False
         if reason == "outside_scope" and state is not None:
             return False
+        if state not in {
+            None,
+            "no_divergence",
+            "divergent",
+            "indeterminate",
+            "not_assessed",
+        }:
+            return False
+        parts = [link[key] for key in ("class", "affected_point", "criterion")]
+        all_strings = all(isinstance(part, str) for part in parts)
+        all_null = all(part is None for part in parts)
+        if reason == "outside_scope":
+            # An unknown or unreadable earlier Finding carries null constituents.
+            if not (all_strings or (all_null and link["kind"] is None)):
+                return False
+        elif link["association"] != "requirement" or not all_strings:
+            return False
     return True
 
 
@@ -613,11 +630,6 @@ def _validate_report_content(
         "profile-dev/verification-report/4",
     }:
         if not isinstance(content.get("assessments"), list):
-            raise _invalid_repo()
-        if (
-            not isinstance(content.get("revision"), str)
-            or _FULL_SHA.fullmatch(content["revision"]) is None
-        ):
             raise _invalid_repo()
         items = content.get("items")
         if not isinstance(items, dict):

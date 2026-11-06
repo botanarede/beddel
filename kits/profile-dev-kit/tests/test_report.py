@@ -1146,6 +1146,54 @@ def test_earlier_revision_finding_requires_reverification(
         "ref": "changes/c1/report/1.json",
         "sha256": hashlib.sha256(earlier_report.read_bytes()).hexdigest(),
     } in report["reads"]
+    records = records_root(repo, "records/profile-dev")
+    for link in report["reverification"]["links"]:
+        assert {
+            "ref": link["report_ref"],
+            "sha256": hashlib.sha256(
+                (records / link["report_ref"]).read_bytes()
+            ).hexdigest(),
+        } in report["reads"]
+    assert not any(
+        item["ref"].startswith(f"revisions/{first_revision}/")
+        or f"changes/c1/revisions/{first_revision}/" in item["ref"]
+        for item in report["reads"]
+        if "ref" in item
+    )
+    attempt = json.loads(
+        (
+            records / f"changes/c1/revisions/{second_revision}/attempts/1/attempt.json"
+        ).read_text()
+    )
+    impact = json.loads(
+        (records / f"changes/c1/revisions/{second_revision}/impact.json").read_text()
+    )
+    keys = ("class", "affected_point", "criterion", "kind")
+    assert attempt["requirements"] == [
+        {key: item[key] for key in keys} for item in impact["required_evidence"]
+    ]
+    assert report["items"]["pendencies"] == {"status": "absent"}
+    assert report["verdict"] == "consistent"
+
+
+def test_non_blocking_still_divergent_finding_keeps_the_report_consistent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data = good()
+    data["criteria"][1]["blocking"] = False
+    repo, base, first_revision = _prepare(tmp_path, data)
+    _run_results(repo, first_revision, monkeypatch, _review_divergence_output())
+    profile_record_report(str(repo), "c1", first_revision)
+    second_revision = _prepare_next_revision(repo, base)
+    _run_results(repo, second_revision, monkeypatch, _review_divergence_output())
+    result = profile_record_report(str(repo), "c1", second_revision)
+    report = json.loads(
+        (records_root(repo, "records/profile-dev") / result["report"]).read_text()
+    )
+    assert report["reverification"]["links"][0]["result"] == "still_divergent"
+    assert report["items"]["divergences"]["value"][0]["classification"] == (
+        "non_blocking"
+    )
     assert report["items"]["pendencies"] == {"status": "absent"}
     assert report["verdict"] == "consistent"
 
@@ -1493,6 +1541,10 @@ def test_rerun_at_current_revision_keeps_the_earlier_reverification(
         "reason_result_mismatch",
         "outside_scope_with_state",
         "resolved_with_wrong_state",
+        "resolved_without_requirement_association",
+        "unknown_state_value",
+        "non_requirement_link_not_outside_scope",
+        "outside_scope_partial_constituents",
         "not_applicable_extra_keys",
     ],
 )
@@ -1558,6 +1610,32 @@ def test_malformed_schema_four_reverification_writes_nothing(
         content["reverification"] = reverification
     elif mutation == "resolved_with_wrong_state":
         link["state"] = "divergent"
+        content["reverification"] = reverification
+    elif mutation == "resolved_without_requirement_association":
+        link.update(
+            association=None,
+            **{"class": None, "affected_point": None, "criterion": None, "kind": None},
+        )
+        content["reverification"] = reverification
+    elif mutation == "unknown_state_value":
+        link.update(result="still_divergent", state="banana")
+        content["reverification"] = reverification
+    elif mutation == "non_requirement_link_not_outside_scope":
+        link.update(
+            association="unknown",
+            state=None,
+            result="not_reverified",
+            reason="indeterminate",
+            **{"class": None, "affected_point": None, "criterion": None, "kind": None},
+        )
+        content["reverification"] = reverification
+    elif mutation == "outside_scope_partial_constituents":
+        link.update(
+            state=None,
+            result="not_reverified",
+            reason="outside_scope",
+            criterion=None,
+        )
         content["reverification"] = reverification
     else:
         content["reverification"] = {"status": "not_applicable", "extra": True}

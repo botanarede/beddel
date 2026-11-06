@@ -754,7 +754,8 @@ def test_beddel_run_reverifies_a_gate_finding_at_the_corrected_revision(
     assert gate_links
     assert all(link["result"] == "resolved" for link in gate_links)
     assert all(
-        f"/revisions/{first}/" not in item["ref"]
+        not item["ref"].startswith(f"revisions/{first}/")
+        and f"changes/c1/revisions/{first}/" not in item["ref"]
         for item in report["reads"]
         if "ref" in item
     )
