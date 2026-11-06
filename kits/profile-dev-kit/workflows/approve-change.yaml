@@ -1,0 +1,23 @@
+id: approve-change
+name: Approve Change
+description: Revalidates a Change and refuses every Approval until Story 5.2 accepts a decision.
+version: "1.0"
+requires_kits:
+  - profile-dev-kit
+allowed_tools:
+  - profile_approve_change
+inputs:
+  - repo_path
+  - change_id
+  - revision
+  - actor
+steps:
+  - id: approve
+    primitive: tool
+    config:
+      tool: profile_approve_change
+      arguments:
+        repo_path: "$input.repo_path"
+        change_id: "$input.change_id"
+        revision: "$input.revision"
+        actor: "$input.actor"

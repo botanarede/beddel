@@ -333,3 +333,22 @@ extra keys, duplicate JSON keys, invalid values or a Markdown code fence inside
 the markers is unreadable. Marker lines may carry trailing whitespace only.
 Unreadable blocks produce no Review Findings and leave applicable Review states
 indeterminate.
+
+## Change Approval (Story 5.1)
+
+`approve-change` invokes `profile_approve_change` with `repo_path`, `change_id`,
+`revision` and the explicit `actor`. It revalidates the recorded Change and
+revision link, the latest `/4` Report, its authoritative attempt, every digest
+in `reads`, and the Verdict derived by the same canonical use case as
+`profile_record_report`. It never writes a record or accepts an Approval. The
+workflow is separate from `verify-change`; `verify-change` has no Approval step.
+
+Every refusal raises `PROFILE_APPROVAL_REFUSED` with one of these reason codes;
+an invalid repository path or records root keeps `PROFILE_REPOSITORY_INVALID`.
+`id.invalid`, `actor.invalid`, `revision.invalid`, `change.unrecorded`,
+`revision.unlinked`, `report.malformed`, `report.absent`, `report.outdated`,
+`revision.not_reported`, `attempt.superseded`, `digest.mismatch`,
+`verdict.underivable`, `verdict.mismatch`, `verdict.has_pendency` or
+`approval.unaccepted`. Refusals write nothing, including when the revalidated
+Verdict is `consistent`; no form of Approval decision is accepted until Story
+5.2.

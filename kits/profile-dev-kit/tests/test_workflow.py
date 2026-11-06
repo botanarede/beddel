@@ -13,6 +13,7 @@ WORKFLOWS_DIR = Path(__file__).resolve().parent.parent / "workflows"
 WORKFLOW_PATH = WORKFLOWS_DIR / "verify-change.yaml"
 RATIFY_PATH = WORKFLOWS_DIR / "ratify-inventory.yaml"
 READ_REPORT_PATH = WORKFLOWS_DIR / "read-report.yaml"
+APPROVE_PATH = WORKFLOWS_DIR / "approve-change.yaml"
 
 
 def _load() -> Workflow:
@@ -105,7 +106,7 @@ def test_allowlist_equals_the_tools_the_steps_name() -> None:
         "profile_capture_evidence",
         "profile_record_report",
     ]
-    assert len(list(WORKFLOWS_DIR.glob("*.yaml"))) == 4
+    assert len(list(WORKFLOWS_DIR.glob("*.yaml"))) == 5
 
 
 def test_review_step_outlives_the_largest_accepted_review_budget() -> None:
@@ -202,3 +203,15 @@ def test_no_workflow_declares_mcp_servers_or_mcp_server_steps() -> None:
             for item in walk(document)
             if isinstance(item, dict)
         ), path.name
+
+
+def test_approve_workflow_is_one_allowlisted_step() -> None:
+    wf = WorkflowParser.parse(APPROVE_PATH.read_text())
+    assert wf.id == "approve-change"
+    assert wf.requires_kits == ["profile-dev-kit"]
+    assert _raw_inputs(APPROVE_PATH) == ["repo_path", "change_id", "revision", "actor"]
+    assert wf.allowed_tools == ["profile_approve_change"]
+    assert [s.id for s in wf.steps] == ["approve"]
+    assert wf.steps[0].config["tool"] == "profile_approve_change"
+    assert "timeout" not in wf.steps[0].config
+    assert wf.steps[0].execution_strategy.type is StrategyType.FAIL

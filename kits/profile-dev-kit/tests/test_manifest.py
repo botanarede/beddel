@@ -26,6 +26,7 @@ _TOOLS = [
     "profile_record_report",
     "profile_read_report",
     "profile_declare_non_applicability",
+    "profile_approve_change",
 ]
 
 
@@ -95,6 +96,7 @@ def test_manifest_declares_all_workflows_and_python_targets() -> None:
         "read-report",
         "ratify-inventory",
         "declare-non-applicability",
+        "approve-change",
     ]
     declared = {t["name"] for t in manifest["tools"]}
     targeted = {t["name"] for t in manifest["targets"]["python"]["tools"]}

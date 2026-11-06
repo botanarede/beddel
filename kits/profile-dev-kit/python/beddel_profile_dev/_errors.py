@@ -11,6 +11,7 @@ from typing import Any
 from beddel.domain.errors import BeddelError
 
 __all__ = [
+    "PROFILE_APPROVAL_REFUSED",
     "PROFILE_ATTEMPT_CONFLICT",
     "PROFILE_ATTEMPT_UNSCOPED",
     "PROFILE_CHANGE_CONFLICT",
@@ -30,6 +31,9 @@ __all__ = [
     "PROFILE_REVIEW_UNSCOPED",
     "ProfileError",
 ]
+
+PROFILE_APPROVAL_REFUSED = "PROFILE_APPROVAL_REFUSED"
+"""Raised when a Change Approval cannot be accepted (nothing is written)."""
 
 PROFILE_ATTEMPT_UNSCOPED = "PROFILE_ATTEMPT_UNSCOPED"
 """Raised when an attempt cannot be scoped to a valid impact and snapshot."""
