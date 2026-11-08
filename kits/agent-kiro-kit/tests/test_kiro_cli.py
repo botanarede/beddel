@@ -7,11 +7,10 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from _helpers import make_context
 from beddel_agent_kiro.adapter import _DEFAULT_CLI_PATH, KiroCLIAgentAdapter
 
 from beddel.domain.errors import AgentError
-from beddel.domain.models import DefaultDependencies
+from beddel.domain.models import DefaultDependencies, ExecutionContext
 from beddel.domain.ports import IAgentAdapter
 from beddel.error_codes import (
     AGENT_EXECUTION_FAILED,
@@ -27,6 +26,11 @@ from beddel.primitives.agent_exec import AgentExecPrimitive
 _PROMPT = "Write a hello world program"
 _PATCH_EXEC = "beddel_agent_kiro.adapter.asyncio.create_subprocess_exec"
 _PATCH_WAIT = "beddel_agent_kiro.adapter.asyncio.wait_for"
+
+
+def _make_context(workflow_id: str) -> ExecutionContext:
+    """Build the execution context required by the registry primitive."""
+    return ExecutionContext(workflow_id=workflow_id, current_step_id="step-1")
 
 
 def _make_mock_process(
@@ -282,6 +286,17 @@ class TestExecute:
         }
 
     @pytest.mark.asyncio
+    async def test_subprocess_receives_no_cwd(self) -> None:
+        """Characterize today's inherited cwd; Story 7.2a is expected to change it."""
+        adapter = KiroCLIAgentAdapter()
+        mock_proc = _make_mock_process()
+
+        with patch(_PATCH_EXEC, return_value=mock_proc) as mock_exec:
+            await adapter.execute(_PROMPT)
+
+        assert "cwd" not in mock_exec.call_args.kwargs
+
+    @pytest.mark.asyncio
     async def test_non_zero_exit_code(self) -> None:
         adapter = KiroCLIAgentAdapter()
         mock_proc = _make_mock_process(
@@ -376,7 +391,7 @@ class TestRegistryRoundTrip:
         """Register adapter as 'kiro-cli', execute via AgentExecPrimitive."""
         # Arrange
         adapter = KiroCLIAgentAdapter()
-        ctx = make_context(workflow_id="wf-registry-roundtrip")
+        ctx = _make_context(workflow_id="wf-registry-roundtrip")
         ctx.deps = DefaultDependencies(agent_registry={"kiro-cli": adapter})
 
         mock_proc = _make_mock_process(stdout=b"hello", returncode=0)
@@ -401,7 +416,7 @@ class TestRegistryRoundTrip:
         """Verify usage metadata includes default model and timeout."""
         # Arrange
         adapter = KiroCLIAgentAdapter()
-        ctx = make_context(workflow_id="wf-registry-usage")
+        ctx = _make_context(workflow_id="wf-registry-usage")
         ctx.deps = DefaultDependencies(agent_registry={"kiro-cli": adapter})
 
         mock_proc = _make_mock_process(stdout=b"hello", returncode=0)
