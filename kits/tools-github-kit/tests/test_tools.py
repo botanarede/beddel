@@ -389,9 +389,13 @@ async def test_no_checks_at_grace_equal_to_max_wait_passes(
     fake_gh: tuple[Path, Path, Path],
 ) -> None:
     root, log, script = fake_gh
+    empty = json.dumps(_view([]))
+    # A slow first poll keeps a revert (grace counted from the end of the first
+    # poll) from hiding behind the max_wait check.
     _write_script(
         script,
-        *({"stdout": json.dumps(_view([]))} for _ in range(20)),
+        {"mode": "sleep", "seconds": 0.2, "stdout": empty},
+        *({"stdout": empty} for _ in range(20)),
     )
     result = await github_pr_checks_wait(
         cwd=str(root), number=7, interval=0.05, max_wait=0.3, grace=0.3

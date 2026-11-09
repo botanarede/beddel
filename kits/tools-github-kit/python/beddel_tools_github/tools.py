@@ -625,12 +625,6 @@ async def github_pr_merge(
         }
     if first_view["state"] != "OPEN":
         raise GitHubToolError(GITHUB_PR_NOT_OPEN, "The pull request is not open.")
-    head_sha = first_view["headRefOid"]
-    if expected_value is not None and head_sha != expected_value:
-        raise GitHubToolError(
-            GITHUB_PR_MISMATCH,
-            "The pull request does not match the requested number or head.",
-        )
     status, _names, failed = _rollup_status(first_view["statusCheckRollup"], command)
     if status in {"pending", "failed"}:
         raise _check_failure(status, failed)
