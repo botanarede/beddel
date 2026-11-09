@@ -256,6 +256,9 @@ def test_transport_failure_is_absorbed(
     assert result.returncode == 0, result.stderr
     output = json.loads(result.stdout)
     assert output["publish"] is None
+    assert output.get("_absorbed_errors") == [
+        {"step_id": "publish", "error_code": code}
+    ]
     assert "copy-destination.invalid" not in result.stdout
     assert "copy-destination.invalid" not in result.stderr
     assert "FAKE-MCP-MARKER" not in result.stdout
