@@ -503,13 +503,20 @@ async def git_fetch(
 
     Returns:
         Dict with keys: remote, pruned, updated_refs.
+
+    Raises:
+        GitToolError: If the fetch command exits non-zero or times out.
     """
     args: list[str] = ["fetch"]
     if prune:
         args.append("--prune")
     args.append(remote)
 
-    _code, _stdout, stderr = await _run_git(*args, cwd=cwd, timeout=300)
+    code, _stdout, stderr = await _run_git(*args, cwd=cwd, timeout=300)
+    if code != 0:
+        raise GitToolError(
+            command=f"git {' '.join(args)}", exit_code=code, stderr=stderr
+        )
 
     # Parse stderr for updated refs (git fetch outputs to stderr)
     updated_refs = 0

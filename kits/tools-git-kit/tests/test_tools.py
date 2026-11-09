@@ -1,12 +1,18 @@
 """Tests for tools-git-kit — all 10 typed async Git operations.
 
-Uses real temporary git repos (no mocking of git).
+Uses real temporary git repos; fetch edge cases spy on or patch the subprocess
+seam.
 """
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import os
+
 import pytest
 
+import beddel_tools_git.tools as git_tools
 from beddel_tools_git.tools import (
     GitToolError,
     _run_git,
@@ -332,6 +338,137 @@ class TestGitFetch:
         repo, _remote = git_repo_with_remote
         result = await git_fetch(prune=True, cwd=repo)
         assert result["pruned"] is True
+
+    async def test_fetch_unknown_remote_raises(self, git_repo: str) -> None:
+        with pytest.raises(GitToolError) as exc_info:
+            await git_fetch(remote="no-such-remote", cwd=git_repo)
+
+        exc = exc_info.value
+        assert exc.exit_code != 0
+        assert exc.command == "git fetch no-such-remote"
+        assert exc.stderr
+
+    async def test_fetch_nonzero_with_ref_lines_still_raises(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def fake_run_git(*_args: str, **_kwargs: object) -> tuple[int, str, str]:
+            return 128, "", " * [new branch] main -> origin/main\nfatal: x\n"
+
+        monkeypatch.setattr(git_tools, "_run_git", fake_run_git)
+
+        with pytest.raises(GitToolError) as exc_info:
+            await git_fetch()
+
+        exc = exc_info.value
+        assert exc.exit_code == 128
+        assert exc.command == "git fetch origin"
+        assert exc.stderr == " * [new branch] main -> origin/main\nfatal: x\n"
+
+    async def test_fetch_failure_hides_remote_credential(
+        self,
+        git_repo: str,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        marker = "credential-marker-7-0c"
+        await _run_git_checked(
+            "remote",
+            "add",
+            "origin",
+            f"https://probe-user:{marker}@example.invalid/x.git",
+            cwd=git_repo,
+        )
+        for variable in (
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "ALL_PROXY",
+            "http_proxy",
+            "https_proxy",
+            "all_proxy",
+        ):
+            monkeypatch.delenv(variable, raising=False)
+        monkeypatch.setenv("GIT_TERMINAL_PROMPT", "0")
+        monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+        monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+        caplog.set_level(logging.DEBUG)
+
+        with pytest.raises(GitToolError) as exc_info:
+            await git_fetch(cwd=git_repo)
+
+        exc = exc_info.value
+        assert marker not in str(exc)
+        assert marker not in exc.command
+        assert marker not in exc.stderr
+        assert marker not in caplog.text
+
+    async def test_fetch_success_keeps_argv_cwd_timeout(
+        self,
+        git_repo_with_remote: tuple[str, str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        repo, _remote = git_repo_with_remote
+        real_create_subprocess_exec = asyncio.create_subprocess_exec
+        real_wait_for = asyncio.wait_for
+        subprocess_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+        wait_timeouts: list[int] = []
+
+        async def spy_create_subprocess_exec(
+            *args: object, **kwargs: object
+        ) -> asyncio.subprocess.Process:
+            subprocess_calls.append((args, kwargs))
+            return await real_create_subprocess_exec(*args, **kwargs)
+
+        async def spy_wait_for(awaitable: object, *, timeout: int) -> object:
+            wait_timeouts.append(timeout)
+            return await real_wait_for(awaitable, timeout=timeout)
+
+        monkeypatch.setattr(
+            asyncio, "create_subprocess_exec", spy_create_subprocess_exec
+        )
+        monkeypatch.setattr(asyncio, "wait_for", spy_wait_for)
+
+        result = await git_fetch(prune=True, cwd=repo)
+
+        args, kwargs = subprocess_calls[-1]
+        assert args == ("git", "fetch", "--prune", "origin")
+        assert kwargs["cwd"] == repo
+        assert kwargs["stdout"] is asyncio.subprocess.PIPE
+        assert kwargs["stderr"] is asyncio.subprocess.PIPE
+        assert wait_timeouts[-1] == 300
+        assert set(result) == {"remote", "pruned", "updated_refs"}
+
+    async def test_fetch_timeout_raises(
+        self, git_repo: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def timeout_wait_for(awaitable: object, *, timeout: int) -> object:
+            awaitable.close()  # type: ignore[attr-defined]
+            raise asyncio.TimeoutError
+
+        monkeypatch.setattr(asyncio, "wait_for", timeout_wait_for)
+
+        with pytest.raises(GitToolError) as exc_info:
+            await git_fetch(cwd=git_repo)
+
+        exc = exc_info.value
+        assert exc.exit_code == -1
+        assert exc.stderr == "timeout"
+        assert exc.command == "git fetch origin"
+
+    async def test_fetch_unrecognized_output_reports_zero_refs(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def fake_run_git(*_args: str, **_kwargs: object) -> tuple[int, str, str]:
+            return 0, "", "unexpected line\n"
+
+        monkeypatch.setattr(git_tools, "_run_git", fake_run_git)
+
+        result = await git_fetch()
+
+        assert result == {
+            "remote": "origin",
+            "pruned": False,
+            "updated_refs": 0,
+        }
 
 
 # ---------------------------------------------------------------------------
