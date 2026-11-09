@@ -33,6 +33,29 @@ async for event in adapter.stream("Summarize changes"):
     print(event)
 ```
 
+## Delivery stages
+
+A Delivery stage declares trust through the step's `config.sandbox` value:
+
+- `read-only` uses `--trust-tools=`.
+- `workspace-write` uses `-a`.
+- Headless mode ignores `sandbox` and uses the adapter's `trust_tools`; the
+  default is `--trust-all-tools`.
+
+The step's `timeout` is the stage time bound. When `beddel run` builds this
+adapter with no constructor arguments, the adapter timeout is 600 seconds, so
+the step timeout must be at most 600 seconds. A step timeout kills and reaps
+the `kiro-cli` process. The subprocess inherits the repository cwd and
+environment and receives closed stdin. Login comes from the existing
+`kiro-cli` login or `KIRO_API_KEY` in the environment; credentials are never
+passed as command-line arguments.
+
+The CLI does not report changed files, so `files_changed` is always `[]` and a
+Delivery stage reads repository changes separately. Adapter errors use
+`BEDDEL-AGENT-701` for execution failures and `BEDDEL-AGENT-702` for adapter
+timeouts. A step timeout is raised as `BEDDEL-EXEC-005`; under the default FAIL
+strategy the step failure `BEDDEL-EXEC-002` wraps it as its cause.
+
 ## Headless Mode (CI/CD)
 
 For containers, CI/CD pipelines, and headless environments where browser-based SSO is unavailable, set the `KIRO_API_KEY` environment variable. The adapter automatically detects it and activates headless mode.
@@ -125,7 +148,8 @@ If all steps fail, an `AgentError(BEDDEL-AGENT-701)` is raised.
 
 ## Running Tests
 
+Run the kit tests from the kit directory with the Beddel SDK installed:
+
 ```bash
-cd repo/kits/agent-kiro-kit
-PYTHONPATH="python:../../src/beddel-py/tests" python -m pytest tests/ -x
+pytest -q
 ```

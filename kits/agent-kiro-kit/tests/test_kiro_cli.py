@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -287,7 +288,7 @@ class TestExecute:
 
     @pytest.mark.asyncio
     async def test_subprocess_receives_no_cwd(self) -> None:
-        """Characterize today's inherited cwd; Story 7.2a is expected to change it."""
+        """The subprocess inherits the repository cwd and environment."""
         adapter = KiroCLIAgentAdapter()
         mock_proc = _make_mock_process()
 
@@ -295,6 +296,8 @@ class TestExecute:
             await adapter.execute(_PROMPT)
 
         assert "cwd" not in mock_exec.call_args.kwargs
+        assert "env" not in mock_exec.call_args.kwargs
+        assert mock_exec.call_args.kwargs["stdin"] is asyncio.subprocess.DEVNULL
 
     @pytest.mark.asyncio
     async def test_non_zero_exit_code(self) -> None:
@@ -331,6 +334,28 @@ class TestExecute:
         assert exc_info.value.code == AGENT_TIMEOUT
         assert "BEDDEL-AGENT-702" in str(exc_info.value)
         assert exc_info.value.details["timeout"] == 5
+        mock_proc.kill.assert_called_once()
+        mock_proc.wait.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_cancellation_kills_the_process(self) -> None:
+        adapter = KiroCLIAgentAdapter()
+        mock_proc = _make_mock_process()
+        blocked = asyncio.Event()
+
+        async def _wait_forever() -> tuple[bytes, bytes]:
+            await blocked.wait()
+            return b"", b""
+
+        mock_proc.communicate.side_effect = _wait_forever
+
+        with patch(_PATCH_EXEC, return_value=mock_proc):
+            task = asyncio.create_task(adapter.execute(_PROMPT))
+            await asyncio.sleep(0)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
         mock_proc.kill.assert_called_once()
         mock_proc.wait.assert_awaited_once()
 

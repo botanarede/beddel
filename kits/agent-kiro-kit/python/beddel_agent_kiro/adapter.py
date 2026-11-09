@@ -5,6 +5,13 @@ agent-style interactions through the ``kiro-cli chat --no-interactive``
 command.  It implements the :class:`~beddel.domain.ports.IAgentAdapter`
 protocol via structural subtyping (no explicit inheritance).
 
+Each execution inherits the caller's cwd and environment, closes stdin,
+and is bounded by the constructor timeout.  Interactive trust maps
+``read-only`` to ``--trust-tools=`` and ``workspace-write`` to ``-a``;
+headless trust uses ``trust_tools`` or defaults to ``--trust-all-tools``.
+The CLI reports no changed-file list, so successful results always use
+``files_changed=[]``.
+
 The CLI is auto-discovered from ``~/.local/bin/kiro-cli`` or via
 ``shutil.which``.  If neither resolves, the adapter attempts a one-time
 auto-install from ``https://cli.kiro.dev/install``.
@@ -18,6 +25,7 @@ via the ``trust_tools`` constructor parameter.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import shutil
 import subprocess
@@ -38,13 +46,22 @@ __all__ = ["KiroCLIAgentAdapter"]
 _DEFAULT_CLI_PATH = Path.home() / ".local" / "bin" / "kiro-cli"
 
 
+async def _terminate(proc: asyncio.subprocess.Process) -> None:
+    """Terminate and reap a subprocess during timeout or cancellation."""
+    with contextlib.suppress(ProcessLookupError):
+        proc.kill()
+    await proc.wait()
+
+
 class KiroCLIAgentAdapter:
     """Kiro CLI agent adapter using subprocess execution.
 
     Implements the ``IAgentAdapter`` protocol structurally by exposing
     :meth:`execute` and :meth:`stream` with matching signatures.  All
     interaction with the Kiro CLI happens through
-    ``asyncio.create_subprocess_exec``.
+    ``asyncio.create_subprocess_exec``.  The subprocess inherits the
+    caller's cwd and environment, receives closed stdin, and is killed and
+    reaped on timeout or cancellation.
 
     Args:
         model: Default model identifier for CLI invocations.
@@ -52,8 +69,9 @@ class KiroCLIAgentAdapter:
             auto-discovered from ``~/.local/bin/kiro-cli``, then
             ``shutil.which``, then auto-installed from the official
             installer script.
-        timeout: Maximum execution time in seconds before the subprocess
-            is killed.
+        timeout: Maximum execution time in seconds.  The subprocess is
+            terminated and reaped when this bound expires or the caller
+            cancels the execution.
         api_key: Optional API key for headless mode.  When provided (or
             when ``KIRO_API_KEY`` env var is set), the adapter operates
             in headless mode where sandbox is ignored and tool trust is
@@ -171,7 +189,9 @@ class KiroCLIAgentAdapter:
 
         Returns:
             An :class:`AgentResult` with the CLI's stdout, exit code,
-            and execution metadata.
+            and execution metadata.  ``files_changed`` is always empty
+            because the CLI does not report a file list; callers reconcile
+            repository changes separately.
 
         Raises:
             AgentError: ``BEDDEL-AGENT-702`` on timeout, or
@@ -182,6 +202,7 @@ class KiroCLIAgentAdapter:
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -192,13 +213,15 @@ class KiroCLIAgentAdapter:
                 timeout=self._timeout,
             )
         except TimeoutError as exc:
-            proc.kill()
-            await proc.wait()
+            await _terminate(proc)
             raise AgentError(
                 code=AGENT_TIMEOUT,
                 message=f"Kiro CLI process timed out after {self._timeout}s",
                 details={"timeout": self._timeout, "cmd": [str(c) for c in cmd]},
             ) from exc
+        except asyncio.CancelledError:
+            await _terminate(proc)
+            raise
 
         stdout_text = stdout_bytes.decode("utf-8", errors="replace") if stdout_bytes else ""
         stderr_text = stderr_bytes.decode("utf-8", errors="replace") if stderr_bytes else ""
