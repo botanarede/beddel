@@ -410,8 +410,9 @@ Ratification and Approval remain separate human acts.
 `publish-reverification` takes `repo_path` and `change_id`. It first invokes
 `profile_read_reverification`, which is read-only and refuses in this order:
 `id.invalid`, `change.unrecorded`, `report.malformed`, `report.absent`,
-`reverification.not_recorded` for an older schema or a non-recorded entry, and
-`digest.mismatch`. Every refusal raises `PROFILE_PUBLICATION_REFUSED` and
+`reverification.not_recorded` for an older schema,
+`report.malformed` for an invalid latest record, `digest.mismatch`, and
+`reverification.not_recorded` for a non-recorded status. Every refusal raises `PROFILE_PUBLICATION_REFUSED` and
 leaves the records tree unchanged. The returned `reverification` value is the
 whole object parsed from the latest stored Report; it is not rebuilt.
 

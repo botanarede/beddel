@@ -33,12 +33,15 @@ def test_untracked_destination_terms_are_absent() -> None:
         for line in Path(terms_path).read_text().splitlines()
         if line.strip()
     ]
+    if not terms:
+        pytest.fail("BEDDEL_GUARD_TERMS_FILE contains no terms")
     root = Path(
         subprocess.check_output(
             ["git", "-C", str(KIT_ROOT), "rev-parse", "--show-toplevel"],
             text=True,
         ).strip()
     )
+    hits: list[str] = []
     for path in _tracked_text_files(root):
         try:
             text = path.read_text()
@@ -46,7 +49,9 @@ def test_untracked_destination_terms_are_absent() -> None:
             continue
         folded = text.casefold()
         for index, term in enumerate(terms):
-            assert term.casefold() not in folded, f"{path}:{index}"
+            if term.casefold() in folded:
+                hits.append(f"{path}: listed term #{index}")
+    assert hits == []
 
 
 def test_tracked_workflow_uses_a_non_routable_placeholder() -> None:

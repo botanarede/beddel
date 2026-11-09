@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +16,7 @@ from beddel_profile_dev._io import records_root
 from beddel_profile_dev.tools.report import profile_record_report
 
 from ._helpers import change_fixture
-from .test_publication import _recorded_publication_fixture
+from .test_publication import _recorded_publication_fixture, _records_snapshot
 from .test_report import _prepare
 from .test_run_cli import _beddel_argv
 
@@ -196,7 +197,8 @@ def _read_log(path: Path) -> list[dict[str, Any]]:
 def test_success_passes_the_stored_entry_unchanged(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    repo, _, stored = _shared_recorded(tmp_path, monkeypatch)
+    repo, records, stored = _shared_recorded(tmp_path, monkeypatch)
+    before = _records_snapshot(records)
     kits_dir = _kit_copy(tmp_path)
     _write_fake_protocol_kit(kits_dir)
     log = tmp_path / "mcp.jsonl"
@@ -214,6 +216,7 @@ def test_success_passes_the_stored_entry_unchanged(
     assert _read_log(log) == [
         {"tool": "write_copy", "arguments": {"entry": stored["reverification"]}}
     ]
+    assert _records_snapshot(records) == before
 
 
 @pytest.mark.parametrize(
@@ -233,11 +236,7 @@ def test_transport_failure_is_absorbed(
     code: str,
 ) -> None:
     repo, records, _ = _shared_recorded(tmp_path, monkeypatch)
-    before = {
-        str(path.relative_to(records)): path.read_bytes()
-        for path in records.rglob("*")
-        if path.is_file()
-    }
+    before = _records_snapshot(records)
     kits_dir = _kit_copy(tmp_path)
     _write_fake_protocol_kit(kits_dir)
     log = tmp_path / "mcp.jsonl"
@@ -256,64 +255,19 @@ def test_transport_failure_is_absorbed(
     )
     assert result.returncode == 0, result.stderr
     output = json.loads(result.stdout)
-    assert output.get("_absorbed_errors") == [
-        {"step_id": "publish", "error_code": code}
-    ], output
+    assert output["publish"] is None
+    assert "copy-destination.invalid" not in result.stdout
+    assert "copy-destination.invalid" not in result.stderr
     assert "FAKE-MCP-MARKER" not in result.stdout
     assert "FAKE-MCP-MARKER" not in result.stderr
-    assert {
-        str(path.relative_to(records)): path.read_bytes()
-        for path in records.rglob("*")
-        if path.is_file()
-    } == before
-
-
-def test_refusal_cases_do_not_call_the_fake_protocol(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    repo, records, revision = _prepare_refusal_fixture(tmp_path, monkeypatch)
-    kits_dir = _kit_copy(tmp_path)
-    _write_fake_protocol_kit(kits_dir)
-    log = tmp_path / "mcp.jsonl"
-    result = _run_json(
-        kits_dir / "profile-dev-kit/workflows/publish-reverification.yaml",
-        _inputs(repo),
-        tmp_path,
-        kits_dir,
-        FAKE_MCP_LOG=str(log),
-        FAKE_MCP_MODE="ok",
-    )
-    assert result.returncode == 1
-    assert "PROFILE_PUBLICATION_REFUSED" in result.stderr
-    assert "reverification.not_recorded" in result.stderr
-    assert not log.exists()
-    assert revision
-    assert records.exists()
-
-
-def _prepare_refusal_fixture(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> tuple[Path, Path, str]:
-    home = tmp_path / "home"
-    home.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setenv("HOME", str(home))
-    repo, _, revision = change_fixture(tmp_path, lambda path: None)
-    from beddel_profile_dev.tools.bind import profile_bind_inventory
-    from beddel_profile_dev.tools.change import profile_record_change
-    from beddel_profile_dev.tools.impact import profile_derive_impact
-
-    base = "HEAD~1"
-    profile_record_change(str(repo), "c1", base, revision)
-    profile_bind_inventory(str(repo), revision, "v1")
-    profile_derive_impact(str(repo), "c1", revision)
-    profile_record_report(str(repo), "c1", revision)
-    return repo, records_root(repo, "records/profile-dev"), revision
+    assert _records_snapshot(records) == before
 
 
 def test_composition_error_is_local_to_publication(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    repo, _, _ = _shared_recorded(tmp_path, monkeypatch)
+    repo, records, _ = _shared_recorded(tmp_path, monkeypatch)
+    before = _records_snapshot(records)
     kits_dir = _kit_copy(tmp_path)
     result = _run_json(
         kits_dir / "profile-dev-kit/workflows/publish-reverification.yaml",
@@ -323,6 +277,10 @@ def test_composition_error_is_local_to_publication(
     )
     assert result.returncode == 1
     assert "Error [BEDDEL-EXEC-050]" in result.stderr
+    assert not result.stdout.strip()
+    assert "read" not in result.stdout
+    assert "publish" not in result.stdout
+    assert _records_snapshot(records) == before
 
 
 def test_removed_publication_composition_leaves_read_report_usable(
@@ -330,6 +288,20 @@ def test_removed_publication_composition_leaves_read_report_usable(
 ) -> None:
     repo, _, _ = _shared_recorded(tmp_path, monkeypatch)
     kits_dir = _kit_copy(tmp_path)
+    publish_workflow = (
+        kits_dir / "profile-dev-kit/workflows/publish-reverification.yaml"
+    )
+    document = yaml.safe_load(publish_workflow.read_text())
+    document["steps"] = document["steps"][:1]
+    del document["mcp_servers"]
+    document["allowed_tools"].remove("copy_destination:write_copy")
+    publish_workflow.write_text(yaml.safe_dump(document, sort_keys=False))
+    result = _run_json(publish_workflow, _inputs(repo), tmp_path, kits_dir)
+    assert result.returncode == 0, result.stderr
+    output = json.loads(result.stdout)
+    assert output.get("read", {}).get("result", {}).get("reverification") is not None
+    assert "publish" not in output
+
     read_workflow = kits_dir / "profile-dev-kit/workflows/read-report.yaml"
     result = _run_json(read_workflow, _inputs(repo), tmp_path, kits_dir)
     assert result.returncode == 0, result.stderr
@@ -340,7 +312,8 @@ def test_removed_publication_composition_leaves_read_report_usable(
 def test_repeated_successful_publication_makes_two_identical_calls(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    repo, _, stored = _shared_recorded(tmp_path, monkeypatch)
+    repo, records, stored = _shared_recorded(tmp_path, monkeypatch)
+    before = _records_snapshot(records)
     kits_dir = _kit_copy(tmp_path)
     _write_fake_protocol_kit(kits_dir)
     log = tmp_path / "mcp.jsonl"
@@ -359,6 +332,7 @@ def test_repeated_successful_publication_makes_two_identical_calls(
         {"tool": "write_copy", "arguments": {"entry": stored["reverification"]}},
         {"tool": "write_copy", "arguments": {"entry": stored["reverification"]}},
     ]
+    assert _records_snapshot(records) == before
 
 
 def _run_publish(
@@ -381,12 +355,17 @@ def _run_publish(
 
 
 def _assert_cli_refusal(
-    result: subprocess.CompletedProcess[str], log: Path, reason: str
+    run: Callable[[], tuple[subprocess.CompletedProcess[str], Path]],
+    records: Path,
+    reason: str,
 ) -> None:
+    before = _records_snapshot(records)
+    result, log = run()
     assert result.returncode == 1
     assert "PROFILE_PUBLICATION_REFUSED" in result.stderr
     assert reason in result.stderr
     assert not log.exists()
+    assert _records_snapshot(records) == before
 
 
 def _shared_prepared(
@@ -402,9 +381,10 @@ def _shared_prepared(
 def test_cli_refuses_invalid_id_without_protocol_call(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    repo, _, _ = _shared_recorded(tmp_path, monkeypatch)
-    result, log = _run_publish(tmp_path, repo, "not valid")
-    _assert_cli_refusal(result, log, "id.invalid")
+    repo, records, _ = _shared_recorded(tmp_path, monkeypatch)
+    _assert_cli_refusal(
+        lambda: _run_publish(tmp_path, repo, "not valid"), records, "id.invalid"
+    )
 
 
 def test_cli_refuses_unrecorded_change_without_directory(
@@ -414,26 +394,28 @@ def test_cli_refuses_unrecorded_change_without_directory(
     home.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("HOME", str(home))
     repo, _, _ = change_fixture(tmp_path, lambda path: None)
-    result, log = _run_publish(tmp_path, repo)
-    _assert_cli_refusal(result, log, "change.unrecorded")
-    assert not records_root(repo, "records/profile-dev").exists()
+    records = records_root(repo, "records/profile-dev")
+    _assert_cli_refusal(
+        lambda: _run_publish(tmp_path, repo), records, "change.unrecorded"
+    )
+    assert not records.exists()
 
 
 def test_cli_refuses_absent_report_without_protocol_call(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    repo, _, _ = _shared_prepared(tmp_path, monkeypatch)
-    result, log = _run_publish(tmp_path, repo)
-    _assert_cli_refusal(result, log, "report.absent")
+    repo, records, _ = _shared_prepared(tmp_path, monkeypatch)
+    _assert_cli_refusal(lambda: _run_publish(tmp_path, repo), records, "report.absent")
 
 
 def test_cli_refuses_not_applicable_entry_without_protocol_call(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    repo, _, revision = _shared_prepared(tmp_path, monkeypatch)
+    repo, records, revision = _shared_prepared(tmp_path, monkeypatch)
     profile_record_report(str(repo), "c1", revision)
-    result, log = _run_publish(tmp_path, repo)
-    _assert_cli_refusal(result, log, "reverification.not_recorded")
+    _assert_cli_refusal(
+        lambda: _run_publish(tmp_path, repo), records, "reverification.not_recorded"
+    )
 
 
 def test_cli_refuses_older_schema_without_protocol_call(
@@ -452,8 +434,9 @@ def test_cli_refuses_older_schema_without_protocol_call(
             }
         )
     )
-    result, log = _run_publish(tmp_path, repo)
-    _assert_cli_refusal(result, log, "reverification.not_recorded")
+    _assert_cli_refusal(
+        lambda: _run_publish(tmp_path, repo), records, "reverification.not_recorded"
+    )
 
 
 def test_cli_refuses_malformed_report_without_protocol_call(
@@ -463,8 +446,9 @@ def test_cli_refuses_malformed_report_without_protocol_call(
     report_dir = records / "changes/c1/report"
     report_dir.mkdir()
     (report_dir / "1.json").write_text("not json")
-    result, log = _run_publish(tmp_path, repo)
-    _assert_cli_refusal(result, log, "report.malformed")
+    _assert_cli_refusal(
+        lambda: _run_publish(tmp_path, repo), records, "report.malformed"
+    )
 
 
 def test_cli_refuses_digest_mismatch_without_protocol_call(
@@ -477,5 +461,6 @@ def test_cli_refuses_digest_mismatch_without_protocol_call(
         if "/report/" not in item["ref"] and not item["ref"].endswith("change.json")
     )
     (records / ref).write_bytes(b"changed\n")
-    result, log = _run_publish(tmp_path, repo)
-    _assert_cli_refusal(result, log, "digest.mismatch")
+    _assert_cli_refusal(
+        lambda: _run_publish(tmp_path, repo), records, "digest.mismatch"
+    )

@@ -45,13 +45,14 @@ def _recorded_publication_fixture(
 
 
 def _assert_refusal(repo: Path, reason: str, records: Path | None = None) -> None:
+    before = _records_snapshot(records) if records is not None else None
     with pytest.raises(ProfileError) as error:
         profile_read_reverification(str(repo), "c1")
     assert error.value.code == PROFILE_PUBLICATION_REFUSED
     assert error.value.details == {"reason": reason}
     assert error.value.message == f"publication refused: {reason}"
     if records is not None:
-        assert records.exists()
+        assert _records_snapshot(records) == before
 
 
 def test_returns_the_stored_reverification_without_writing(
@@ -90,7 +91,7 @@ def test_refuses_when_change_is_unrecorded_and_creates_no_directory(
     repo, _, _ = change_fixture(tmp_path, lambda path: None)
     records = records_root(repo, "records/profile-dev")
     assert not records.exists()
-    _assert_refusal(repo, "change.unrecorded")
+    _assert_refusal(repo, "change.unrecorded", records)
     assert not records.exists()
 
 
@@ -139,13 +140,12 @@ def test_refuses_malformed_latest_report_without_writing(
 def test_refuses_invalid_latest_reads(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    repo, records, stored = _recorded_publication_fixture(tmp_path, monkeypatch)
+    repo, records, _ = _recorded_publication_fixture(tmp_path, monkeypatch)
     report_path = records / "changes/c1/report/2.json"
     report = json.loads(report_path.read_text())
     report["reads"] = [{"ref": "not-a-record", "sha256": "bad"}]
     report_path.write_text(json.dumps(report))
     _assert_refusal(repo, "report.malformed", records)
-    assert stored["reverification"] == report["reverification"]
 
 
 def test_refuses_when_a_report_read_digest_changes(
