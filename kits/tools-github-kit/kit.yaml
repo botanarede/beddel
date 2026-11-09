@@ -1,0 +1,34 @@
+name: tools-github-kit
+version: 0.1.0
+description: Typed GitHub pull request operations through the gh CLI
+author: Beddel Team
+tools:
+- name: github_pr_create_or_reuse
+  target: beddel_tools_github.tools:github_pr_create_or_reuse
+  description: Create or reuse one open GitHub pull request
+  category: github
+- name: github_pr_checks_wait
+  target: beddel_tools_github.tools:github_pr_checks_wait
+  description: Wait for configured GitHub pull request checks
+  category: github
+- name: github_pr_merge
+  target: beddel_tools_github.tools:github_pr_merge
+  description: Merge one checked GitHub pull request
+  category: github
+targets:
+  python:
+    status: implemented
+    module: beddel_tools_github
+    dependencies: []
+    tools:
+    - name: github_pr_create_or_reuse
+      target: beddel_tools_github.tools:github_pr_create_or_reuse
+    - name: github_pr_checks_wait
+      target: beddel_tools_github.tools:github_pr_checks_wait
+    - name: github_pr_merge
+      target: beddel_tools_github.tools:github_pr_merge
+  typescript:
+    status: unavailable
+    unavailable_reason: >
+      The tools drive the local gh executable with the machine's existing login
+      and have no TypeScript target.
