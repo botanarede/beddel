@@ -252,6 +252,12 @@
     "category": "tools"
   },
   {
+    "name": "tools-github-kit",
+    "version": "0.1.0",
+    "description": "Typed GitHub pull request operations through the gh CLI",
+    "category": "tools"
+  },
+  {
     "name": "tools-http-kit",
     "version": "0.1.0",
     "description": "HTTP request tool via httpx",
