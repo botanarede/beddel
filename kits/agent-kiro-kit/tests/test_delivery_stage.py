@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import signal
 import sys
 import time
 from pathlib import Path
@@ -12,7 +14,7 @@ import beddel_agent_kiro.adapter as adapter_module
 import pytest
 from beddel.domain.errors import AgentError, BeddelError
 from beddel.domain.executor import WorkflowExecutor
-from beddel.domain.models import DefaultDependencies
+from beddel.domain.models import DefaultDependencies, Workflow
 from beddel.domain.parser import WorkflowParser
 from beddel.domain.registry import PrimitiveRegistry
 from beddel.error_codes import (
@@ -53,6 +55,13 @@ if mode == "ok":
 elif mode == "fail":
     sys.exit(3)
 elif mode == "sleep":
+    time.sleep(60)
+elif mode == "grandchild":
+    import subprocess
+
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(8)"])
+    with open(os.environ["FAKE_KIRO_CHILD_LOG"], "w") as child_log:
+        child_log.write(str(child.pid))
     time.sleep(60)
 """
     )
@@ -198,18 +207,16 @@ async def test_adapter_timeout_kills_and_reaps_cli(
     _assert_pid_gone(int(_read_record(log_path)["pid"]))
 
 
-@pytest.mark.asyncio
-async def test_step_timeout_kills_cli_before_executor_returns(
-    fake_cli: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    cli_path, log_path = fake_cli
-    monkeypatch.setenv("FAKE_KIRO_MODE", "sleep")
+def _delivery_executor(
+    cli_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[WorkflowExecutor, Workflow]:
+    """Build an executor and a one-step Delivery workflow with a no-arg adapter."""
     monkeypatch.setattr(adapter_module, "_DEFAULT_CLI_PATH", cli_path)
     adapter = KiroCLIAgentAdapter()
     workflow = WorkflowParser.parse(
         """
-        id: delivery-timeout
-        name: Delivery timeout
+        id: delivery-stage
+        name: Delivery stage
         steps:
           - id: deliver
             primitive: agent-exec
@@ -226,6 +233,57 @@ async def test_step_timeout_kills_cli_before_executor_returns(
         registry,
         deps=DefaultDependencies(agent_registry={"kiro-cli": adapter}),
     )
+    return executor, workflow
+
+
+@pytest.mark.asyncio
+async def test_timeout_does_not_wait_for_a_child_holding_the_pipes(
+    fake_cli: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cli_path, log_path = fake_cli
+    child_log = log_path.with_name("fake-kiro-child.pid")
+    monkeypatch.setenv("FAKE_KIRO_MODE", "grandchild")
+    monkeypatch.setenv("FAKE_KIRO_CHILD_LOG", str(child_log))
+    adapter = KiroCLIAgentAdapter(cli_path=cli_path, timeout=1)
+
+    started = time.monotonic()
+    try:
+        with pytest.raises(AgentError) as exc_info:
+            await adapter.execute("prompt")
+        elapsed = time.monotonic() - started
+    finally:
+        # Release the pipes held by the grandchild so the loop can close them.
+        if child_log.exists():
+            os.kill(int(child_log.read_text()), signal.SIGKILL)
+        await asyncio.sleep(0.3)
+
+    assert exc_info.value.code == AGENT_TIMEOUT
+    assert elapsed < 6, "the reap must be bounded, the grandchild lives 8 s"
+    _assert_pid_gone(int(_read_record(log_path)["pid"]))
+
+
+@pytest.mark.asyncio
+async def test_agent_exec_step_result_has_the_three_adapter_keys(
+    fake_cli: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cli_path, _log_path = fake_cli
+    executor, workflow = _delivery_executor(cli_path, monkeypatch)
+
+    result = await executor.execute(workflow, {})
+
+    step_result = result["step_results"]["deliver"]
+    assert set(step_result) == {"output", "files_changed", "usage"}
+    assert step_result["output"] == "ok"
+    assert step_result["files_changed"] == []
+
+
+@pytest.mark.asyncio
+async def test_step_timeout_kills_cli_before_executor_returns(
+    fake_cli: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cli_path, log_path = fake_cli
+    monkeypatch.setenv("FAKE_KIRO_MODE", "sleep")
+    executor, workflow = _delivery_executor(cli_path, monkeypatch)
 
     with pytest.raises(BeddelError) as exc_info:
         await executor.execute(workflow, {})

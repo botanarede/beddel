@@ -46,11 +46,21 @@ __all__ = ["KiroCLIAgentAdapter"]
 _DEFAULT_CLI_PATH = Path.home() / ".local" / "bin" / "kiro-cli"
 
 
+_REAP_GRACE_SECONDS = 2.0
+
+
 async def _terminate(proc: asyncio.subprocess.Process) -> None:
-    """Terminate and reap a subprocess during timeout or cancellation."""
+    """Kill a subprocess during timeout or cancellation and bound the reap.
+
+    ``Process.wait`` only returns after the output pipes close, so a child
+    of the CLI that inherited them would otherwise keep a timed-out stage
+    waiting.  The direct child is reaped by the event loop either way.
+    """
     with contextlib.suppress(ProcessLookupError):
         proc.kill()
-    await proc.wait()
+    with contextlib.suppress(TimeoutError):
+        async with asyncio.timeout(_REAP_GRACE_SECONDS):
+            await proc.wait()
 
 
 class KiroCLIAgentAdapter:

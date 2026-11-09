@@ -342,8 +342,10 @@ class TestExecute:
         adapter = KiroCLIAgentAdapter()
         mock_proc = _make_mock_process()
         blocked = asyncio.Event()
+        started = asyncio.Event()
 
         async def _wait_forever() -> tuple[bytes, bytes]:
+            started.set()
             await blocked.wait()
             return b"", b""
 
@@ -351,7 +353,7 @@ class TestExecute:
 
         with patch(_PATCH_EXEC, return_value=mock_proc):
             task = asyncio.create_task(adapter.execute(_PROMPT))
-            await asyncio.sleep(0)
+            await started.wait()
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
