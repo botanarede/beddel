@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import math
 import os
 import re
 import subprocess
@@ -105,7 +106,12 @@ def _validate_number(number: object) -> int:
 
 
 def _validate_positive(value: object, argument: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or value <= 0
+    ):
         _refuse(argument)
     return float(value)
 
@@ -115,7 +121,11 @@ def _validate_wait_values(
 ) -> tuple[float, float, float]:
     interval_value = _validate_positive(interval, "interval")
     max_wait_value = _validate_positive(max_wait, "max_wait")
-    if isinstance(grace, bool) or not isinstance(grace, (int, float)):
+    if (
+        isinstance(grace, bool)
+        or not isinstance(grace, (int, float))
+        or not math.isfinite(grace)
+    ):
         _refuse("grace")
     grace_value = float(grace)
     if grace_value < 0 or grace_value > max_wait_value:
@@ -125,6 +135,15 @@ def _validate_wait_values(
 
 def _validate_timeout(timeout: object) -> float:
     return _validate_positive(timeout, "timeout")
+
+
+def _validate_spec_path(value: object) -> str:
+    spec_path = _validate_string(value, "spec_path")
+    if any(segment in {"", ".", ".."} for segment in spec_path.split("/")):
+        _refuse("spec_path")
+    if _SPEC_RE.fullmatch(spec_path) is None:
+        _refuse("spec_path")
+    return spec_path
 
 
 def _validate_sha(value: object, argument: str) -> str:
@@ -323,9 +342,7 @@ def _validate_create_args(
         _validate_pattern(branch, "branch", _BRANCH_RE),
         _validate_pattern(base, "base", _BRANCH_RE),
         _validate_pattern(story_key, "story_key", _STORY_RE),
-        _validate_pattern(spec_path, "spec_path", _SPEC_RE)
-        if all(segment not in {"", ".", ".."} for segment in str(spec_path).split("/"))
-        else _refuse("spec_path"),
+        _validate_spec_path(spec_path),
         _validate_pattern(change_id, "change_id", _CHANGE_RE),
         _validate_sha(revision, "revision"),
         _validate_timeout(timeout),
@@ -484,13 +501,14 @@ async def github_pr_checks_wait(
     cli = GitHubCLI(timeout=timeout_value)
     started = time.monotonic()
     empty_since: float | None = None
+    first_poll = True
     while True:
         view, rollup, command = await _read_checks(cli, cwd_value, number_value)
         status, names, failed = _rollup_status(rollup, command)
         now = time.monotonic()
         if status == "empty":
             if empty_since is None:
-                empty_since = now
+                empty_since = started if first_poll else now
             if now - empty_since >= grace_value:
                 return {
                     "number": number_value,
@@ -511,6 +529,7 @@ async def github_pr_checks_wait(
                 }
             if status == "failed":
                 raise _check_failure(status, failed)
+        first_poll = False
         elapsed = now - started
         if elapsed >= max_wait_value:
             raise GitHubToolError(GITHUB_CHECKS_PENDING, "Checks are still pending.")
@@ -582,6 +601,12 @@ async def github_pr_merge(
     ):
         raise _invalid_output(command)
     if first_view["number"] != number_value:
+        raise GitHubToolError(
+            GITHUB_PR_MISMATCH,
+            "The pull request does not match the requested number or head.",
+        )
+    head_sha = first_view["headRefOid"]
+    if expected_value is not None and head_sha != expected_value:
         raise GitHubToolError(
             GITHUB_PR_MISMATCH,
             "The pull request does not match the requested number or head.",

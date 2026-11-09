@@ -155,6 +155,24 @@ async def test_create_no_pr_creates_and_lists_again(
 
 
 @pytest.mark.asyncio
+async def test_create_requires_one_pr_after_creation(
+    fake_gh: tuple[Path, Path, Path],
+) -> None:
+    root, _log, script = fake_gh
+    _write_script(script, {"stdout": "[]"}, {"stdout": "created"}, {"stdout": "[]"})
+    with pytest.raises(GitHubToolError) as exc:
+        await github_pr_create_or_reuse(
+            cwd=str(root),
+            branch="feature/one",
+            story_key="7-2b",
+            spec_path="spec.md",
+            change_id="chg-1",
+            revision=_SHA,
+        )
+    _assert_code(exc, GITHUB_OUTPUT_INVALID)
+
+
+@pytest.mark.asyncio
 async def test_open_pr_reused_on_rerun(fake_gh: tuple[Path, Path, Path]) -> None:
     root, log, script = fake_gh
     _write_script(
@@ -260,6 +278,15 @@ async def test_checks_passed(fake_gh: tuple[Path, Path, Path]) -> None:
         "no_checks": False,
         "checks": ["lint", "ci"],
     }
+    entry = _read_log(_log)[0]
+    assert entry["argv"] == [
+        "pr",
+        "view",
+        "7",
+        "--json",
+        "number,state,headRefOid,statusCheckRollup",
+    ]
+    assert entry["cwd"] == str(root)
 
 
 @pytest.mark.asyncio
@@ -328,13 +355,49 @@ async def test_no_checks_waits_for_grace_then_passes(
 ) -> None:
     root, log, script = fake_gh
     _write_script(
-        script, {"stdout": json.dumps(_view([]))}, {"stdout": json.dumps(_view([]))}
+        script,
+        *({"stdout": json.dumps(_view([]))} for _ in range(20)),
     )
     result = await github_pr_checks_wait(
-        cwd=str(root), number=7, interval=0.01, max_wait=1, grace=0.02
+        cwd=str(root), number=7, interval=0.05, max_wait=1, grace=0.3
     )
     assert result["no_checks"] is True and result["checks"] == []
-    assert len(_read_log(log)) == 3 or len(_read_log(log)) == 2
+    assert len(_read_log(log)) >= 2
+
+
+@pytest.mark.asyncio
+async def test_no_checks_waits_full_grace_before_first_acceptance(
+    fake_gh: tuple[Path, Path, Path],
+) -> None:
+    root, log, script = fake_gh
+    _write_script(
+        script,
+        *({"stdout": json.dumps(_view([]))} for _ in range(20)),
+    )
+    started = time.monotonic()
+    result = await github_pr_checks_wait(
+        cwd=str(root), number=7, interval=0.05, max_wait=10, grace=0.3
+    )
+    elapsed = time.monotonic() - started
+    assert result["no_checks"] is True and result["checks"] == []
+    assert elapsed >= 0.3
+    assert len(_read_log(log)) >= 2
+
+
+@pytest.mark.asyncio
+async def test_no_checks_at_grace_equal_to_max_wait_passes(
+    fake_gh: tuple[Path, Path, Path],
+) -> None:
+    root, log, script = fake_gh
+    _write_script(
+        script,
+        *({"stdout": json.dumps(_view([]))} for _ in range(20)),
+    )
+    result = await github_pr_checks_wait(
+        cwd=str(root), number=7, interval=0.05, max_wait=0.3, grace=0.3
+    )
+    assert result["no_checks"] is True
+    assert len(_read_log(log)) >= 2
 
 
 @pytest.mark.asyncio
@@ -362,14 +425,26 @@ async def test_merge_runs_pinned_merge_and_verifies_state(
         "merge_sha": _SHA2,
         "merge_method": "squash",
     }
-    assert _read_log(log)[1]["argv"] == [
-        "pr",
-        "merge",
-        "7",
-        "--squash",
-        "--match-head-commit",
-        _SHA,
+    entries = _read_log(log)
+    assert [entry["argv"] for entry in entries] == [
+        [
+            "pr",
+            "view",
+            "7",
+            "--json",
+            "number,state,headRefOid,mergeCommit,statusCheckRollup",
+        ],
+        [
+            "pr",
+            "merge",
+            "7",
+            "--squash",
+            "--match-head-commit",
+            _SHA,
+        ],
+        ["pr", "view", "7", "--json", "number,state,mergeCommit"],
     ]
+    assert all(entry["cwd"] == str(root) for entry in entries)
 
 
 @pytest.mark.asyncio
@@ -391,8 +466,33 @@ async def test_merge_rerun_returns_already_merged(
             )
         },
     )
-    result = await github_pr_merge(cwd=str(root), number=7)
+    result = await github_pr_merge(cwd=str(root), number=7, expected_head_sha=_SHA)
     assert result["already_merged"] is True and result["merge_sha"] == _SHA2
+    assert len(_read_log(log)) == 1
+
+
+@pytest.mark.asyncio
+async def test_merged_pr_head_mismatch_is_rejected(
+    fake_gh: tuple[Path, Path, Path],
+) -> None:
+    root, log, script = fake_gh
+    _write_script(
+        script,
+        {
+            "stdout": json.dumps(
+                {
+                    "number": 7,
+                    "state": "MERGED",
+                    "headRefOid": _SHA,
+                    "mergeCommit": {"oid": _SHA2},
+                    "statusCheckRollup": [],
+                }
+            )
+        },
+    )
+    with pytest.raises(GitHubToolError) as exc:
+        await github_pr_merge(cwd=str(root), number=7, expected_head_sha=_SHA2)
+    _assert_code(exc, GITHUB_PR_MISMATCH)
     assert len(_read_log(log)) == 1
 
 
@@ -503,17 +603,48 @@ async def test_timeout_and_grandchild_are_bounded(
     pid = int(_read_log(log)[0]["pid"])
     _assert_pid_gone(pid)
     child_log = root / "child.pid"
-    os.environ["FAKE_GH_CHILD_LOG"] = str(child_log)
+    monkeypatch.setenv("FAKE_GH_CHILD_LOG", str(child_log))
     _write_script(script, {"mode": "grandchild", "seconds": 60})
-    monkeypatch_path = os.environ.get("FAKE_GH_CHILD_LOG")
-    assert monkeypatch_path == str(child_log)
-    with pytest.raises(GitHubToolError):
-        await github_pr_checks_wait(
-            cwd=str(root), number=7, timeout=0.2, grace=0, max_wait=1
-        )
-    if child_log.exists():
-        os.kill(int(child_log.read_text()), signal.SIGKILL)
-    await asyncio.sleep(0.3)
+    child_pid: int | None = None
+    try:
+        started = time.monotonic()
+        with pytest.raises(GitHubToolError) as exc:
+            await github_pr_checks_wait(
+                cwd=str(root), number=7, timeout=0.2, grace=0, max_wait=1
+            )
+        assert exc.value.code == GITHUB_CLI_TIMEOUT
+        assert time.monotonic() - started < 6
+        gh_pid = int(_read_log(log)[1]["pid"])
+        _assert_pid_gone(gh_pid)
+        child_pid = int(child_log.read_text())
+    finally:
+        if child_log.exists():
+            child_pid = int(child_log.read_text())
+            try:
+                os.kill(child_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        if child_pid is not None:
+            _assert_pid_gone(child_pid)
+
+
+@pytest.mark.asyncio
+async def test_cancellation_kills_gh_and_reraises(
+    fake_gh: tuple[Path, Path, Path],
+) -> None:
+    root, log, script = fake_gh
+    _write_script(script, {"mode": "sleep", "seconds": 60})
+    task = asyncio.create_task(
+        github_pr_checks_wait(cwd=str(root), number=7, grace=0, max_wait=60)
+    )
+    for _ in range(100):
+        if log.exists():
+            break
+        await asyncio.sleep(0.01)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    _assert_pid_gone(int(_read_log(log)[0]["pid"]))
 
 
 def _assert_pid_gone(pid: int) -> None:
@@ -548,6 +679,38 @@ async def test_subprocess_contract_uses_closed_stdin_and_no_env(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("argument", "value"),
+    [
+        ("timeout", float("nan")),
+        ("timeout", float("inf")),
+        ("interval", float("nan")),
+        ("interval", float("inf")),
+        ("max_wait", float("nan")),
+        ("max_wait", float("inf")),
+        ("grace", float("nan")),
+        ("grace", float("inf")),
+    ],
+)
+async def test_nonfinite_wait_values_are_refused(
+    fake_gh: tuple[Path, Path, Path], argument: str, value: float
+) -> None:
+    root, log, _script = fake_gh
+    with pytest.raises(GitHubToolError) as exc:
+        await github_pr_checks_wait(
+            cwd=str(root),
+            number=7,
+            interval=value if argument == "interval" else 0.01,
+            max_wait=value if argument == "max_wait" else 1,
+            grace=value if argument == "grace" else 0,
+            timeout=value if argument == "timeout" else 1,
+        )
+    _assert_code(exc, GITHUB_ARGUMENT_REFUSED)
+    assert exc.value.details == {"argument": argument}
+    assert not log.exists()
+
+
+@pytest.mark.asyncio
 async def test_argument_validation_never_runs(fake_gh: tuple[Path, Path, Path]) -> None:
     root, log, _script = fake_gh
     with pytest.raises(GitHubToolError) as exc:
@@ -577,6 +740,8 @@ async def test_argument_validation_never_runs(fake_gh: tuple[Path, Path, Path]) 
             revision=_SHA,
         )
     _assert_code(exc, GITHUB_ARGUMENT_REFUSED)
+    assert token not in str(exc.value)
+    assert exc.value.details == {"argument": "branch"}
     not_a_directory = root / "not-a-directory"
     not_a_directory.write_text("file")
     with pytest.raises(GitHubToolError) as exc:
