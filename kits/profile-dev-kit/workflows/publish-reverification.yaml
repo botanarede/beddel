@@ -1,0 +1,35 @@
+id: publish-reverification
+name: Publish Re-verification copy
+description: Publishes a one-way copy of the recorded Re-verification entry of the latest stored Report through the configured MCP destination. The copy never blocks a verification and is never read back.
+version: "1.0"
+requires_kits:
+  - profile-dev-kit
+mcp_servers:
+  copy_destination:
+    transport: mcp-streamable-http
+    endpoint: https://copy-destination.invalid/mcp
+    authorization: oauth
+allowed_tools:
+  - profile_read_reverification
+  - copy_destination:write_copy
+inputs:
+  - repo_path
+  - change_id
+steps:
+  - id: read
+    primitive: tool
+    config:
+      tool: profile_read_reverification
+      arguments:
+        repo_path: "$input.repo_path"
+        change_id: "$input.change_id"
+  - id: publish
+    primitive: tool
+    execution_strategy:
+      type: skip
+    config:
+      mcp_server: copy_destination
+      tool: write_copy
+      timeout: 60
+      arguments:
+        entry: "$stepResult.read.result.reverification"

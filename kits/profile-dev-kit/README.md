@@ -7,11 +7,11 @@ the required environment keys are present (key names only, never values).
 
 Status: Story 5.2. Entry workflows `verify-change`, `read-report`,
 `ratify-inventory`, `declare-non-applicability`, `record-approval-decision`,
-`approve-change` and `read-approval`; tools `profile_preflight`,
+`approve-change`, `read-approval` and `publish-reverification`; tools `profile_preflight`,
 `profile_ratify_inventory`, `profile_bind_inventory`, `profile_record_change`,
 `profile_derive_impact`, `profile_open_attempt`, `profile_run_gate`,
 `profile_run_review`, `profile_capture_evidence`, `profile_record_report`,
-`profile_read_report`, `profile_declare_non_applicability`,
+`profile_read_report`, `profile_read_reverification`, `profile_declare_non_applicability`,
 `profile_record_approval_decision`, `profile_approve_change` and
 `profile_read_approval`.
 
@@ -24,8 +24,11 @@ python/beddel_profile_dev/tools/approval.py
                                  Approval verification, persistence and read-back
 python/beddel_profile_dev/tools/approval_decision.py
                                  Approval decision transport
+python/beddel_profile_dev/tools/publication.py
+                                 Read-only Re-verification copy source
 workflows/                       entry workflows, including
-                                 record-approval-decision and read-approval
+                                 record-approval-decision, read-approval and
+                                 publish-reverification
 tests/                           kit tests (no network, no real credential)
 ```
 
@@ -401,3 +404,24 @@ then `decision.commit_invalid`, `decision.unreachable`, `decision.absent`,
 Every refusal raises `PROFILE_APPROVAL_REFUSED` and writes nothing. An invalid
 repository path or records root keeps `PROFILE_REPOSITORY_INVALID`.
 Ratification and Approval remain separate human acts.
+
+## Re-verification copy (Story 7.1b)
+
+`publish-reverification` takes `repo_path` and `change_id`. It first invokes
+`profile_read_reverification`, which is read-only and refuses in this order:
+`id.invalid`, `change.unrecorded`, `report.malformed`, `report.absent`,
+`reverification.not_recorded` for an older schema or a non-recorded entry, and
+`digest.mismatch`. Every refusal raises `PROFILE_PUBLICATION_REFUSED` and
+leaves the records tree unchanged. The returned `reverification` value is the
+whole object parsed from the latest stored Report; it is not rebuilt.
+
+The workflow's copy step is skip-on-error. A failed copy appears only in the
+run's `_absorbed_errors` as its step identity and stable error code. It never
+changes the Verification Report or creates a publication record. The tracked
+workflow uses the neutral key `copy_destination`, the placeholder endpoint
+`https://copy-destination.invalid/mcp`, the placeholder tool `write_copy` and
+the `entry` argument. The operator copy, kept outside every repository,
+replaces those placeholders, adds any literal arguments and the matching
+qualified `allowed_tools` entry. Consent is obtained outside a run with
+`python -m beddel_protocol_mcp.authorize`. Nothing returned by the copy is
+read back or stored.
