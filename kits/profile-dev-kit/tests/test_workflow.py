@@ -16,6 +16,7 @@ READ_REPORT_PATH = WORKFLOWS_DIR / "read-report.yaml"
 APPROVE_PATH = WORKFLOWS_DIR / "approve-change.yaml"
 RECORD_DECISION_PATH = WORKFLOWS_DIR / "record-approval-decision.yaml"
 READ_APPROVAL_PATH = WORKFLOWS_DIR / "read-approval.yaml"
+PUBLISH_PATH = WORKFLOWS_DIR / "publish-reverification.yaml"
 
 
 def _load() -> Workflow:
@@ -42,7 +43,11 @@ def _walk(steps: list[Step] | None) -> Iterator[Step]:
 
 def _tool_names(steps: list[Step]) -> set[str]:
     return {
-        str(s.config["tool"])
+        (
+            f"{s.config['mcp_server']}:{s.config['tool']}"
+            if "mcp_server" in s.config
+            else str(s.config["tool"])
+        )
         for s in _walk(steps)
         if s.primitive == "tool" and "tool" in s.config
     }
@@ -108,7 +113,7 @@ def test_allowlist_equals_the_tools_the_steps_name() -> None:
         "profile_capture_evidence",
         "profile_record_report",
     ]
-    assert len(list(WORKFLOWS_DIR.glob("*.yaml"))) == 7
+    assert len(list(WORKFLOWS_DIR.glob("*.yaml"))) == 8
 
 
 def test_review_step_outlives_the_largest_accepted_review_budget() -> None:
@@ -186,7 +191,7 @@ def test_read_report_workflow_is_one_allowlisted_step() -> None:
     assert wf.steps[0].execution_strategy.type is StrategyType.FAIL
 
 
-def test_no_workflow_declares_mcp_servers_or_mcp_server_steps() -> None:
+def test_only_the_publish_step_names_an_mcp_server() -> None:
     def walk(value: object) -> Iterator[dict[object, object]]:
         if isinstance(value, dict):
             yield value
@@ -199,12 +204,29 @@ def test_no_workflow_declares_mcp_servers_or_mcp_server_steps() -> None:
     for path in sorted(WORKFLOWS_DIR.glob("*.yaml")):
         document = yaml.safe_load(path.read_text())
         assert isinstance(document, dict)
-        assert "mcp_servers" not in document
-        assert all(
-            item.get("primitive") != "mcp_server"
-            for item in walk(document)
-            if isinstance(item, dict)
-        ), path.name
+        mappings = list(walk(document))
+        assert all(item.get("primitive") != "mcp_server" for item in mappings), (
+            path.name
+        )
+        if path != PUBLISH_PATH:
+            assert "mcp_servers" not in document
+            assert all("mcp_server" not in item for item in mappings), path.name
+
+    published = yaml.safe_load(PUBLISH_PATH.read_text())
+    assert set(published["mcp_servers"]) == {"copy_destination"}
+    assert (
+        published["mcp_servers"]["copy_destination"]["endpoint"]
+        .split("/")[2]
+        .endswith(".invalid")
+    )
+    publish = WorkflowParser.parse(PUBLISH_PATH.read_text())
+    assert publish.allowed_tools == [
+        "profile_read_reverification",
+        "copy_destination:write_copy",
+    ]
+    assert _tool_names(publish.steps) == set(publish.allowed_tools)
+    assert [step.id for step in publish.steps] == ["read", "publish"]
+    assert publish.steps[1].execution_strategy.type is StrategyType.SKIP
 
 
 def test_approve_workflow_is_one_allowlisted_step() -> None:

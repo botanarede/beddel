@@ -26,6 +26,7 @@ __all__ = [
     "PROFILE_INVENTORY_INTEGRITY_BLOCK",
     "PROFILE_INVENTORY_UNRATIFIED",
     "PROFILE_PREFLIGHT_FAILED",
+    "PROFILE_PUBLICATION_REFUSED",
     "PROFILE_RATIFICATION_REFUSED",
     "PROFILE_REPOSITORY_INVALID",
     "PROFILE_REVIEW_UNSCOPED",
@@ -46,6 +47,9 @@ PROFILE_ATTEMPT_CONFLICT = "PROFILE_ATTEMPT_CONFLICT"
 
 PROFILE_PREFLIGHT_FAILED = "PROFILE_PREFLIGHT_FAILED"
 """Raised when one or more preflight checks fail."""
+
+PROFILE_PUBLICATION_REFUSED = "PROFILE_PUBLICATION_REFUSED"
+"""Raised when no recorded Re-verification can be read for publication (nothing is written)."""
 
 PROFILE_RATIFICATION_REFUSED = "PROFILE_RATIFICATION_REFUSED"
 """Raised when an inventory version cannot be ratified (nothing is written)."""

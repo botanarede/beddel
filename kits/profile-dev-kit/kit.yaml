@@ -77,6 +77,10 @@ tools:
     target: "beddel_profile_dev.tools.report:profile_read_report"
     description: "Read the latest persisted Verification Report and its append-only history"
     category: profile
+  - name: profile_read_reverification
+    target: "beddel_profile_dev.tools.publication:profile_read_reverification"
+    description: "Read the recorded Re-verification entry of the latest stored Report without writing records"
+    category: profile
   - name: profile_declare_non_applicability
     target: "beddel_profile_dev.tools.determine:profile_declare_non_applicability"
     description: "Record the maintainer's determination that an obligation with an absent target is not applicable (transport only)"
@@ -101,6 +105,9 @@ workflows:
   - name: read-report
     path: workflows/read-report.yaml
     description: Reads the latest persisted Verification Report and its history without running verification or writing records
+  - name: publish-reverification
+    path: workflows/publish-reverification.yaml
+    description: Publishes a one-way copy of the recorded Re-verification entry through the configured MCP destination; never blocks a verification
   - name: ratify-inventory
     path: workflows/ratify-inventory.yaml
     description: Records the ratification of an inventory version
@@ -145,6 +152,8 @@ targets:
         target: "beddel_profile_dev.tools.report:profile_record_report"
       - name: profile_read_report
         target: "beddel_profile_dev.tools.report:profile_read_report"
+      - name: profile_read_reverification
+        target: "beddel_profile_dev.tools.publication:profile_read_reverification"
       - name: profile_declare_non_applicability
         target: "beddel_profile_dev.tools.determine:profile_declare_non_applicability"
       - name: profile_approve_change
