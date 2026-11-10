@@ -104,8 +104,8 @@ def branch_reason(branch: object, base_ref: object) -> str | None:
         branch in PROTECTED_BRANCHES
         or branch == base_ref
         or branch.startswith("-")
-        or branch.endswith(("/", ".", ".lock"))
-        or any(part.startswith(".") for part in parts)
+        or branch.endswith(("/", "."))
+        or any(p.startswith(".") or p.endswith(".lock") for p in parts)
         or ".." in branch
         or "//" in branch
         or "@{" in branch

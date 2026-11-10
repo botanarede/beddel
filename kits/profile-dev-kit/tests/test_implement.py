@@ -49,7 +49,7 @@ def test_pure_unit_contract():
     assert spec_units(spec_bytes(),STORY) == (Unit("u1",("src/one.py",),"feat(core): add one"),Unit("u2",("src/two.py",),"feat(core): add two"))
     assert spec_units(spec_bytes([{"id":"bad id","paths":["x"],"subject":"feat: x"}]),STORY) is None
     assert branch_reason("main","origin/main") == "branch.protected"; assert branch_reason("feat/x","feat/x") == "branch.protected"
-    assert branch_reason("../bad","main") == "branch.invalid"; assert branch_reason("feat/x","main") is None
+    assert branch_reason("../bad","main") == branch_reason("feat.lock/x","main") == "branch.invalid"; assert branch_reason("feat/x","main") is None
     assert covered(("src",),"src/a.py") and covered(("src/a.py",),"src/a.py") and not covered(("src/a.py",),"src/ab.py")
     subject, trailers = commit_message(Unit("u1",("x",),"feat: x"),STORY)
     assert subject == "feat: x" and trailer_unit(f"{subject}\n\n{trailers}\n",STORY) == "u1"
@@ -114,4 +114,10 @@ def test_size_baseline_and_invalid_branches(tmp_path, monkeypatch):
     for branch in ("feat/x.lock","feat/.x"):
         repo3, base3 = _repo(tmp_path / branch.replace("/","_")); monkeypatch.chdir(repo3); monkeypatch.setenv("PATH",stub_gate_tools(tmp_path)); assert profile_implement_prepare(str(repo3),STORY,SPEC_PATH,branch,base3)["reason"] == "branch.invalid"
     repo4, base4 = _repo(tmp_path / "baseline"); prepared4 = _prepare(repo4,base4,monkeypatch); prepared4["baseline"] = [{"name":"wrong"}]; (repo4 / "src/one.py").write_text("one\n"); assert _settle(repo4,base4,prepared4)["reason"] == "prepare.mismatch"
+
+def test_rename_head_base_foreign_trailer_and_unborn_head(tmp_path, monkeypatch):
+    repo, base = _repo(tmp_path / "mv", [{"id":"u1","paths":["src"],"subject":"feat: one"}]); prepared = _prepare(repo,base,monkeypatch); git(repo,"mv","src/base.py","src/new.py"); assert _settle(repo,base,prepared)["reason"] == "unit.committed"
+    repo, base = _repo(tmp_path / "head"); prepared = _prepare(repo,"HEAD",monkeypatch); (repo / "src/one.py").write_text("one\n"); assert _settle(repo,"HEAD",prepared)["reason"] == "unit.committed"; assert _prepare(repo,"HEAD",monkeypatch)["reason"] == "branch.protected"
+    repo, base = _repo(tmp_path / "foreign"); git(repo,"switch","-q","-c",BRANCH); git(repo,"commit","-q","--allow-empty","-m","feat: x","-m",f"Story-Key: {STORY}\nImplementation-Unit: zz"); git(repo,"switch","-q","-"); assert _prepare(repo,base,monkeypatch)["refs"]["completed"] == 0
+    repo, base = _repo(tmp_path / "orphan"); prepared = _prepare(repo,base,monkeypatch); git(repo,"switch","-q","--orphan","x"); assert _settle(repo,base,prepared)["reason"] == "branch.moved"
 # fmt: on

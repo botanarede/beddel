@@ -173,6 +173,10 @@ def _git_text(result: Any) -> str | None:
     return result.stdout.decode("utf-8", "replace").strip()
 
 
+def _repo_error() -> ProfileError:
+    return ProfileError("PROFILE_REPOSITORY_INVALID", "repository or revision invalid")
+
+
 def _symbolic_branch(repo: Path) -> str | None:
     value = _git_text(git_run(repo, "symbolic-ref", "-q", "HEAD"))
     return value.removeprefix("refs/heads/") if value is not None else None
@@ -181,9 +185,7 @@ def _symbolic_branch(repo: Path) -> str | None:
 def _completed(repo: Path, base: str, story_key: str) -> set[str]:
     result = git_run(repo, "log", "-z", "--reverse", "--format=%H%n%B", f"{base}..HEAD")
     if result is None or result.returncode != 0:
-        raise ProfileError(
-            "PROFILE_REPOSITORY_INVALID", "repository or revision invalid"
-        )
+        raise _repo_error()
     completed: set[str] = set()
     for raw in result.stdout.split(b"\x00"):
         if not raw:
@@ -237,15 +239,10 @@ def _candidate_tree(repo: Path, paths: tuple[str, ...]) -> str:
         for args in (("read-tree", "HEAD"), ("add", "-A", "--", *paths)):
             result = git_run(repo, *args, index_file=index)
             if result is None or result.returncode != 0:
-                raise ProfileError(
-                    "PROFILE_REPOSITORY_INVALID", "repository or revision invalid"
-                )
-        result = git_run(repo, "write-tree", index_file=index)
-        value = _git_text(result)
+                raise _repo_error()
+        value = _git_text(git_run(repo, "write-tree", index_file=index))
         if value is None:
-            raise ProfileError(
-                "PROFILE_REPOSITORY_INVALID", "repository or revision invalid"
-            )
+            raise _repo_error()
         return value
 
 
@@ -317,15 +314,16 @@ def profile_implement_prepare(
         base_sha = resolve_revision(repo, base)
     except ProfileError:
         return _refusal(story, "base.invalid", spec_path=spec, branch=branch_name)
+    symbolic = _git_text(git_run(repo, "rev-parse", "--symbolic-full-name", base))
+    if symbolic == f"refs/heads/{branch_name}":
+        return _refusal(story, "branch.protected", spec_path=spec, branch=branch_name)
     if Path(os.path.realpath(os.getcwd())) != repo:
         return _refusal(story, "cwd.mismatch", spec_path=spec, branch=branch_name)
     data, error = _read_spec(repo, spec)
-    if error == "spec.absent":
-        return _refusal(story, error, spec_path=spec, branch=branch_name)
     if error is not None or data is None:
-        return _refusal(
-            story, error or "spec.unreadable", spec_path=spec, branch=branch_name
-        )
+        reason = error if error == "spec.absent" else "spec.unreadable"
+        return _refusal(story, reason, spec_path=spec, branch=branch_name)
+    digest = hashlib.sha256(data).hexdigest()
     if not spec_complete(data, story):
         return _refusal(story, "spec.incomplete", spec_path=spec, branch=branch_name)
     units = spec_units(data, story)
@@ -346,9 +344,7 @@ def profile_implement_prepare(
 
     ref = git_run(repo, "show-ref", "--verify", "--quiet", f"refs/heads/{branch_name}")
     if ref is None or ref.returncode not in (0, 1):
-        raise ProfileError(
-            "PROFILE_REPOSITORY_INVALID", "repository or revision invalid"
-        )
+        raise _repo_error()
     if ref.returncode == 0:
         tip = resolve_revision(repo, f"refs/heads/{branch_name}")
         merge = git_run(repo, "merge-base", base_sha, tip)
@@ -387,23 +383,26 @@ def profile_implement_prepare(
             ),
         )
     head = resolve_revision(repo, "HEAD")
-    completed = _completed(repo, base_sha, story)
+    completed = _completed(repo, base_sha, story) & {u.id for u in units}
     remaining = [unit for unit in units if unit.id not in completed]
+
+    def refs(**extra: Any) -> dict[str, Any]:
+        return _refs(
+            spec_path=spec,
+            spec_sha256=digest,
+            branch=branch_name,
+            base=base_sha,
+            head=head,
+            **extra,
+        )
+
     if not remaining:
         return _result(
             story,
             "succeeded",
             "units.complete",
-            _refs(
-                spec_path=spec,
-                spec_sha256=hashlib.sha256(data).hexdigest(),
-                branch=branch_name,
-                base=base_sha,
-                head=head,
-                completed=len(units),
-                remaining=0,
-            ),
-            spec_sha256=hashlib.sha256(data).hexdigest(),
+            refs(completed=len(units), remaining=0),
+            spec_sha256=digest,
             base=base_sha,
             head=head,
         )
@@ -411,48 +410,17 @@ def profile_implement_prepare(
     try:
         baseline = _run_gates(repo, config)
     except ProfileError:
-        return _failure(
-            story,
-            "prepare.failed",
-            _refs(
-                spec_path=spec,
-                spec_sha256=hashlib.sha256(data).hexdigest(),
-                branch=branch_name,
-                base=base_sha,
-                head=head,
-                unit=unit.id,
-            ),
-        )
+        return _failure(story, "prepare.failed", refs(unit=unit.id))
     if changed_paths(repo) - {spec}:
-        return _failure(
-            story,
-            "gate.changed_tree",
-            _refs(
-                spec_path=spec,
-                spec_sha256=hashlib.sha256(data).hexdigest(),
-                branch=branch_name,
-                base=base_sha,
-                head=head,
-                unit=unit.id,
-            ),
-        )
+        return _failure(story, "gate.changed_tree", refs(unit=unit.id))
     return _result(
         story,
         None,
         None,
-        _refs(
-            spec_path=spec,
-            spec_sha256=hashlib.sha256(data).hexdigest(),
-            branch=branch_name,
-            base=base_sha,
-            head=head,
-            unit=unit.id,
-            completed=len(completed),
-            remaining=len(remaining),
-        ),
+        refs(unit=unit.id, completed=len(completed), remaining=len(remaining)),
         ready=True,
         implement=True,
-        spec_sha256=hashlib.sha256(data).hexdigest(),
+        spec_sha256=digest,
         base=base_sha,
         head=head,
         unit_id=unit.id,
@@ -497,8 +465,11 @@ def profile_implement_settle(
     if not isinstance(agent, Mapping):
         return _fail(story, "agent.failed", spec, branch=branch_name)
     base = prepare.get("base")
-    head = resolve_revision(repo, "HEAD")
-    if _symbolic_branch(repo) != branch_name:
+    try:
+        head: str | None = resolve_revision(repo, "HEAD")
+    except ProfileError:
+        head = None
+    if head is None or _symbolic_branch(repo) != branch_name:
         return _fail(
             story, "branch.moved", spec, branch=branch_name,
             base=base if isinstance(base, str) else None, head=head,
@@ -588,8 +559,9 @@ def profile_implement_settle(
                 unit.id, diff_bytes=diff_bytes, regressed=", ".join(regressed),
             )
         subject, trailers = commit_message(unit, story)
-        committed = git_run(repo, "add", "-A", "--", *paths)
-        if committed is None or committed.returncode != 0:
+        present = [p for p in paths if os.path.lexists(repo / p)]
+        committed = git_run(repo, "add", "-A", "--", *present) if present else None
+        if present and (committed is None or committed.returncode != 0):
             return _fail(
                 story, "commit.failed", spec, spec_digest, branch_name, base, head,
                 unit.id, diff_bytes=diff_bytes,
@@ -620,7 +592,7 @@ def profile_implement_settle(
                 story, "commit.changed", spec, spec_digest, branch_name, base, new_head,
                 unit.id, commit=new_head, diff_bytes=diff_bytes,
             )
-        completed = _completed(repo, base, story)
+        completed = _completed(repo, base, story) & {u.id for u in units}
         if unit.id not in completed:
             return _fail(
                 story, "commit.changed", spec, spec_digest, branch_name, base, new_head,
