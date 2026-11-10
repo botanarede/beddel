@@ -41,7 +41,6 @@ from beddel_profile_dev.tools.stage_outcome import _TOKEN
 __all__ = ["profile_implement_prepare", "profile_implement_settle"]
 
 _MAX_BASE_REF = 200
-_FULL_SHA_LENGTH = 40
 
 
 def _valid_story(value: object) -> bool:
@@ -86,6 +85,12 @@ def _refs(
         "out_of_scope": out_of_scope,
         "regressed": regressed,
     }
+
+
+# fmt: off
+def _state(spec, digest=None, branch=None, base=None, head=None, unit=None, **extra):
+    return _refs(spec_path=spec, spec_sha256=digest, branch=branch, base=base, head=head, unit=unit, **extra)
+# fmt: on
 
 
 def _result(
@@ -142,6 +147,12 @@ def _failure(
     **kwargs: Any,
 ) -> dict[str, Any]:
     return _result(story_key, "failed", reason, refs, **kwargs)
+
+
+# fmt: off
+def _fail(story, reason, spec, digest=None, branch=None, base=None, head=None, unit=None, **extra):
+    return _failure(story, reason, _state(spec, digest, branch, base, head, unit, **extra))
+# fmt: on
 
 
 def _read_spec(repo: Path, spec_path: str) -> tuple[bytes | None, str | None]:
@@ -328,14 +339,10 @@ def profile_implement_prepare(
                     story, "gate.unavailable", spec_path=spec, branch=branch_name
                 )
     except ProfileError:
-        return _failure(
-            story, "prepare.failed", _refs(spec_path=spec, branch=branch_name)
-        )
+        return _failure(story, "prepare.failed", _state(spec, branch=branch_name))
     dirty = changed_paths(repo) - {spec}
     if dirty:
-        return _failure(
-            story, "worktree.dirty", _refs(spec_path=spec, branch=branch_name)
-        )
+        return _failure(story, "worktree.dirty", _state(spec, branch=branch_name))
 
     ref = git_run(repo, "show-ref", "--verify", "--quiet", f"refs/heads/{branch_name}")
     if ref is None or ref.returncode not in (0, 1):
@@ -353,7 +360,7 @@ def profile_implement_prepare(
             switched = git_run(repo, "switch", "-q", branch_name)
             if switched is None or switched.returncode != 0:
                 return _failure(
-                    story, "checkout.failed", _refs(spec_path=spec, branch=branch_name)
+                    story, "checkout.failed", _state(spec, branch=branch_name)
                 )
     else:
         switched = git_run(repo, "switch", "-q", "-c", branch_name, base_sha)
@@ -454,6 +461,7 @@ def profile_implement_prepare(
     )
 
 
+# fmt: off
 @beddel_tool(
     name="profile_implement_settle",
     description="Review and commit one implementation unit",
@@ -473,224 +481,118 @@ def profile_implement_settle(
     if isinstance(checked, dict):
         return checked
     repo, story, spec, branch_name, _base_ref = checked
+    if prepare is None:
+        return _fail(story, "prepare.failed", spec, branch=branch_name)
     if not isinstance(prepare, Mapping):
-        return _failure(
-            story, "prepare.mismatch", _refs(spec_path=spec, branch=branch_name)
-        )
+        return _fail(story, "prepare.mismatch", spec, branch=branch_name)
     if prepare.get("story_key") != story or prepare.get("stage") != "implement":
-        return _failure(
-            story, "prepare.mismatch", _refs(spec_path=spec, branch=branch_name)
-        )
+        return _fail(story, "prepare.mismatch", spec, branch=branch_name)
     if prepare.get("implement") is not True:
         return _result(
             story,
             prepare.get("outcome"),
             prepare.get("reason"),
-            prepare.get("refs", _refs(spec_path=spec, branch=branch_name)),
+            prepare.get("refs", _state(spec, branch=branch_name)),
         )
     if not isinstance(agent, Mapping):
-        return _failure(
-            story, "agent.failed", _refs(spec_path=spec, branch=branch_name)
+        return _fail(story, "agent.failed", spec, branch=branch_name)
+    base = prepare.get("base")
+    head = resolve_revision(repo, "HEAD")
+    if _symbolic_branch(repo) != branch_name:
+        return _fail(
+            story, "branch.moved", spec, branch=branch_name,
+            base=base if isinstance(base, str) else None, head=head,
         )
+    if head != prepare.get("head"):
+        return _fail(
+            story, "head.moved", spec, branch=branch_name,
+            base=base if isinstance(base, str) else None, head=head,
+        )
+    if not isinstance(base, str):
+        return _fail(story, "prepare.mismatch", spec, branch=branch_name, head=head)
     data, error = _read_spec(repo, spec)
     if error is not None or data is None:
-        return _failure(
-            story, "spec.changed", _refs(spec_path=spec, branch=branch_name)
-        )
+        return _fail(story, "spec.changed", spec, branch=branch_name, base=base, head=head)
     units = spec_units(data, story)
     if units is None:
-        return _failure(
-            story, "spec.changed", _refs(spec_path=spec, branch=branch_name)
-        )
+        return _fail(story, "spec.changed", spec, branch=branch_name, base=base, head=head)
     spec_digest = hashlib.sha256(data).hexdigest()
     if prepare.get("spec_sha256") != spec_digest:
-        return _failure(
-            story,
-            "spec.changed",
-            _refs(spec_path=spec, spec_sha256=spec_digest, branch=branch_name),
-        )
+        return _fail(story, "spec.changed", spec, spec_digest, branch_name, base, head)
     unit_id = prepare.get("unit_id")
     unit = next((item for item in units if item.id == unit_id), None)
     if unit is None or prepare.get("unit_paths") != ", ".join(unit.paths):
-        return _failure(
-            story,
-            "prepare.mismatch",
-            _refs(spec_path=spec, spec_sha256=spec_digest, branch=branch_name),
-        )
+        return _fail(story, "prepare.mismatch", spec, spec_digest, branch_name, base, head)
     try:
         config = load_config()
+        names = [f"{i:02d}-{argv[0]}" for i, argv in enumerate(config.gate_commands, 1)]
+        baseline = prepare.get("baseline")
+        if (
+            not isinstance(baseline, list)
+            or any(not isinstance(item, Mapping) for item in baseline)
+            or any(not {"name", "exit_code", "timed_out"} <= item.keys() for item in baseline)
+            or [item.get("name") for item in baseline] != names
+        ):
+            return _fail(story, "prepare.mismatch", spec, spec_digest, branch_name, base, head, unit.id)
         for argv in config.gate_commands:
             if resolve_executable(argv[0]) is None:
-                return _failure(
-                    story,
-                    "gate.unavailable",
-                    _refs(spec_path=spec, spec_sha256=spec_digest, branch=branch_name),
-                )
-        base = prepare.get("base")
-        head = resolve_revision(repo, "HEAD")
-        if _symbolic_branch(repo) != branch_name:
-            return _failure(
-                story,
-                "branch.moved",
-                _refs(
-                    spec_path=spec,
-                    spec_sha256=spec_digest,
-                    branch=branch_name,
-                    base=base if isinstance(base, str) else None,
-                    head=head,
-                    unit=unit.id,
-                ),
-            )
-        if head != prepare.get("head"):
-            return _failure(
-                story,
-                "head.moved",
-                _refs(
-                    spec_path=spec,
-                    spec_sha256=spec_digest,
-                    branch=branch_name,
-                    base=base if isinstance(base, str) else None,
-                    head=head,
-                    unit=unit.id,
-                ),
-            )
-        if not isinstance(base, str):
-            return _failure(
-                story,
-                "prepare.mismatch",
-                _refs(
-                    spec_path=spec,
-                    spec_sha256=spec_digest,
-                    branch=branch_name,
-                    head=head,
-                    unit=unit.id,
-                ),
-            )
+                return _fail(story, "gate.unavailable", spec, spec_digest, branch_name, base, head, unit.id)
         current = changed_paths(repo) - {spec}
         if not current:
-            return _failure(
-                story,
-                "unit.empty",
-                _refs(
-                    spec_path=spec,
-                    spec_sha256=spec_digest,
-                    branch=branch_name,
-                    base=base,
-                    head=head,
-                    unit=unit.id,
-                ),
-            )
+            return _fail(story, "unit.empty", spec, spec_digest, branch_name, base, head, unit.id)
         out_of_scope = sum(not covered(unit.paths, path) for path in current)
         if out_of_scope:
-            return _failure(
-                story,
-                "scope.exceeded",
-                _refs(
-                    spec_path=spec,
-                    spec_sha256=spec_digest,
-                    branch=branch_name,
-                    base=base,
-                    head=head,
-                    unit=unit.id,
-                    out_of_scope=out_of_scope,
-                ),
-                unit_id=unit.id,
-                unit_paths=", ".join(unit.paths),
+            return _fail(
+                story, "scope.exceeded", spec, spec_digest, branch_name, base, head,
+                unit.id, out_of_scope=out_of_scope,
             )
-        candidate = _candidate_tree(repo, unit.paths)
-        cap = front_matter(data)
-        assert cap is not None
-        diff, truncated = diff_text(
-            repo, base, candidate, int(cap["size_cap_bytes"]) + 1
-        )
+        paths = tuple(sorted(current))
+        candidate = _candidate_tree(repo, paths)
+        metadata = front_matter(data)
+        assert metadata is not None
+        cap = int(metadata["size_cap_bytes"])
+        diff, truncated = diff_text(repo, base, candidate, cap)
         diff_bytes = len(diff.encode("utf-8"))
         if truncated:
-            return _failure(
-                story,
-                "size.exceeded",
-                _refs(
-                    spec_path=spec,
-                    spec_sha256=spec_digest,
-                    branch=branch_name,
-                    base=base,
-                    head=head,
-                    unit=unit.id,
-                    diff_bytes=diff_bytes,
-                ),
+            full, still_truncated = diff_text(repo, base, candidate, 262144)
+            diff_bytes = len(full.encode("utf-8")) if not still_truncated else cap + 1
+            return _fail(
+                story, "size.exceeded", spec, spec_digest, branch_name, base, head,
+                unit.id, diff_bytes=diff_bytes,
             )
-        if (
-            _TOKEN.search(
-                "\n".join(line for line in diff.splitlines() if line.startswith("+"))
+        if _TOKEN.search("\n".join(x for x in diff.splitlines() if x.startswith("+"))):
+            return _fail(
+                story, "secret.detected", spec, spec_digest, branch_name, base, head,
+                unit.id, diff_bytes=diff_bytes,
             )
-            is not None
-        ):
-            return _failure(
-                story,
-                "secret.detected",
-                _refs(
-                    spec_path=spec,
-                    spec_sha256=spec_digest,
-                    branch=branch_name,
-                    base=base,
-                    head=head,
-                    unit=unit.id,
-                    diff_bytes=diff_bytes,
-                ),
-            )
-        before_gates = set(current)
         gates = _run_gates(repo, config)
-        if changed_paths(repo) - {spec} != before_gates:
-            return _failure(
-                story,
-                "gate.changed_tree",
-                _refs(
-                    spec_path=spec,
-                    spec_sha256=spec_digest,
-                    branch=branch_name,
-                    base=base,
-                    head=head,
-                    unit=unit.id,
-                    diff_bytes=diff_bytes,
-                ),
+        after = changed_paths(repo) - {spec}
+        if after != current:
+            return _fail(
+                story, "gate.changed_tree", spec, spec_digest, branch_name, base, head,
+                unit.id, diff_bytes=diff_bytes,
+            )
+        if _candidate_tree(repo, tuple(sorted(after))) != candidate:
+            return _fail(
+                story, "gate.changed_tree", spec, spec_digest, branch_name, base, head,
+                unit.id, diff_bytes=diff_bytes,
             )
         regressed = [
-            entry["name"]
-            for entry, baseline in zip(gates, prepare.get("baseline") or [])
-            if (
-                baseline.get("exit_code") == 0
-                and (entry["timed_out"] or entry["exit_code"] != 0)
-            )
+            entry["name"] for entry, baseline_item in zip(gates, baseline)
+            if baseline_item["exit_code"] == 0
+            and (entry["timed_out"] or entry["exit_code"] != 0)
         ]
         if regressed:
-            return _failure(
-                story,
-                "gate.regressed",
-                _refs(
-                    spec_path=spec,
-                    spec_sha256=spec_digest,
-                    branch=branch_name,
-                    base=base,
-                    head=head,
-                    unit=unit.id,
-                    diff_bytes=diff_bytes,
-                    regressed=", ".join(regressed),
-                ),
+            return _fail(
+                story, "gate.regressed", spec, spec_digest, branch_name, base, head,
+                unit.id, diff_bytes=diff_bytes, regressed=", ".join(regressed),
             )
         subject, trailers = commit_message(unit, story)
-        committed = git_run(repo, "add", "-A", "--", *unit.paths)
+        committed = git_run(repo, "add", "-A", "--", *paths)
         if committed is None or committed.returncode != 0:
-            return _failure(
-                story,
-                "commit.failed",
-                _refs(
-                    spec_path=spec,
-                    spec_sha256=spec_digest,
-                    branch=branch_name,
-                    base=base,
-                    head=head,
-                    unit=unit.id,
-                    diff_bytes=diff_bytes,
-                ),
+            return _fail(
+                story, "commit.failed", spec, spec_digest, branch_name, base, head,
+                unit.id, diff_bytes=diff_bytes,
             )
         committed = git_run(
             repo,
@@ -702,57 +604,36 @@ def profile_implement_settle(
             trailers,
             "--only",
             "--",
-            *unit.paths,
+            *paths,
             timeout=120,
         )
         if committed is None or committed.returncode != 0:
-            return _failure(
-                story,
-                "commit.failed",
-                _refs(
-                    spec_path=spec,
-                    spec_sha256=spec_digest,
-                    branch=branch_name,
-                    base=base,
-                    head=head,
-                    unit=unit.id,
-                    diff_bytes=diff_bytes,
-                ),
+            return _fail(
+                story, "commit.failed", spec, spec_digest, branch_name, base, head,
+                unit.id, diff_bytes=diff_bytes,
             )
         new_head = resolve_revision(repo, "HEAD")
         parent = _git_text(git_run(repo, "rev-parse", "HEAD^"))
         tree = _git_text(git_run(repo, "rev-parse", "HEAD^{tree}"))
         if parent != head or tree != candidate:
-            return _failure(
-                story,
-                "commit.changed",
-                _refs(
-                    spec_path=spec,
-                    spec_sha256=spec_digest,
-                    branch=branch_name,
-                    base=base,
-                    head=new_head,
-                    commit=new_head,
-                    unit=unit.id,
-                    diff_bytes=diff_bytes,
-                ),
+            return _fail(
+                story, "commit.changed", spec, spec_digest, branch_name, base, new_head,
+                unit.id, commit=new_head, diff_bytes=diff_bytes,
             )
         completed = _completed(repo, base, story)
+        if unit.id not in completed:
+            return _fail(
+                story, "commit.changed", spec, spec_digest, branch_name, base, new_head,
+                unit.id, commit=new_head, diff_bytes=diff_bytes,
+            )
         return _result(
             story,
             "succeeded",
             "unit.committed",
-            _refs(
-                spec_path=spec,
-                spec_sha256=spec_digest,
-                branch=branch_name,
-                base=base,
-                head=new_head,
-                commit=new_head,
-                unit=unit.id,
-                completed=len(completed),
-                remaining=len(units) - len(completed),
-                diff_bytes=diff_bytes,
+            _state(
+                spec, spec_digest, branch_name, base, new_head, unit.id,
+                commit=new_head, completed=len(completed),
+                remaining=len(units) - len(completed), diff_bytes=diff_bytes,
             ),
             spec_sha256=spec_digest,
             base=base,
@@ -761,8 +642,5 @@ def profile_implement_settle(
             unit_paths=", ".join(unit.paths),
         )
     except ProfileError:
-        return _failure(
-            story,
-            "settle.failed",
-            _refs(spec_path=spec, spec_sha256=spec_digest, branch=branch_name),
-        )
+        return _fail(story, "settle.failed", spec, spec_digest, branch_name)
+# fmt: on

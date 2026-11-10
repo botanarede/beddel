@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -20,6 +19,8 @@ from beddel.domain.registry import PrimitiveRegistry
 from beddel.error_codes import AGENT_EXECUTION_FAILED
 from beddel.primitives import register_builtins
 from beddel.tools.kits import load_kit
+from beddel_profile_dev._errors import ProfileError
+from beddel_profile_dev.tools import implement as implement_tools
 from beddel_profile_dev.tools.stage_outcome import profile_record_stage_outcome
 
 from ._helpers import commit_all, git, init_repo, stub_gate_tools
@@ -30,9 +31,15 @@ WORKFLOW_PATH = KIT_ROOT / "workflows" / "implement-story.yaml"
 
 
 class FakeAgent:
-    def __init__(self, repo: Path, mode: str = "sequence") -> None:
+    def __init__(
+        self,
+        repo: Path,
+        mode: str = "sequence",
+        patch: pytest.MonkeyPatch | None = None,
+    ) -> None:
         self.repo = repo
         self.mode = mode
+        self.patch = patch
         self.calls = 0
 
     async def execute(
@@ -85,7 +92,8 @@ class FakeAgent:
             (self.repo / "src" / target).write_text(f"{target}\n")
         if self.mode == "regression":
             (self.repo / "src" / "one.py").write_text("one\n")
-            os.environ["STUB_EXIT_PYTEST"] = "1"
+            if self.patch is not None:
+                self.patch.setenv("STUB_EXIT_PYTEST", "1")
         return AgentResult(
             exit_code=0,
             output="",
@@ -195,14 +203,30 @@ def test_two_unit_sequence_records_and_resumes(
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     fake = FakeAgent(repo)
     first = _run(repo, base, fake)
-    assert first["step_results"]["settle"]["result"]["reason"] == "unit.committed"
+    first_result = first["step_results"]["settle"]["result"]
+    assert first_result["reason"] == "unit.committed"
+    assert first_result["refs"]["base"] == base
+    assert first_result["refs"]["commit"] == first_result["refs"]["head"]
+    assert (first_result["refs"]["completed"], first_result["refs"]["remaining"]) == (
+        1,
+        1,
+    )
+    assert git(repo, "show", "--name-only", "--format=", "HEAD").split() == [
+        "src/one.py"
+    ]
+    assert "Implementation-Unit: u1" in git(repo, "show", "-s", "--format=%B", "HEAD")
+    assert fake.calls == 1
     second = _run(repo, base, fake)
-    assert second["step_results"]["settle"]["result"]["reason"] == "unit.committed"
-    third = _run(repo, base, fake)
-    assert third["step_results"]["settle_stop"]["result"]["reason"] == "units.complete"
+    second_result = second["step_results"]["settle"]["result"]
+    assert second_result["reason"] == "unit.committed"
     assert fake.calls == 2
-    records = Path.home() / ".config" / "beddel"
-    del records
+    third_head = git(repo, "rev-parse", "HEAD")
+    third = _run(repo, base, fake)
+    stop = third["step_results"]["settle_stop"]["result"]
+    assert stop["reason"] == "units.complete"
+    assert stop["outcome"] == "succeeded"
+    assert fake.calls == 2
+    assert git(repo, "rev-parse", "HEAD") == third_head
     stored = list((tmp_path / "home").rglob("*.json"))
     assert len(stored) == 3
     assert sorted(json.loads(path.read_text())["record"] for path in stored) == [
@@ -230,15 +254,18 @@ def test_agent_modes_are_recorded_without_losing_base(
     monkeypatch.chdir(repo)
     monkeypatch.setenv("PATH", stub_gate_tools(tmp_path / mode))
     monkeypatch.setenv("HOME", str(tmp_path / mode / "home"))
-    fake = FakeAgent(repo, mode)
+    fake = FakeAgent(repo, mode, monkeypatch)
     before = git(repo, "rev-parse", "HEAD")
     result = _run(repo, base, fake)
     settle = result["step_results"].get(
         "settle", result["step_results"].get("settle_stop")
     )
     assert settle["result"]["reason"] == reason
-    if mode == "regression":
-        os.environ.pop("STUB_EXIT_PYTEST", None)
+    assert settle["result"]["outcome"] == "failed"
+    records = list((tmp_path / mode / "home").rglob("*.json"))
+    assert len(records) == 1
+    stored = json.loads(records[0].read_text())
+    assert (stored["outcome"], stored["reason"]) == ("failed", reason)
     assert git(repo, "rev-parse", "HEAD") == before or reason == "head.moved"
 
 
@@ -259,3 +286,24 @@ def test_bad_repository_fails_at_record_boundary(
             str(bad), STORY, "implement", "failed", "prepare.failed", {}
         )
     assert record_error.value.code == "PROFILE_REPOSITORY_INVALID"
+
+
+def test_absorbed_prepare_error_records_prepare_failed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base = _repo(tmp_path)
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("PATH", stub_gate_tools(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+
+    def boom(_repo: Path) -> set[str]:
+        raise ProfileError("PROFILE_REPOSITORY_INVALID", "fixture")
+
+    monkeypatch.setattr(implement_tools, "changed_paths", boom)
+    result = _run(repo, base, FakeAgent(repo))
+    stop = result["step_results"]["settle_stop"]["result"]
+    assert (stop["outcome"], stop["reason"]) == ("failed", "prepare.failed")
+    records = list((tmp_path / "home").rglob("*.json"))
+    assert len(records) == 1
+    stored = json.loads(records[0].read_text())
+    assert (stored["outcome"], stored["reason"]) == ("failed", "prepare.failed")

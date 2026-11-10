@@ -99,13 +99,16 @@ def branch_reason(branch: object, base_ref: object) -> str | None:
     """Return the refusal reason for a branch/base pair, if any."""
     if not isinstance(branch, str) or _BRANCH.fullmatch(branch) is None:
         return "branch.invalid"
+    parts = branch.split("/")
     if (
         branch in PROTECTED_BRANCHES
         or branch == base_ref
         or branch.startswith("-")
-        or branch.endswith(("/", "."))
+        or branch.endswith(("/", ".", ".lock"))
+        or any(part.startswith(".") for part in parts)
         or ".." in branch
         or "//" in branch
+        or "@{" in branch
     ):
         return (
             "branch.protected"

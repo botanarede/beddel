@@ -455,30 +455,15 @@ Run the workflow from the repository root, for example:
 ```text
 beddel run -i ... workflows/plan-story.yaml
 ```
+
 ## Delivery: implement stage
 
-The `implement-story` entry workflow accepts `repo_path`, `story_key`,
-`spec_path`, `branch` and `base_ref`. It creates or reuses the feature branch,
-selects the first unfinished unit, invokes one Coding agent through
-`agent-exec`, runs the review checks and Gate commands, and commits only that
-unit's declared paths. It never pushes, approves, verifies, integrates,
-commits the spec or writes a profile record itself.
-
-The implement contract adds `units` to a complete plan spec. Each unit has a
-unique `id`, one to 64 repository-relative `paths` and a Conventional Commit
-`subject`. Commits carry exactly one `Story-Key` and one
-`Implementation-Unit` trailer. One unit is committed per run; rerun the
-workflow to resume the next unit. A clean baseline Gate is required only for
-regression comparison, so a gate already red at baseline is advisory.
-
-Review failures use fixed reasons including `worktree.dirty`, `scope.exceeded`,
-`unit.empty`, `size.exceeded`, `secret.detected`, `gate.regressed`,
-`gate.changed_tree`, `agent.failed` and `commit.failed`. Successful runs use
-`unit.committed` or `units.complete`. Outcome refs include the spec digest,
-branch, base, head, commit, unit, completion counts, diff size, out-of-scope
-count and regressed command names.
-
-Run the workflow from the repository root, for example:
+`implement-story` takes `repo_path`, `story_key`, `spec_path`, `branch` and
+`base_ref`; its steps prepare, invoke one Coding agent, settle one unit and
+record one Stage outcome. It never pushes, approves, verifies, integrates, or
+commits the spec. `units` entries have an `id`, relative `paths` and a commit
+`subject`; commits carry the identity trailers. One unit runs per invocation.
+A baseline-red Gate is advisory; only a green command that becomes red blocks.
 
 ```text
 beddel run -i ... workflows/implement-story.yaml
