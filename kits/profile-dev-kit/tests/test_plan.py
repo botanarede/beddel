@@ -115,6 +115,43 @@ def test_duplicate_scan_unreadable_is_a_settle_failure(
     assert settled["reason"] == "spec.unreadable"
 
 
+def test_duplicate_scan_refusal_after_the_agent_ran_is_a_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = prepared_repo(tmp_path)
+    (repo / "specs").mkdir()
+    monkeypatch.chdir(repo)
+    reconcile = call_reconcile(repo)
+    (repo / SPEC_PATH).write_bytes(complete_spec())
+
+    def unreadable(*args: object) -> str:
+        raise ProfileError(
+            PROFILE_PLAN_REFUSED, "plan refused", {"reason": "spec.unreadable"}
+        )
+
+    monkeypatch.setattr(plan_tools, "_duplicate_reason", unreadable)
+    settled = profile_plan_settle(
+        str(repo), STORY, STORY_PATH, GUIDE_PATH, SPEC_PATH, reconcile
+    )
+    assert settled["outcome"] == "failed"
+    assert settled["reason"] == "spec.unreadable"
+
+
+def test_spec_replaced_by_an_escaping_symlink_is_spec_incomplete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = prepared_repo(tmp_path)
+    (repo / "specs").mkdir()
+    monkeypatch.chdir(repo)
+    reconcile = call_reconcile(repo)
+    os.symlink("/etc/hostname", repo / SPEC_PATH)
+    settled = profile_plan_settle(
+        str(repo), STORY, STORY_PATH, GUIDE_PATH, SPEC_PATH, reconcile
+    )
+    assert settled["outcome"] == "failed"
+    assert settled["reason"] == "spec.incomplete"
+
+
 def test_changed_paths_reports_both_rename_paths(tmp_path: Path) -> None:
     repo = init_repo(tmp_path / "rename")
     (repo / "a.txt").write_text("a")

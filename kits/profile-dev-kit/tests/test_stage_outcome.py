@@ -160,7 +160,7 @@ def test_invalid_repository_does_not_create_a_record(
             "spec.created",
             {},
         )
-    assert not (root / "stage-outcomes").exists()
+    assert not (root / ".config").exists()
 
 
 def test_exhausted_create_only_attempts_raise_repository_invalid(

@@ -241,14 +241,18 @@ def _settle_current(
     extras = current - {spec_path}
     if extras:
         return "scope.exceeded", None, len(extras)
-    spec_file = confined(repo, spec_path)
-    if not spec_file.is_file():
+    try:
+        spec_file = confined(repo, spec_path)
+        if not spec_file.is_file():
+            return "spec.incomplete", None, 0
+        data = spec_file.read_bytes()
+    except (OSError, ProfileError, RuntimeError, ValueError):
         return "spec.incomplete", None, 0
     try:
-        data = spec_file.read_bytes()
-    except (OSError, RuntimeError, ValueError):
-        return "spec.incomplete", None, 0
-    duplicate = _duplicate_reason(repo, spec_path, story_key)
+        duplicate = _duplicate_reason(repo, spec_path, story_key)
+    except ProfileError as error:
+        # After the agent ran, an unreadable scan is a failure, not a refusal.
+        duplicate = str(error.details.get("reason", "spec.unreadable"))
     if duplicate is not None:
         return duplicate, data, 0
     if not spec_complete(data, story_key):

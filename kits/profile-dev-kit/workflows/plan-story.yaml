@@ -1,5 +1,4 @@
 id: plan-story
-id: plan-story
 name: Plan Story
 description: Entry plan stage that turns one selected story into one implementation spec written by a Coding agent through agent-exec; it never implements, verifies or commits.
 version: "1.0"
