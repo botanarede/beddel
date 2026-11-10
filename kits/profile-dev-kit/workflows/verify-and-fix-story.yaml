@@ -1,0 +1,230 @@
+id: verify-and-fix-story
+name: Verify And Fix Story
+description: Entry verify-and-fix stage that runs verify-change unchanged and, when Findings need fixes, runs at most 2 fix rounds through a Coding agent with a fresh verify-change attempt each. It never approves, ratifies, pushes or integrates.
+version: "1.0"
+requires_kits:
+  - profile-dev-kit
+  - agent-kiro-kit
+allowed_tools:
+  - profile_fix_reconcile
+  - profile_fix_settle
+  - profile_record_stage_outcome
+inputs:
+  - repo_path
+  - story_key
+  - spec_path
+  - branch
+  - base_ref
+  - change_id
+  - inventory_version
+steps:
+  - id: reconcile
+    primitive: tool
+    execution_strategy:
+      type: skip
+    config:
+      tool: profile_fix_reconcile
+      arguments:
+        repo_path: "$input.repo_path"
+        story_key: "$input.story_key"
+        spec_path: "$input.spec_path"
+        branch: "$input.branch"
+        base_ref: "$input.base_ref"
+        change_id: "$input.change_id"
+        max_fix_rounds: 2
+        prior: {}
+  - id: verify
+    primitive: call-agent
+    if: "$stepResult.reconcile.result.verify == true"
+    execution_strategy:
+      type: skip
+    config:
+      workflow: verify-change.yaml
+      inputs:
+        repo_path: "$input.repo_path"
+        change_id: "$input.change_id"
+        base: "$stepResult.reconcile.result.base"
+        revision: "$stepResult.reconcile.result.head"
+        inventory_version: "$input.inventory_version"
+  - id: round_1
+    primitive: tool
+    execution_strategy:
+      type: fail
+    config:
+      tool: profile_fix_reconcile
+      arguments:
+        repo_path: "$input.repo_path"
+        story_key: "$input.story_key"
+        spec_path: "$input.spec_path"
+        branch: "$input.branch"
+        base_ref: "$input.base_ref"
+        change_id: "$input.change_id"
+        max_fix_rounds: 2
+        prior: "$stepResult.reconcile.result"
+  - id: fix_1
+    primitive: agent-exec
+    if: "$stepResult.round_1.result.fix == true"
+    execution_strategy:
+      type: skip
+    timeout: 600
+    config:
+      adapter: kiro-cli
+      sandbox: workspace-write
+      prompt: >-
+        You are the Coding agent for one bounded verification fix round. Read
+        the spec at $input.spec_path; apply only the recorded Findings in
+        $stepResult.round_1.result.findings within the paths
+        $stepResult.round_1.result.scope_paths; change only those paths and
+        leave the spec unchanged. Do not stage, commit, push, create or switch
+        branches, approve, verify, ratify or integrate.
+  - id: settle_1
+    primitive: tool
+    if: "$stepResult.round_1.result.fix == true"
+    execution_strategy:
+      type: fail
+    output_key: fixed_1
+    config:
+      tool: profile_fix_settle
+      arguments:
+        repo_path: "$input.repo_path"
+        story_key: "$input.story_key"
+        spec_path: "$input.spec_path"
+        branch: "$input.branch"
+        base_ref: "$input.base_ref"
+        change_id: "$input.change_id"
+        prepare: "$stepResult.round_1.result"
+        agent: "$stepResult.fix_1"
+  - id: settle_1_stop
+    primitive: tool
+    if: "$stepResult.round_1.result.fix != true"
+    execution_strategy:
+      type: fail
+    output_key: fixed_1
+    config:
+      tool: profile_fix_settle
+      arguments:
+        repo_path: "$input.repo_path"
+        story_key: "$input.story_key"
+        spec_path: "$input.spec_path"
+        branch: "$input.branch"
+        base_ref: "$input.base_ref"
+        change_id: "$input.change_id"
+        prepare: "$stepResult.round_1.result"
+  - id: verify_1
+    primitive: call-agent
+    if: "$stepResult.fixed_1.result.verify == true"
+    execution_strategy:
+      type: skip
+    config:
+      workflow: verify-change.yaml
+      inputs:
+        repo_path: "$input.repo_path"
+        change_id: "$input.change_id"
+        base: "$stepResult.fixed_1.result.base"
+        revision: "$stepResult.fixed_1.result.head"
+        inventory_version: "$input.inventory_version"
+  - id: round_2
+    primitive: tool
+    execution_strategy:
+      type: fail
+    config:
+      tool: profile_fix_reconcile
+      arguments:
+        repo_path: "$input.repo_path"
+        story_key: "$input.story_key"
+        spec_path: "$input.spec_path"
+        branch: "$input.branch"
+        base_ref: "$input.base_ref"
+        change_id: "$input.change_id"
+        max_fix_rounds: 2
+        prior: "$stepResult.fixed_1.result"
+  - id: fix_2
+    primitive: agent-exec
+    if: "$stepResult.round_2.result.fix == true"
+    execution_strategy:
+      type: skip
+    timeout: 600
+    config:
+      adapter: kiro-cli
+      sandbox: workspace-write
+      prompt: >-
+        You are the Coding agent for one bounded verification fix round. Read
+        the spec at $input.spec_path; apply only the recorded Findings in
+        $stepResult.round_2.result.findings within the paths
+        $stepResult.round_2.result.scope_paths; change only those paths and
+        leave the spec unchanged. Do not stage, commit, push, create or switch
+        branches, approve, verify, ratify or integrate.
+  - id: settle_2
+    primitive: tool
+    if: "$stepResult.round_2.result.fix == true"
+    execution_strategy:
+      type: fail
+    output_key: fixed_2
+    config:
+      tool: profile_fix_settle
+      arguments:
+        repo_path: "$input.repo_path"
+        story_key: "$input.story_key"
+        spec_path: "$input.spec_path"
+        branch: "$input.branch"
+        base_ref: "$input.base_ref"
+        change_id: "$input.change_id"
+        prepare: "$stepResult.round_2.result"
+        agent: "$stepResult.fix_2"
+  - id: settle_2_stop
+    primitive: tool
+    if: "$stepResult.round_2.result.fix != true"
+    execution_strategy:
+      type: fail
+    output_key: fixed_2
+    config:
+      tool: profile_fix_settle
+      arguments:
+        repo_path: "$input.repo_path"
+        story_key: "$input.story_key"
+        spec_path: "$input.spec_path"
+        branch: "$input.branch"
+        base_ref: "$input.base_ref"
+        change_id: "$input.change_id"
+        prepare: "$stepResult.round_2.result"
+  - id: verify_2
+    primitive: call-agent
+    if: "$stepResult.fixed_2.result.verify == true"
+    execution_strategy:
+      type: skip
+    config:
+      workflow: verify-change.yaml
+      inputs:
+        repo_path: "$input.repo_path"
+        change_id: "$input.change_id"
+        base: "$stepResult.fixed_2.result.base"
+        revision: "$stepResult.fixed_2.result.head"
+        inventory_version: "$input.inventory_version"
+  - id: close
+    primitive: tool
+    execution_strategy:
+      type: fail
+    config:
+      tool: profile_fix_reconcile
+      arguments:
+        repo_path: "$input.repo_path"
+        story_key: "$input.story_key"
+        spec_path: "$input.spec_path"
+        branch: "$input.branch"
+        base_ref: "$input.base_ref"
+        change_id: "$input.change_id"
+        max_fix_rounds: 2
+        prior: "$stepResult.fixed_2.result"
+  - id: record
+    primitive: tool
+    execution_strategy:
+      type: fail
+    config:
+      tool: profile_record_stage_outcome
+      arguments:
+        repo_path: "$input.repo_path"
+        story_key: "$stepResult.close.result.story_key"
+        stage: verify-and-fix
+        outcome: "$stepResult.close.result.outcome"
+        reason: "$stepResult.close.result.reason"
+        refs: "$stepResult.close.result.refs"

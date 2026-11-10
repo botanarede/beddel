@@ -113,7 +113,7 @@ def test_allowlist_equals_the_tools_the_steps_name() -> None:
         "profile_capture_evidence",
         "profile_record_report",
     ]
-    assert len(list(WORKFLOWS_DIR.glob("*.yaml"))) == 10
+    assert len(list(WORKFLOWS_DIR.glob("*.yaml"))) == 11
 
 
 def test_review_step_outlives_the_largest_accepted_review_budget() -> None:
