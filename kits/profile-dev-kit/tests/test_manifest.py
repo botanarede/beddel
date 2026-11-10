@@ -30,6 +30,9 @@ _TOOLS = [
     "profile_approve_change",
     "profile_record_approval_decision",
     "profile_read_approval",
+    "profile_plan_reconcile",
+    "profile_plan_settle",
+    "profile_record_stage_outcome",
 ]
 
 
@@ -103,6 +106,7 @@ def test_manifest_declares_all_workflows_and_python_targets() -> None:
         "approve-change",
         "record-approval-decision",
         "read-approval",
+        "plan-story",
     ]
     declared = {t["name"] for t in manifest["tools"]}
     targeted = {t["name"] for t in manifest["targets"]["python"]["tools"]}

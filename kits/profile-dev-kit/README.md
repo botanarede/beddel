@@ -426,3 +426,31 @@ replaces those placeholders, adds any literal arguments and the matching
 qualified `allowed_tools` entry. Consent is obtained outside a run with
 `python -m beddel_protocol_mcp.authorize`. Nothing returned by the copy is
 read back or stored.
+
+## Delivery: plan stage
+
+The `plan-story` entry workflow accepts `repo_path`, `story_key`, `story_path`,
+`guide_path` and `spec_path`. It reconciles one repository-relative spec, asks a
+Coding agent through `agent-exec` to write it only when needed, settles the
+work-tree result, and records the Stage outcome. The stage never implements,
+tests, verifies or commits the story.
+
+A complete spec is UTF-8, at most 262144 bytes, has YAML front matter with
+`story_key`, non-empty `requirements`, non-empty `repositories`, `dependencies`
+and `size_cap_bytes` from 1 through 64000, and has a non-blank body. The
+`story_key` and the five front-matter fields are the only contract fields read
+by the kit; other fields remain available to the authoring process.
+
+Stage outcomes use fixed outcomes (`succeeded`, `refused`, `failed`, `stopped`)
+and reason codes. Each record is canonical JSON under
+`~/.config/beddel/records/profile-dev/<repository-key>/stage-outcomes/<n>.json`
+with `schema`, `record`, `stage`, `story_key`, `outcome`, `reason`, `refs` and
+`recorded_at`. Records are append-only and create-only, remain outside the
+work tree, and are never committed, never Evidence, a Finding, a Verdict or
+an Approval input.
+
+Run the workflow from the repository root, for example:
+
+```text
+beddel run -i ... workflows/plan-story.yaml
+```

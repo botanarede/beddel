@@ -25,11 +25,13 @@ __all__ = [
     "PROFILE_INVENTORY_BINDING_CONFLICT",
     "PROFILE_INVENTORY_INTEGRITY_BLOCK",
     "PROFILE_INVENTORY_UNRATIFIED",
+    "PROFILE_PLAN_REFUSED",
     "PROFILE_PREFLIGHT_FAILED",
     "PROFILE_PUBLICATION_REFUSED",
     "PROFILE_RATIFICATION_REFUSED",
     "PROFILE_REPOSITORY_INVALID",
     "PROFILE_REVIEW_UNSCOPED",
+    "PROFILE_STAGE_OUTCOME_REFUSED",
     "ProfileError",
 ]
 
@@ -47,6 +49,12 @@ PROFILE_ATTEMPT_CONFLICT = "PROFILE_ATTEMPT_CONFLICT"
 
 PROFILE_PREFLIGHT_FAILED = "PROFILE_PREFLIGHT_FAILED"
 """Raised when one or more preflight checks fail."""
+
+PROFILE_PLAN_REFUSED = "PROFILE_PLAN_REFUSED"
+"""Raised when a plan stage cannot safely reconcile its spec input."""
+
+PROFILE_STAGE_OUTCOME_REFUSED = "PROFILE_STAGE_OUTCOME_REFUSED"
+"""Raised when a Stage outcome record fails validation before writing."""
 
 PROFILE_PUBLICATION_REFUSED = "PROFILE_PUBLICATION_REFUSED"
 """Raised when no recorded Re-verification can be read for publication (nothing is written)."""

@@ -1,0 +1,69 @@
+id: plan-story
+name: Plan Story
+description: Entry plan stage that turns one selected story into one implementation spec written by a Coding agent through agent-exec; it never implements, verifies or commits.
+version: "1.0"
+requires_kits:
+  - profile-dev-kit
+  - agent-kiro-kit
+allowed_tools:
+  - profile_plan_reconcile
+  - profile_plan_settle
+  - profile_record_stage_outcome
+inputs:
+  - repo_path
+  - story_key
+  - story_path
+  - guide_path
+  - spec_path
+steps:
+  - id: reconcile
+    primitive: tool
+    execution_strategy:
+      type: skip
+    config:
+      tool: profile_plan_reconcile
+      arguments:
+        repo_path: "$input.repo_path"
+        story_key: "$input.story_key"
+        story_path: "$input.story_path"
+        guide_path: "$input.guide_path"
+        spec_path: "$input.spec_path"
+  - id: author
+    primitive: agent-exec
+    if: "$stepResult.reconcile.result.author == true"
+    execution_strategy:
+      type: skip
+    timeout: 600
+    config:
+      adapter: kiro-cli
+      sandbox: workspace-write
+      prompt: >-
+        You are the Coding agent for one plan stage. Read the selected story source at
+        $input.story_path and the planning guide at $input.guide_path and write exactly one
+        complete implementation spec to $input.spec_path and ensure its YAML front matter must
+        contain story_key, requirements, repositories, dependencies and size_cap_bytes;
+        set story_key to $input.story_key and size_cap_bytes to 64000. Keep the spec
+        within the 64000-byte cap. Change no other file. Do not implement, test, verify,
+        commit or push.
+  - id: settle
+    primitive: tool
+    config:
+      tool: profile_plan_settle
+      arguments:
+        repo_path: "$input.repo_path"
+        story_key: "$input.story_key"
+        story_path: "$input.story_path"
+        guide_path: "$input.guide_path"
+        spec_path: "$input.spec_path"
+        reconcile: "$stepResult.reconcile.result"
+  - id: record
+    primitive: tool
+    config:
+      tool: profile_record_stage_outcome
+      arguments:
+        repo_path: "$input.repo_path"
+        story_key: "$stepResult.settle.result.story_key"
+        stage: plan
+        outcome: "$stepResult.settle.result.outcome"
+        reason: "$stepResult.settle.result.reason"
+        refs: "$stepResult.settle.result.refs"
