@@ -23,6 +23,7 @@ from beddel_profile_dev._errors import PROFILE_REPOSITORY_INVALID, ProfileError
 __all__ = [
     "blob_at",
     "canonical_json",
+    "changed_paths",
     "confined",
     "diff_text",
     "footprint",
@@ -506,6 +507,39 @@ def work_tree_at(repo: Path, sha: str) -> bool:
             original = "R" in token[:2] or "C" in token[:2]
         return False
     return True
+
+
+def changed_paths(repo: Path) -> set[str]:
+    """Return every work-tree path changed from the index or HEAD."""
+    result = _git(
+        repo,
+        "--no-optional-locks",
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--untracked-files=all",
+        "--ignore-submodules=none",
+    )
+    if result is None or result.returncode != 0:
+        raise _repo_error()
+    tokens = result.stdout.decode("utf-8", "surrogateescape").split("\0")
+    paths: set[str] = set()
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        index += 1
+        if not token:
+            continue
+        if len(token) < 4:
+            raise _repo_error()
+        status = token[:2]
+        paths.add(token[3:])
+        if "R" in status or "C" in status:
+            if index >= len(tokens) or not tokens[index]:
+                raise _repo_error()
+            paths.add(tokens[index])
+            index += 1
+    return paths
 
 
 def confined(root: Path, relative: str) -> Path:

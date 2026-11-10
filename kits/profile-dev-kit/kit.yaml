@@ -97,6 +97,18 @@ tools:
     target: "beddel_profile_dev.tools.approval:profile_read_approval"
     description: "Read the stored Change Approval without writing records"
     category: profile
+  - name: profile_plan_reconcile
+    target: "beddel_profile_dev.tools.plan:profile_plan_reconcile"
+    description: "Reconcile one story with one implementation spec"
+    category: profile
+  - name: profile_plan_settle
+    target: "beddel_profile_dev.tools.plan:profile_plan_settle"
+    description: "Settle a plan stage without writing or committing the spec"
+    category: profile
+  - name: profile_record_stage_outcome
+    target: "beddel_profile_dev.tools.stage_outcome:profile_record_stage_outcome"
+    description: "Append one create-only Stage outcome record outside the repository"
+    category: profile
 
 workflows:
   - name: verify-change
@@ -123,6 +135,9 @@ workflows:
   - name: read-approval
     path: workflows/read-approval.yaml
     description: Reads the stored Change Approval without writing records.
+  - name: plan-story
+    path: workflows/plan-story.yaml
+    description: Plans one selected story into one implementation spec through a Coding agent; never implements, verifies or commits.
 
 targets:
   python:
@@ -162,6 +177,12 @@ targets:
         target: "beddel_profile_dev.tools.approval_decision:profile_record_approval_decision"
       - name: profile_read_approval
         target: "beddel_profile_dev.tools.approval:profile_read_approval"
+      - name: profile_plan_reconcile
+        target: "beddel_profile_dev.tools.plan:profile_plan_reconcile"
+      - name: profile_plan_settle
+        target: "beddel_profile_dev.tools.plan:profile_plan_settle"
+      - name: profile_record_stage_outcome
+        target: "beddel_profile_dev.tools.stage_outcome:profile_record_stage_outcome"
   typescript:
     status: unavailable
     unavailable_reason: >
