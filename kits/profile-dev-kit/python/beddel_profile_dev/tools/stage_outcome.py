@@ -139,9 +139,13 @@ def profile_record_stage_outcome(
         "recorded_at": datetime.now(UTC).strftime(TIMESTAMP_FORMAT),
     }
     for _ in range(100):
-        if write_create_only(
-            records, f"stage-outcomes/{ordinal}.json", canonical_json(record)
-        ):
+        try:
+            created = write_create_only(
+                records, f"stage-outcomes/{ordinal}.json", canonical_json(record)
+            )
+        except FileExistsError:
+            created = False
+        if created:
             return {
                 "ok": True,
                 "record": ordinal,
@@ -153,4 +157,4 @@ def profile_record_stage_outcome(
             }
         ordinal += 1
         record["record"] = ordinal
-    raise ProfileError("PROFILE_REPOSITORY_INVALID", "repository or revision invalid")
+    raise ProfileError(PROFILE_REPOSITORY_INVALID, "repository or revision invalid")

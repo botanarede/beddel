@@ -33,7 +33,7 @@ def front_matter(data: bytes) -> dict[str, Any] | None:
     try:
         text = data[4:closing].decode("utf-8")
         value = yaml.safe_load(text)
-    except (UnicodeDecodeError, TypeError, ValueError, yaml.YAMLError):
+    except (UnicodeDecodeError, TypeError, ValueError, RecursionError, yaml.YAMLError):
         return None
     return dict(value) if isinstance(value, Mapping) else None
 

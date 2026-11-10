@@ -1,4 +1,5 @@
 id: plan-story
+id: plan-story
 name: Plan Story
 description: Entry plan stage that turns one selected story into one implementation spec written by a Coding agent through agent-exec; it never implements, verifies or commits.
 version: "1.0"
@@ -40,13 +41,15 @@ steps:
       prompt: >-
         You are the Coding agent for one plan stage. Read the selected story source at
         $input.story_path and the planning guide at $input.guide_path and write exactly one
-        complete implementation spec to $input.spec_path and ensure its YAML front matter must
-        contain story_key, requirements, repositories, dependencies and size_cap_bytes;
+        complete implementation spec to $input.spec_path and ensure its YAML front matter
+        contains story_key, requirements, repositories, dependencies and size_cap_bytes;
         set story_key to $input.story_key and size_cap_bytes to 64000. Keep the spec
         within the 64000-byte cap. Change no other file. Do not implement, test, verify,
         commit or push.
   - id: settle
     primitive: tool
+    execution_strategy:
+      type: fail
     config:
       tool: profile_plan_settle
       arguments:
@@ -58,6 +61,8 @@ steps:
         reconcile: "$stepResult.reconcile.result"
   - id: record
     primitive: tool
+    execution_strategy:
+      type: fail
     config:
       tool: profile_record_stage_outcome
       arguments:

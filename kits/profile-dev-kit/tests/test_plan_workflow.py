@@ -20,6 +20,8 @@ from beddel.error_codes import AGENT_EXECUTION_FAILED
 from beddel.primitives import register_builtins
 from beddel.tools.kits import load_kit
 from beddel_profile_dev._io import records_root
+from beddel_profile_dev.tools.plan import profile_plan_settle
+from beddel_profile_dev.tools.stage_outcome import profile_record_stage_outcome
 
 from ._helpers import commit_all, init_repo
 
@@ -104,7 +106,10 @@ def _repo(tmp_path: Path) -> Path:
 
 
 def _run(
-    repo: Path, fake: FakeAgent, monkeypatch: pytest.MonkeyPatch
+    repo: Path,
+    fake: FakeAgent,
+    monkeypatch: pytest.MonkeyPatch,
+    story_key: str = STORY,
 ) -> dict[str, Any]:
     workflow = WorkflowParser.parse(WORKFLOW_PATH.read_text())
     registry = PrimitiveRegistry()
@@ -123,7 +128,7 @@ def _run(
             workflow,
             {
                 "repo_path": str(repo),
-                "story_key": STORY,
+                "story_key": story_key,
                 "story_path": "story.md",
                 "guide_path": "guide.md",
                 "spec_path": "specs/story.md",
@@ -134,6 +139,7 @@ def _run(
 
 def test_workflow_shape() -> None:
     document = yaml.safe_load(WORKFLOW_PATH.read_text())
+    assert document["id"] == "plan-story"
     assert document["requires_kits"] == ["profile-dev-kit", "agent-kiro-kit"]
     assert document["inputs"] == [
         "repo_path",
@@ -160,6 +166,12 @@ def test_workflow_shape() -> None:
     assert author["config"]["sandbox"] == "workspace-write"
     assert author["timeout"] <= 600
     assert "verify" not in document["allowed_tools"]
+    workflow = WorkflowParser.parse(WORKFLOW_PATH.read_text())
+    steps = {step.id: step for step in workflow.steps}
+    assert steps["reconcile"].execution_strategy.type.value == "skip"
+    assert steps["author"].if_condition == "$stepResult.reconcile.result.author == true"
+    assert steps["settle"].execution_strategy.type.value == "fail"
+    assert steps["record"].execution_strategy.type.value == "fail"
 
 
 @pytest.mark.parametrize(
@@ -201,15 +213,76 @@ def test_reuse_and_refusal_skip_agent_and_still_record(
     monkeypatch.chdir(repo)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     fake = FakeAgent(repo, "error")
+    records = records_root(repo, "records/profile-dev") / "stage-outcomes"
     result = _run(repo, fake, monkeypatch)
     assert result["step_results"]["settle"]["result"]["reason"] == "spec.reused"
+    first_record = json.loads((records / "1.json").read_text())
+    assert first_record["story_key"] == STORY
+    result_again = _run(repo, fake, monkeypatch)
+    assert result_again["step_results"]["settle"]["result"]["reason"] == "spec.reused"
     assert fake.calls == 0
+    second_record = json.loads((records / "2.json").read_text())
+    assert second_record["record"] == 2
+    assert second_record["reason"] == "spec.reused"
 
     repo2 = _repo(tmp_path / "refusal")
     (repo2 / "specs").rmdir()
     monkeypatch.chdir(repo2)
     fake2 = FakeAgent(repo2, "error")
-    result2 = _run(repo2, fake2, monkeypatch)
-    assert result2["step_results"]["settle"]["result"]["reason"] == "spec_dir.absent"
+    result2 = _run(repo2, fake2, monkeypatch, story_key="BAD KEY")
+    assert result2["step_results"]["settle"]["result"]["reason"] == "story_key.invalid"
     assert result2["step_results"]["settle"]["result"]["outcome"] == "refused"
     assert fake2.calls == 0
+    refusal_record = json.loads(
+        (
+            records_root(repo2, "records/profile-dev") / "stage-outcomes/1.json"
+        ).read_text()
+    )
+    assert refusal_record["story_key"] is None
+
+
+def test_mismatch_and_invalid_path_records_are_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _repo(tmp_path / "mismatch")
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    mismatch = profile_plan_settle(
+        str(repo), STORY, "story.md", "guide.md", "specs/story.md", {"wrong": True}
+    )
+    assert mismatch["reason"] == "reconcile.mismatch"
+    profile_record_stage_outcome(
+        str(repo),
+        mismatch["story_key"],
+        mismatch["stage"],
+        mismatch["outcome"],
+        mismatch["reason"],
+        mismatch["refs"],
+    )
+    mismatch_record = json.loads(
+        (
+            records_root(repo, "records/profile-dev") / "stage-outcomes/1.json"
+        ).read_text()
+    )
+    assert mismatch_record["reason"] == "reconcile.mismatch"
+
+    repo2 = _repo(tmp_path / "invalid-path")
+    monkeypatch.chdir(repo2)
+    invalid = profile_plan_settle(
+        str(repo2), STORY, "story.md", "guide.md", "specs/a\nb.md", None
+    )
+    assert invalid["reason"] == "path.invalid"
+    profile_record_stage_outcome(
+        str(repo2),
+        invalid["story_key"],
+        invalid["stage"],
+        invalid["outcome"],
+        invalid["reason"],
+        invalid["refs"],
+    )
+    invalid_record = json.loads(
+        (
+            records_root(repo2, "records/profile-dev") / "stage-outcomes/1.json"
+        ).read_text()
+    )
+    assert invalid_record["refs"]["spec_path"] is None

@@ -110,6 +110,7 @@ def test_manifest_declares_all_workflows_and_python_targets() -> None:
     ]
     declared = {t["name"] for t in manifest["tools"]}
     targeted = {t["name"] for t in manifest["targets"]["python"]["tools"]}
+    assert manifest["targets"]["python"]["dependencies"] == []
     assert declared == targeted == set(_TOOLS)
 
 

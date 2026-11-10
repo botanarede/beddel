@@ -10,7 +10,11 @@ from typing import Any
 
 from beddel.tools import beddel_tool
 
-from beddel_profile_dev._errors import PROFILE_PLAN_REFUSED, ProfileError
+from beddel_profile_dev._errors import (
+    PROFILE_PLAN_REFUSED,
+    PROFILE_REPOSITORY_INVALID,
+    ProfileError,
+)
 from beddel_profile_dev._io import (
     changed_paths,
     confined,
@@ -44,9 +48,13 @@ def _validate_inputs(
 ) -> tuple[str, str, str, str]:
     if not _valid_story_key(story_key):
         raise _refuse("story_key.invalid")
-    if not all(
-        isinstance(value, str) and relative_path(value)
-        for value in (story_path, guide_path, spec_path)
+    if (
+        not all(
+            isinstance(value, str) and relative_path(value)
+            for value in (story_path, guide_path, spec_path)
+        )
+        or not isinstance(spec_path, str)
+        or len(spec_path) > 512
     ):
         raise _refuse("path.invalid")
     assert isinstance(story_key, str)
@@ -62,7 +70,9 @@ def _read_required(repo: Path, relative: str, reason: str) -> None:
         if not path.is_file():
             raise _refuse(reason)
         path.read_bytes()
-    except ProfileError:
+    except ProfileError as error:
+        if error.code == PROFILE_REPOSITORY_INVALID:
+            raise _refuse("path.invalid") from error
         raise
     except (OSError, RuntimeError, ValueError) as error:
         raise _refuse(reason) from error
@@ -110,25 +120,32 @@ def _state(
     repo = real_repo_root(repo_path)
     _read_required(repo, source, "story.absent")
     _read_required(repo, guide, "guide.absent")
-    spec_file = confined(repo, spec)
-    spec_dir = spec_file.parent
-    if not spec_dir.is_dir():
-        raise _refuse("spec_dir.absent")
+    try:
+        spec_file = confined(repo, spec)
+        spec_dir = spec_file.parent
+        if not spec_dir.is_dir():
+            raise _refuse("spec_dir.absent")
+    except ProfileError as error:
+        if error.code == PROFILE_REPOSITORY_INVALID:
+            raise _refuse("path.invalid") from error
+        raise
+    except OSError as error:
+        raise _refuse("spec.unreadable") from error
     if Path(os.path.realpath(os.getcwd())) != repo:
         raise _refuse("cwd.mismatch")
     dirty = changed_paths(repo)
     if any(path != spec for path in dirty):
         raise _refuse("worktree.dirty")
 
-    if not spec_file.exists():
-        data: bytes | None = None
-    elif not spec_file.is_file():
-        raise _refuse("spec.unreadable")
-    else:
-        try:
+    try:
+        if not spec_file.exists():
+            data: bytes | None = None
+        elif not spec_file.is_file():
+            raise _refuse("spec.unreadable")
+        else:
             data = spec_file.read_bytes()
-        except (OSError, RuntimeError, ValueError) as error:
-            raise _refuse("spec.unreadable") from error
+    except OSError as error:
+        raise _refuse("spec.unreadable") from error
     if data is not None:
         metadata = front_matter(data)
         if metadata is not None and metadata.get("story_key") not in (None, story):
@@ -232,10 +249,8 @@ def _settle_current(
     except (OSError, RuntimeError, ValueError):
         return "spec.incomplete", None, 0
     duplicate = _duplicate_reason(repo, spec_path, story_key)
-    if duplicate == "spec.duplicate":
-        return duplicate, data, 0
     if duplicate is not None:
-        return "spec.incomplete", data, 0
+        return duplicate, data, 0
     if not spec_complete(data, story_key):
         return "spec.incomplete", data, 0
     return "ok", data, 0
@@ -256,7 +271,13 @@ def profile_plan_settle(
 ) -> dict[str, Any]:
     """Derive a success, refusal, or failure outcome from the settled work tree."""
     valid_story = story_key if _valid_story_key(story_key) else None
-    valid_spec = spec_path if isinstance(spec_path, str) else None
+    valid_spec = (
+        spec_path
+        if isinstance(spec_path, str)
+        and len(spec_path) <= 512
+        and relative_path(spec_path)
+        else None
+    )
     try:
         story, _source, _guide, spec = _validate_inputs(
             story_key, story_path, guide_path, spec_path

@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 
 import pytest
 from beddel_profile_dev._errors import PROFILE_PLAN_REFUSED, ProfileError
+from beddel_profile_dev._io import changed_paths
 from beddel_profile_dev.plan import front_matter, relative_path, spec_complete
+from beddel_profile_dev.tools import plan as plan_tools
 from beddel_profile_dev.tools.plan import profile_plan_reconcile, profile_plan_settle
 
-from ._helpers import commit_all, init_repo
+from ._helpers import commit_all, git, init_repo
 
 STORY = "7-3-plan-workflow-turns-one-story-into-one-spec"
 STORY_PATH = "stories/story.md"
@@ -48,6 +51,78 @@ def call_reconcile(repo: Path, **kwargs: str) -> dict[str, object]:
     return profile_plan_reconcile(**values)
 
 
+def test_long_spec_path_is_refused_without_echoing_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = prepared_repo(tmp_path)
+    (repo / "specs").mkdir()
+    monkeypatch.chdir(repo)
+    long_path = "specs/" + "a" * 600 + ".md"
+    with pytest.raises(ProfileError) as exc_info:
+        call_reconcile(repo, spec_path=long_path)
+    assert exc_info.value.details["reason"] == "path.invalid"
+    settled = profile_plan_settle(
+        str(repo), STORY, STORY_PATH, GUIDE_PATH, long_path, None
+    )
+    assert settled["reason"] == "path.invalid"
+    assert settled["refs"]["spec_path"] is None
+
+
+def test_recursion_in_spec_is_incomplete_and_settles_as_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = prepared_repo(tmp_path)
+    (repo / "specs").mkdir()
+    monkeypatch.chdir(repo)
+    reconcile = call_reconcile(repo)
+    malformed = b"---\nx: " + b"[" * 3000 + b"\n---\nbody\n"
+    (repo / SPEC_PATH).write_bytes(malformed)
+    assert call_reconcile(repo)["state"] == "incomplete"
+    settled = profile_plan_settle(
+        str(repo), STORY, STORY_PATH, GUIDE_PATH, SPEC_PATH, reconcile
+    )
+    assert settled["outcome"] == "failed"
+    assert settled["reason"] == "spec.incomplete"
+
+
+def test_escaping_story_symlink_is_path_invalid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = prepared_repo(tmp_path)
+    (repo / "specs").mkdir()
+    os.symlink("/etc/hostname", repo / "story-link")
+    monkeypatch.chdir(repo)
+    with pytest.raises(ProfileError) as exc_info:
+        call_reconcile(repo, story_path="story-link")
+    assert exc_info.value.details["reason"] == "path.invalid"
+
+
+def test_duplicate_scan_unreadable_is_a_settle_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = prepared_repo(tmp_path)
+    (repo / "specs").mkdir()
+    monkeypatch.chdir(repo)
+    reconcile = call_reconcile(repo)
+    (repo / SPEC_PATH).write_bytes(complete_spec())
+    monkeypatch.setattr(
+        plan_tools, "_duplicate_reason", lambda *args: "spec.unreadable"
+    )
+    settled = profile_plan_settle(
+        str(repo), STORY, STORY_PATH, GUIDE_PATH, SPEC_PATH, reconcile
+    )
+    assert settled["outcome"] == "failed"
+    assert settled["reason"] == "spec.unreadable"
+
+
+def test_changed_paths_reports_both_rename_paths(tmp_path: Path) -> None:
+    repo = init_repo(tmp_path / "rename")
+    (repo / "a.txt").write_text("a")
+    commit_all(repo)
+    git(repo, "mv", "a.txt", "b.txt")
+    assert changed_paths(repo) == {"a.txt", "b.txt"}
+
+
 def test_pure_contract() -> None:
     data = complete_spec()
     assert front_matter(data)["story_key"] == STORY
@@ -66,6 +141,8 @@ def test_pure_contract() -> None:
     [
         ("story_key", "BAD KEY", "story_key.invalid"),
         ("story_path", "../story.md", "path.invalid"),
+        ("guide_path", "../guide.md", "path.invalid"),
+        ("spec_path", "../spec.md", "path.invalid"),
     ],
 )
 def test_invalid_inputs_refuse(

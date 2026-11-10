@@ -6,7 +6,11 @@ import json
 from pathlib import Path
 
 import pytest
-from beddel_profile_dev._errors import PROFILE_STAGE_OUTCOME_REFUSED, ProfileError
+from beddel_profile_dev._errors import (
+    PROFILE_REPOSITORY_INVALID,
+    PROFILE_STAGE_OUTCOME_REFUSED,
+    ProfileError,
+)
 from beddel_profile_dev._io import records_root
 from beddel_profile_dev.tools import stage_outcome
 from beddel_profile_dev.tools.stage_outcome import profile_record_stage_outcome
@@ -94,6 +98,8 @@ def test_preexisting_and_racing_files_stay_byte_identical(
         ({"story_key": None, "outcome": "failed"}, "story_key.required"),
         ({"refs": {"Bad": 1}}, "refs.invalid"),
         ({"refs": {"count": -1}}, "refs.invalid"),
+        ({"refs": {f"key-{index}": index for index in range(17)}}, "refs.invalid"),
+        ({"refs": {"value": "x" * 513}}, "refs.invalid"),
     ],
 )
 def test_bad_fields_write_nothing(
@@ -117,7 +123,7 @@ def test_bad_fields_write_nothing(
         profile_record_stage_outcome(**values)
     assert exc_info.value.code == PROFILE_STAGE_OUTCOME_REFUSED
     assert exc_info.value.details["reason"] == reason
-    assert not (root / ".config" / "beddel" / "records").exists()
+    assert not (root / "stage-outcomes").exists()
 
 
 def test_token_and_control_values_are_rejected_without_echoing(
@@ -137,7 +143,7 @@ def test_token_and_control_values_are_rejected_without_echoing(
                 {"ref": value},
             )
         assert exc_info.value.code == PROFILE_STAGE_OUTCOME_REFUSED
-    assert not (root / ".config" / "beddel" / "records").exists()
+    assert not (root / "stage-outcomes").exists()
 
 
 def test_invalid_repository_does_not_create_a_record(
@@ -154,7 +160,28 @@ def test_invalid_repository_does_not_create_a_record(
             "spec.created",
             {},
         )
-    assert not (root / ".config" / "beddel" / "records").exists()
+    assert not (root / "stage-outcomes").exists()
+
+
+def test_exhausted_create_only_attempts_raise_repository_invalid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = repo_fixture(tmp_path)
+    record_root(tmp_path, repo, monkeypatch)
+    calls = 0
+
+    def always_exists(*args: object, **kwargs: object) -> bool:
+        nonlocal calls
+        calls += 1
+        raise FileExistsError
+
+    monkeypatch.setattr(stage_outcome, "write_create_only", always_exists)
+    with pytest.raises(ProfileError) as exc_info:
+        profile_record_stage_outcome(
+            str(repo), "story-1", "plan", "succeeded", "spec.created", {}
+        )
+    assert exc_info.value.code == PROFILE_REPOSITORY_INVALID
+    assert calls == 100
 
 
 def test_stage_outcomes_term_is_isolated_to_its_tool() -> None:
