@@ -107,6 +107,19 @@ def test_workflow_shape_and_bound() -> None:
     assert all(step.execution_strategy.type is StrategyType.SKIP for step in nested)
     assert steps[4].output_key == steps[5].output_key == "fixed_1"
     assert steps[9].output_key == steps[10].output_key == "fixed_2"
+    assert {
+        step.id: step.if_condition for step in steps if step.if_condition is not None
+    } == {
+        "verify": "$stepResult.reconcile.result.verify == true",
+        "fix_1": "$stepResult.round_1.result.fix == true",
+        "settle_1": "$stepResult.round_1.result.fix == true",
+        "settle_1_stop": "$stepResult.round_1.result.fix != true",
+        "verify_1": "$stepResult.fixed_1.result.verify == true",
+        "fix_2": "$stepResult.round_2.result.fix == true",
+        "settle_2": "$stepResult.round_2.result.fix == true",
+        "settle_2_stop": "$stepResult.round_2.result.fix != true",
+        "verify_2": "$stepResult.fixed_2.result.verify == true",
+    }
     assert all(
         step.execution_strategy.type is StrategyType.FAIL
         for step in steps
@@ -179,7 +192,9 @@ class FixAgent:
         return AgentResult(0, "", [], [], {}, "fake")
 
 
-def _run_stage(repo: Path, fake: FixAgent, base: str) -> dict[str, Any]:
+def _run_stage(
+    repo: Path, fake: FixAgent, base: str, **overrides: object
+) -> dict[str, Any]:
     workflow = WorkflowParser.parse(WORKFLOW_PATH.read_text())
     registry = PrimitiveRegistry()
     register_builtins(registry)
@@ -194,19 +209,18 @@ def _run_stage(repo: Path, fake: FixAgent, base: str) -> dict[str, Any]:
     )
     from beddel.domain.executor import WorkflowExecutor
 
+    payload = {
+        "repo_path": str(repo),
+        "story_key": STORY,
+        "spec_path": SPEC_PATH,
+        "branch": BRANCH,
+        "base_ref": base,
+        "change_id": "c1",
+        "inventory_version": "v1",
+    }
+    payload.update(overrides)
     return asyncio.run(
-        WorkflowExecutor(registry, deps=dependencies).execute(
-            workflow,
-            {
-                "repo_path": str(repo),
-                "story_key": STORY,
-                "spec_path": SPEC_PATH,
-                "branch": BRANCH,
-                "base_ref": base,
-                "change_id": "c1",
-                "inventory_version": "v1",
-            },
-        )
+        WorkflowExecutor(registry, deps=dependencies).execute(workflow, payload)
     )
 
 
@@ -252,6 +266,7 @@ def test_in_process_consistent_run_has_one_report_and_no_fix_agent(
     assert len(list((tmp_path / "home").rglob("changes/c1/report/*.json"))) == 1
 
 
+# fmt: off
 def test_in_process_fix_round_commits_and_reverifies(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -279,3 +294,102 @@ def test_in_process_fix_round_commits_and_reverifies(
     assert len(reports) == 2
     assert "Fix-Round: 1" in git(repo, "show", "-s", "--format=%B", "HEAD")
     assert json.loads(reports[1].read_text())["reverification"]["status"] == "recorded"
+    first, second = (json.loads(path.read_text()) for path in reports)
+    assert first["revision"] != second["revision"]
+    links = [link for link in second["reverification"]["links"] if link["class"] == "gate-unit"]
+    assert links and all(link["result"] == "resolved" for link in links)
+    assert all(not item["ref"].startswith(f"revisions/{first['revision']}/") for item in second["reads"] if "ref" in item)
+class ErrorAgent(FixAgent):
+    async def execute(self, prompt: str, **kwargs: Any) -> AgentResult:
+        from beddel.domain.errors import AgentError
+        from beddel.error_codes import AGENT_EXECUTION_FAILED
+
+        self.calls += 1
+        raise AgentError(code=AGENT_EXECUTION_FAILED, message="x")
+
+
+class PersistentAgent(FixAgent):
+    async def execute(self, prompt: str, **kwargs: Any) -> AgentResult:
+        self.calls += 1
+        (self.repo / "src/api.py").write_text(f"x = {self.calls + 2}\n")
+        return AgentResult(0, "", [], [], {}, "fake")
+
+
+class OutOfScopeAgent(FixAgent):
+    async def execute(self, prompt: str, **kwargs: Any) -> AgentResult:
+        self.calls += 1
+        (self.repo / "README.md").write_text("outside\n")
+        return AgentResult(0, "", [], [], {}, "fake")
+
+
+def _install_review(monkeypatch: pytest.MonkeyPatch, behavior: str = "completed") -> None:
+    monkeypatch.setattr(
+        _adapters,
+        "get_review_adapter",
+        lambda agent_name, *, timeout_seconds: FakeReviewAdapter(
+            behavior, output=_review_output()
+        ),
+    )
+
+
+def test_workflow_persistent_finding_hits_bound_and_rerun_reuses_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base = _repo(tmp_path)
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("PATH", stub_gate_tools(tmp_path))
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("STUB_EXIT_PYTEST", "1")
+    _install_review(monkeypatch)
+    fake = PersistentAgent(repo, monkeypatch)
+    result = _run_stage(repo, fake, base)
+    close = result["step_results"]["close"]["result"]
+    assert (close["outcome"], close["reason"], fake.calls) == ("stopped", "fix.bound_reached", 2)
+    assert len(list(home.rglob("changes/c1/report/*.json"))) == 3
+    assert not list(home.rglob("changes/c1/approval.json"))
+    rerun = _run_stage(repo, fake, base)
+    assert len(list(home.rglob("changes/c1/report/*.json"))) == 3
+    assert [path.name for path in sorted((tmp_path / "home").rglob("stage-outcomes/*.json"))] == ["1.json", "2.json"]
+    assert rerun["step_results"]["record"]["result"]["record"] == 2
+
+
+def test_workflow_maps_agent_error_refusal_timeout_inventory_and_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cases = ["agent", "refusal", "timeout", "inventory", "scope"]
+    for case in cases:
+        root = tmp_path / case
+        repo, base = _repo(root)
+        monkeypatch.chdir(repo)
+        monkeypatch.setenv("PATH", stub_gate_tools(root))
+        monkeypatch.setenv("HOME", str(root / "home"))
+        if case == "timeout":
+            _install_review(monkeypatch, "timeout")
+            fake: FixAgent = FixAgent(repo, monkeypatch)
+            expected = "pendency.no_fixes"
+        elif case == "agent":
+            monkeypatch.setenv("STUB_EXIT_PYTEST", "1")
+            _install_review(monkeypatch)
+            fake = ErrorAgent(repo, monkeypatch)
+            expected = "agent.failed"
+        elif case == "scope":
+            monkeypatch.setenv("STUB_EXIT_PYTEST", "1")
+            _install_review(monkeypatch)
+            fake = OutOfScopeAgent(repo, monkeypatch)
+            expected = "scope.exceeded"
+        else:
+            _install_review(monkeypatch)
+            fake = FixAgent(repo, monkeypatch)
+            expected = "branch.protected" if case == "refusal" else "verify.failed"
+        overrides: dict[str, object] = {}
+        if case == "refusal": overrides["branch"] = "main"
+        if case == "inventory": overrides["inventory_version"] = "missing"
+        result = _run_stage(repo, fake, base, **overrides)
+        close = result["step_results"]["close"]["result"]
+        assert close["reason"] == expected
+        if case == "agent": assert fake.calls == 1 and not list((root / "home").rglob("Fix-Round"))
+        if case == "inventory": assert "verify" in str(result.get("absorbed_errors"))
+
+
+# fmt: on

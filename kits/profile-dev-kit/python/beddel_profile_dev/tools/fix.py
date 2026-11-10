@@ -29,7 +29,7 @@ def _bad(story: str | None, reason: str, **values: Any) -> dict[str, Any]:
     return _result(story, "failed", reason, _refs(**values), **values)
 
 def _refused(story: str | None, reason: str, **values: Any) -> dict[str, Any]:
-    return _result(story, "refused", reason, _refs(**values))
+    return _result(story, "refused", reason, _refs(**values), **values)
 
 def _inputs(repo_path: str, story: object, spec: object, branch: object, base: object, change: object, bound: object):
     s = story if isinstance(story, str) and _valid_story(story) else None
@@ -62,25 +62,26 @@ def _state_refs(spec: str, digest: str, branch: str, base: str, head: str, chang
     return _refs(spec_path=spec, spec_sha256=digest, branch=branch, base=base, head=head, change_id=change, rounds=rounds, **values)
 
 def _repo_state(repo: Path, story: str, spec: str, branch: str, base_ref: str, change: str):
+    refused = lambda reason: _refused(story, reason, spec_path=spec, branch=branch, base=base_ref, change_id=change)
     base0 = resolve_revision(repo, base_ref)
     result = git_run(repo, "show-ref", "--verify", "--quiet", f"refs/heads/{branch}")
     if result is None or result.returncode not in (0, 1): raise _repo_error()
-    if result.returncode == 1: return _refused(story, "branch.absent")
-    if _symbolic_branch(repo) != branch: return _refused(story, "branch.not_current")
-    if Path(os.path.realpath(os.getcwd())) != repo: return _refused(story, "cwd.mismatch")
+    if result.returncode == 1: return refused("branch.absent")
+    if _symbolic_branch(repo) != branch: return refused("branch.not_current")
+    if Path(os.path.realpath(os.getcwd())) != repo: return refused("cwd.mismatch")
     data, error = _read_spec(repo, spec)
-    if error is not None or data is None: return _refused(story, error or "spec.unreadable")
-    if not spec_complete(data, story): return _refused(story, "spec.incomplete")
+    if error is not None or data is None: return refused(error or "spec.unreadable")
+    if not spec_complete(data, story): return refused("spec.incomplete")
     units = spec_units(data, story)
-    if units is None: return _refused(story, "units.invalid")
+    if units is None: return refused("units.invalid")
     config = load_config()
-    if any(resolve_executable(argv[0]) is None for argv in config.gate_commands): return _refused(story, "gate.unavailable")
+    if any(resolve_executable(argv[0]) is None for argv in config.gate_commands): return refused("gate.unavailable")
     fail = lambda reason, **values: _bad(story, reason, **values)
     if changed_paths(repo) - {spec}: return fail("worktree.dirty", head=resolve_revision(repo, "HEAD"))
     head = resolve_revision(repo, "HEAD")
     base = _git_text(git_run(repo, "merge-base", base0, head))
-    if base is None: return _refused(story, "base.invalid")
-    if any(unit.id not in _completed(repo, base, story) for unit in units): return _refused(story, "units.incomplete")
+    if base is None: return refused("base.invalid")
+    if any(unit.id not in _completed(repo, base, story) for unit in units): return refused("units.incomplete")
     log = git_run(repo, "log", "-z", "--format=%H%n%B", f"{base}..HEAD")
     if log is None or log.returncode != 0: raise _repo_error()
     rounds = sum(trailer_round(raw.decode("utf-8", "replace"), story) is not None for raw in log.stdout.split(b"\x00") if raw)
@@ -95,7 +96,9 @@ def profile_fix_reconcile(repo_path: str, story_key: str, spec_path: str, branch
     if prior is None: return fail("reconcile.failed")
     if prior != {} and (not isinstance(prior, Mapping) or prior.get("stage") != "verify-and-fix" or prior.get("story_key") != story): return fail("state.mismatch")
     try:
-        if prior != {} and prior.get("outcome") is not None or prior != {} and prior.get("fix") is True:
+        if prior != {} and (prior.get("outcome") is not None or prior.get("fix") is True):
+            if prior.get("outcome") is not None and prior.get("head") is None:
+                return dict(prior)
             head = resolve_revision(repo, "HEAD")
             return fail("head.moved", head=head) if head != prior.get("head") else dict(prior)
         if prior != {} and prior.get("verify") not in (False, True): return fail("state.mismatch")
@@ -112,14 +115,18 @@ def profile_fix_reconcile(repo_path: str, story_key: str, spec_path: str, branch
         outcome, reason = decision(report, rounds, bound)
         findings = fix_findings(report)
         text = json.dumps(findings, sort_keys=True, separators=(",", ":"))
-        refs = _state_refs(spec, digest, branch, base, head, change, rounds, report=item, findings=len(findings))
+        prior_refs = prior.get("refs") if prior.get("verify") is True else None
+        commit = prior_refs.get("commit") if isinstance(prior_refs, Mapping) else None
+        refs = _state_refs(spec, digest, branch, base, head, change, rounds, report=item, findings=len(findings), commit=commit)
         if outcome is not None: return _result(story, outcome, reason, refs, spec_sha256=digest, base=base, head=head, rounds=rounds, findings=text, scope=scope)
         if len(text.encode()) > MAX_FINDINGS_BYTES: return fail("findings.too_large", **refs)
         if _TOKEN.search(text): return fail("secret.detected", **refs)
         baseline = _run_gates(repo, config)
-        if changed_paths(repo) - {spec}: return fail("gate.changed_tree", **refs, base=base, head=head, rounds=rounds, findings=text, scope=scope, baseline=baseline)
+        if changed_paths(repo) - {spec}: return fail("gate.changed_tree", **refs)
         return _result(story, None, None, {**refs, "round": rounds + 1}, verify=False, fix=True, spec_sha256=digest, base=base, head=head, round=rounds + 1, rounds=rounds, findings=text, scope=scope, baseline=baseline)
     except ProfileError: return fail("reconcile.failed")
+    except Exception:  # noqa: BLE001
+        return fail("reconcile.failed")
 
 @beddel_tool(name="profile_fix_settle", description="fix", category="profile")
 def profile_fix_settle(repo_path: str, story_key: str, spec_path: str, branch: str, base_ref: str, change_id: str, prepare: Mapping[str, Any] | None, agent: Mapping[str, Any] | None = None) -> dict[str, Any]:
@@ -182,4 +189,6 @@ def profile_fix_settle(repo_path: str, story_key: str, spec_path: str, branch: s
         refs = _refs(spec_path=spec, branch=branch, base=base, head=new_head, commit=new_head, change_id=change, round=round_, rounds=round_, diff_bytes=diff_bytes)
         return _result(story, None, None, refs, verify=True, spec_sha256=digest, base=base, head=new_head, round=round_, rounds=round_, scope=scope)
     except ProfileError: return fail("settle.failed")
+    except Exception:  # noqa: BLE001
+        return fail("settle.failed")
 # fmt: on

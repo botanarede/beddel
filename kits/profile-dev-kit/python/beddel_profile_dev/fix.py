@@ -58,7 +58,8 @@ def fix_findings(report: object) -> list[dict[str, Any]]:
     if divergences.get("status") != "present" or pendencies.get("status") != "present" or not isinstance(values, list) or not isinstance(pending, list):
         return []
     indexes = {item["finding_index"] for item in pending if isinstance(item, Mapping) and item.get("reason") in FIXABLE_REASONS and type(item.get("finding_index")) is int and item["finding_index"] >= 0}
-    return [dict(values[index]) for index in sorted(indexes) if index < len(values) and isinstance(values[index], Mapping)]
+    keys = ("source", "association", "class", "affected_point", "criterion", "kind", "between", "detail")
+    return [{key: values[index].get(key) for key in keys} for index in sorted(indexes) if index < len(values) and isinstance(values[index], Mapping)]
 
 
 def decision(report: object, rounds: int, max_rounds: int) -> tuple[str | None, str | None]:
