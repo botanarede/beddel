@@ -439,7 +439,8 @@ A complete spec is UTF-8, at most 262144 bytes, has YAML front matter with
 `story_key`, non-empty `requirements`, non-empty `repositories`, `dependencies`
 and `size_cap_bytes` from 1 through 64000, and has a non-blank body. The
 `story_key` and the five front-matter fields are the only contract fields read
-by the kit; other fields remain available to the authoring process.
+by the kit; `units` is also read by the implement stage. Other fields remain
+available to the authoring process.
 
 Stage outcomes use fixed outcomes (`succeeded`, `refused`, `failed`, `stopped`)
 and reason codes. Each record is canonical JSON under
@@ -453,4 +454,32 @@ Run the workflow from the repository root, for example:
 
 ```text
 beddel run -i ... workflows/plan-story.yaml
+```
+## Delivery: implement stage
+
+The `implement-story` entry workflow accepts `repo_path`, `story_key`,
+`spec_path`, `branch` and `base_ref`. It creates or reuses the feature branch,
+selects the first unfinished unit, invokes one Coding agent through
+`agent-exec`, runs the review checks and Gate commands, and commits only that
+unit's declared paths. It never pushes, approves, verifies, integrates,
+commits the spec or writes a profile record itself.
+
+The implement contract adds `units` to a complete plan spec. Each unit has a
+unique `id`, one to 64 repository-relative `paths` and a Conventional Commit
+`subject`. Commits carry exactly one `Story-Key` and one
+`Implementation-Unit` trailer. One unit is committed per run; rerun the
+workflow to resume the next unit. A clean baseline Gate is required only for
+regression comparison, so a gate already red at baseline is advisory.
+
+Review failures use fixed reasons including `worktree.dirty`, `scope.exceeded`,
+`unit.empty`, `size.exceeded`, `secret.detected`, `gate.regressed`,
+`gate.changed_tree`, `agent.failed` and `commit.failed`. Successful runs use
+`unit.committed` or `units.complete`. Outcome refs include the spec digest,
+branch, base, head, commit, unit, completion counts, diff size, out-of-scope
+count and regressed command names.
+
+Run the workflow from the repository root, for example:
+
+```text
+beddel run -i ... workflows/implement-story.yaml
 ```

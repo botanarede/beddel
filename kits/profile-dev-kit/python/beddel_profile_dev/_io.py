@@ -27,6 +27,7 @@ __all__ = [
     "confined",
     "diff_text",
     "footprint",
+    "git_run",
     "in_head_history",
     "in_index",
     "is_ancestor",
@@ -74,6 +75,8 @@ def _repo_error() -> ProfileError:
 def _git(
     repo: Path,
     *args: str,
+    index_file: Path | None = None,
+    timeout: float = _GIT_TIMEOUT_SECONDS,
 ) -> subprocess.CompletedProcess[bytes] | None:
     git = shutil.which("git")
     if git is None:
@@ -81,6 +84,8 @@ def _git(
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     env["GIT_NO_LAZY_FETCH"] = "1"  # no network, even in a partial clone
     env["GIT_ATTR_NOSYSTEM"] = "1"  # the system attributes file never applies
+    if index_file is not None:
+        env["GIT_INDEX_FILE"] = str(index_file)
     try:
         return subprocess.run(
             [
@@ -94,11 +99,21 @@ def _git(
             capture_output=True,
             stdin=subprocess.DEVNULL,
             env=env,
-            timeout=_GIT_TIMEOUT_SECONDS,
+            timeout=timeout,
             check=False,
         )
     except (OSError, ValueError, subprocess.SubprocessError):
         return None
+
+
+def git_run(
+    repo: Path,
+    *args: str,
+    index_file: Path | None = None,
+    timeout: float = _GIT_TIMEOUT_SECONDS,
+) -> subprocess.CompletedProcess[bytes] | None:
+    """Run Git with the kit's isolated environment and optional index."""
+    return _git(repo, *args, index_file=index_file, timeout=timeout)
 
 
 def _blob_by_oid(repo: Path, oid: str) -> bytes:

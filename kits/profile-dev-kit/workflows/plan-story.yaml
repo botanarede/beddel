@@ -41,7 +41,9 @@ steps:
         You are the Coding agent for one plan stage. Read the selected story source at
         $input.story_path and the planning guide at $input.guide_path and write exactly one
         complete implementation spec to $input.spec_path and ensure its YAML front matter
-        contains story_key, requirements, repositories, dependencies and size_cap_bytes;
+        contains story_key, requirements, repositories, dependencies, size_cap_bytes and
+        a units list, each entry with an id, the repository-relative paths it may change
+        and a Conventional Commit subject;
         set story_key to $input.story_key and size_cap_bytes to 64000. Keep the spec
         within the 64000-byte cap. Change no other file. Do not implement, test, verify,
         commit or push.

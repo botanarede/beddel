@@ -109,6 +109,14 @@ tools:
     target: "beddel_profile_dev.tools.stage_outcome:profile_record_stage_outcome"
     description: "Append one create-only Stage outcome record outside the repository"
     category: profile
+  - name: profile_implement_prepare
+    target: "beddel_profile_dev.tools.implement:profile_implement_prepare"
+    description: "Prepare one implementation unit on a feature branch"
+    category: profile
+  - name: profile_implement_settle
+    target: "beddel_profile_dev.tools.implement:profile_implement_settle"
+    description: "Review and commit one implementation unit"
+    category: profile
 
 workflows:
   - name: verify-change
@@ -135,6 +143,9 @@ workflows:
   - name: read-approval
     path: workflows/read-approval.yaml
     description: Reads the stored Change Approval without writing records.
+  - name: implement-story
+    path: workflows/implement-story.yaml
+    description: Implements one unit of one spec through a Coding agent and commits only its declared paths; never pushes, verifies or integrates.
   - name: plan-story
     path: workflows/plan-story.yaml
     description: Plans one selected story into one implementation spec through a Coding agent; never implements, verifies or commits.
@@ -183,6 +194,10 @@ targets:
         target: "beddel_profile_dev.tools.plan:profile_plan_settle"
       - name: profile_record_stage_outcome
         target: "beddel_profile_dev.tools.stage_outcome:profile_record_stage_outcome"
+      - name: profile_implement_prepare
+        target: "beddel_profile_dev.tools.implement:profile_implement_prepare"
+      - name: profile_implement_settle
+        target: "beddel_profile_dev.tools.implement:profile_implement_settle"
   typescript:
     status: unavailable
     unavailable_reason: >
