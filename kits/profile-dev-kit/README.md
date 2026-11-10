@@ -468,3 +468,28 @@ A baseline-red Gate is advisory; only a green command that becomes red blocks.
 ```text
 beddel run -i ... workflows/implement-story.yaml
 ```
+
+## Delivery: verify-and-fix stage
+
+`verify-and-fix-story` takes `repo_path`, `story_key`, `spec_path`, `branch`,
+`base_ref`, `change_id` and `inventory_version`. It invokes `verify-change.yaml` unchanged through the core nested
+`call-agent` primitive, reads its Report through `profile_read_report`, and
+records one Stage outcome. The stage never writes a Change, binding, Impact,
+VerificationAttempt, Gate, Review, Evidence, Report or Verdict.
+
+A `consistent` Report succeeds. A `has pendency` Report starts a fix round only
+when it contains a `finding_blocking` or `finding_unclassified` Pendency. The
+Coding agent receives only those recorded Findings and the union of the spec
+unit paths. Kit checks run again before `profile_fix_settle` creates one commit
+with `Story-Key` and `Fix-Round` trailers. At most two rounds invoke `verify-change` at the new commit so it opens a fresh
+VerificationAttempt. Earlier Evidence is never copied. Other Pendencies stop with `pendency.no_fixes`; the bound stops with
+`fix.bound_reached`. Stage refs contain identifiers, digests, counts and paths
+only.
+
+Owner-ratified Review classes:
+Blind Hunter, Edge Case Hunter, Verification Gap and Acceptance Auditor. Agents
+never ratify or write inventory versions.
+
+```text
+beddel run -i ... workflows/verify-and-fix-story.yaml
+```

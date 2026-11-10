@@ -117,6 +117,14 @@ tools:
     target: "beddel_profile_dev.tools.implement:profile_implement_settle"
     description: "Review and commit one implementation unit"
     category: profile
+  - name: profile_fix_reconcile
+    target: "beddel_profile_dev.tools.fix:profile_fix_reconcile"
+    description: "Reconcile one bounded verification fix round"
+    category: profile
+  - name: profile_fix_settle
+    target: "beddel_profile_dev.tools.fix:profile_fix_settle"
+    description: "Validate and commit one verification fix round"
+    category: profile
 
 workflows:
   - name: verify-change
@@ -146,6 +154,9 @@ workflows:
   - name: implement-story
     path: workflows/implement-story.yaml
     description: Implements one unit of one spec through a Coding agent and commits only its declared paths; never pushes, verifies or integrates.
+  - name: verify-and-fix-story
+    path: workflows/verify-and-fix-story.yaml
+    description: Runs verify-change unchanged and applies at most two bounded fix rounds with fresh verification attempts; never approves, ratifies, pushes or integrates.
   - name: plan-story
     path: workflows/plan-story.yaml
     description: Plans one selected story into one implementation spec through a Coding agent; never implements, verifies or commits.
@@ -198,6 +209,10 @@ targets:
         target: "beddel_profile_dev.tools.implement:profile_implement_prepare"
       - name: profile_implement_settle
         target: "beddel_profile_dev.tools.implement:profile_implement_settle"
+      - name: profile_fix_reconcile
+        target: "beddel_profile_dev.tools.fix:profile_fix_reconcile"
+      - name: profile_fix_settle
+        target: "beddel_profile_dev.tools.fix:profile_fix_settle"
   typescript:
     status: unavailable
     unavailable_reason: >
