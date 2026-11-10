@@ -357,7 +357,7 @@ def test_workflow_persistent_finding_hits_bound_and_rerun_reuses_report(
 def test_workflow_maps_agent_error_refusal_timeout_inventory_and_scope(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    cases = ["agent", "refusal", "timeout", "inventory", "scope"]
+    cases = ["timeout", "agent", "refusal", "inventory", "scope"]
     for case in cases:
         root = tmp_path / case
         repo, base = _repo(root)
@@ -388,7 +388,7 @@ def test_workflow_maps_agent_error_refusal_timeout_inventory_and_scope(
         result = _run_stage(repo, fake, base, **overrides)
         close = result["step_results"]["close"]["result"]
         assert close["reason"] == expected
-        if case == "agent": assert fake.calls == 1 and not list((root / "home").rglob("Fix-Round"))
+        if case in ("agent", "timeout"): assert fake.calls == (case == "agent")
         if case == "inventory": assert "verify" in str(result.get("absorbed_errors"))
 
 

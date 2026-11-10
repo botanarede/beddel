@@ -62,7 +62,7 @@ def _state_refs(spec: str, digest: str, branch: str, base: str, head: str, chang
     return _refs(spec_path=spec, spec_sha256=digest, branch=branch, base=base, head=head, change_id=change, rounds=rounds, **values)
 
 def _repo_state(repo: Path, story: str, spec: str, branch: str, base_ref: str, change: str):
-    refused = lambda reason: _refused(story, reason, spec_path=spec, branch=branch, base=base_ref, change_id=change)
+    refused = lambda reason: _refused(story, reason, spec_path=spec, branch=branch, change_id=change)
     base0 = resolve_revision(repo, base_ref)
     result = git_run(repo, "show-ref", "--verify", "--quiet", f"refs/heads/{branch}")
     if result is None or result.returncode not in (0, 1): raise _repo_error()
@@ -97,7 +97,7 @@ def profile_fix_reconcile(repo_path: str, story_key: str, spec_path: str, branch
     if prior != {} and (not isinstance(prior, Mapping) or prior.get("stage") != "verify-and-fix" or prior.get("story_key") != story): return fail("state.mismatch")
     try:
         if prior != {} and (prior.get("outcome") is not None or prior.get("fix") is True):
-            if prior.get("outcome") is not None and prior.get("head") is None:
+            if prior.get("outcome") in ("failed", "refused") and prior.get("fix") is not True and prior.get("head") is None:
                 return dict(prior)
             head = resolve_revision(repo, "HEAD")
             return fail("head.moved", head=head) if head != prior.get("head") else dict(prior)
