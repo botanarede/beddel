@@ -1,0 +1,103 @@
+id: implement-story
+name: Implement Story
+description: Entry implement stage where a Coding agent implements one unit of one spec through agent-exec; the kit checks, gates and commits only that unit's paths on a feature branch. It never pushes, verifies, approves or integrates.
+version: "1.0"
+requires_kits:
+  - profile-dev-kit
+  - agent-kiro-kit
+allowed_tools:
+  - profile_implement_prepare
+  - profile_implement_settle
+  - profile_record_stage_outcome
+inputs:
+  - repo_path
+  - story_key
+  - spec_path
+  - branch
+  - base_ref
+steps:
+  - id: prepare
+    primitive: tool
+    execution_strategy:
+      type: skip
+    config:
+      tool: profile_implement_prepare
+      arguments:
+        repo_path: "$input.repo_path"
+        story_key: "$input.story_key"
+        spec_path: "$input.spec_path"
+        branch: "$input.branch"
+        base_ref: "$input.base_ref"
+  - id: implement
+    primitive: agent-exec
+    if: "$stepResult.prepare.result.implement == true"
+    execution_strategy:
+      type: skip
+    timeout: 600
+    config:
+      adapter: kiro-cli
+      sandbox: workspace-write
+      prompt: >-
+        You are the Coding agent for one implementation unit. Read the spec at
+        $input.spec_path and implement only the paths named by
+        $stepResult.prepare.result.unit_paths for unit
+        $stepResult.prepare.result.unit_id Change only those paths and files under
+        them. Leave the spec unchanged. Do not stage, commit, push, create or switch
+        branches, approve, verify or integrate.
+  - id: settle
+    primitive: tool
+    execution_strategy:
+      type: fail
+    if: "$stepResult.prepare.result.implement == true"
+    config:
+      tool: profile_implement_settle
+      arguments:
+        repo_path: "$input.repo_path"
+        story_key: "$input.story_key"
+        spec_path: "$input.spec_path"
+        branch: "$input.branch"
+        base_ref: "$input.base_ref"
+        prepare: "$stepResult.prepare.result"
+        agent: "$stepResult.implement"
+  - id: settle_stop
+    primitive: tool
+    execution_strategy:
+      type: fail
+    if: "$stepResult.prepare.result.implement != true"
+    config:
+      tool: profile_implement_settle
+      arguments:
+        repo_path: "$input.repo_path"
+        story_key: "$input.story_key"
+        spec_path: "$input.spec_path"
+        branch: "$input.branch"
+        base_ref: "$input.base_ref"
+        prepare: "$stepResult.prepare.result"
+  - id: record
+    primitive: tool
+    execution_strategy:
+      type: fail
+    if: "$stepResult.prepare.result.implement == true"
+    config:
+      tool: profile_record_stage_outcome
+      arguments:
+        repo_path: "$input.repo_path"
+        story_key: "$stepResult.settle.result.story_key"
+        stage: implement
+        outcome: "$stepResult.settle.result.outcome"
+        reason: "$stepResult.settle.result.reason"
+        refs: "$stepResult.settle.result.refs"
+  - id: record_stop
+    primitive: tool
+    execution_strategy:
+      type: fail
+    if: "$stepResult.prepare.result.implement != true"
+    config:
+      tool: profile_record_stage_outcome
+      arguments:
+        repo_path: "$input.repo_path"
+        story_key: "$stepResult.settle_stop.result.story_key"
+        stage: implement
+        outcome: "$stepResult.settle_stop.result.outcome"
+        reason: "$stepResult.settle_stop.result.reason"
+        refs: "$stepResult.settle_stop.result.refs"

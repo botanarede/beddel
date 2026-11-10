@@ -439,7 +439,8 @@ A complete spec is UTF-8, at most 262144 bytes, has YAML front matter with
 `story_key`, non-empty `requirements`, non-empty `repositories`, `dependencies`
 and `size_cap_bytes` from 1 through 64000, and has a non-blank body. The
 `story_key` and the five front-matter fields are the only contract fields read
-by the kit; other fields remain available to the authoring process.
+by the kit; `units` is also read by the implement stage. Other fields remain
+available to the authoring process.
 
 Stage outcomes use fixed outcomes (`succeeded`, `refused`, `failed`, `stopped`)
 and reason codes. Each record is canonical JSON under
@@ -453,4 +454,17 @@ Run the workflow from the repository root, for example:
 
 ```text
 beddel run -i ... workflows/plan-story.yaml
+```
+
+## Delivery: implement stage
+
+`implement-story` takes `repo_path`, `story_key`, `spec_path`, `branch` and
+`base_ref`; its steps prepare, invoke one Coding agent, settle one unit and
+record one Stage outcome. It never pushes, approves, verifies, integrates, or
+commits the spec. `units` entries have an `id`, relative `paths` and a commit
+`subject`; commits carry the identity trailers. One unit runs per invocation.
+A baseline-red Gate is advisory; only a green command that becomes red blocks.
+
+```text
+beddel run -i ... workflows/implement-story.yaml
 ```
