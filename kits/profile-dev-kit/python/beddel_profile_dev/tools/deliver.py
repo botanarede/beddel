@@ -11,7 +11,13 @@ from typing import Any
 from beddel.tools import beddel_tool
 
 from beddel_profile_dev._errors import PROFILE_IMPACT_UNBOUND, ProfileError
-from beddel_profile_dev._io import blob_at, git_run, real_repo_root, records_root
+from beddel_profile_dev._io import (
+    git_run,
+    path_present,
+    real_repo_root,
+    records_root,
+)
+from beddel_profile_dev.config import load_config
 from beddel_profile_dev.deliver import REQUESTS, STAGES, complete, next_stage, resume
 from beddel_profile_dev.implement import branch_reason
 from beddel_profile_dev.integrate import APPROVALS_DIR
@@ -43,7 +49,7 @@ def _refs(**values: Any) -> dict[str, Any]:
 
 
 def _records(root: Path) -> list[dict[str, Any]]:
-    directory = root / ("stage-" + "outcomes")
+    directory = root / "stage-outcomes"  # The gate is the other reader of Stage-outcome records.
     if not directory.exists(): return []
     if not directory.is_dir(): raise _BAD
     found: list[dict[str, Any]] = []
@@ -72,7 +78,7 @@ def profile_deliver_gate(repo_path: str, story_key: str, request: str, step: str
     repo = real_repo_root(repo_path)
     if not _valid_story(story_key): return _state(repo, None, request, step, outcome="refused", reason="story_key.invalid", refs=_refs(request=request, stage=step, stage_reason="story_key.invalid"))
     if request not in REQUESTS: return _state(repo, story_key, request, step, outcome="refused", reason="request.invalid", refs=_refs(request=request, stage=step, stage_reason="request.invalid"))
-    root = records_root(repo, "records/profile-dev")
+    root = records_root(repo, load_config().records_dir)
     g = lambda **values: _state(repo, story_key, request, step, **values)
     f = lambda reason, **values: _failed(repo, story_key, request, step, reason, **values)
     if step == "start":
@@ -138,7 +144,11 @@ def profile_deliver_approval(repo_path: str, story_key: str, change_id: str, bra
         if match is None or not isinstance(revision, str): return a("failed", "report.unreadable")
         path = f"{APPROVALS_DIR}{change_id}/{match.group(1)}.yaml"
         refs = {"change_id": change_id, "branch": branch, "revision": revision, "report": latest.get("ref"), "decision_path": path, "decision_commit": None, "approval": None, "invoked": True}
-        if blob_at(repo, "HEAD", path) is None: return a("stopped", "approval.awaiting_owner", revision=revision, refs=refs)
+        try:
+            present = path_present(repo, "HEAD", path)
+        except ProfileError:
+            return a("failed", "decision.unreadable", revision=revision, refs=refs)
+        if not present: return a("stopped", "approval.awaiting_owner", revision=revision, refs=refs)
         commit = _git_text(git_run(repo, "log", "-1", "--format=%H", "--diff-filter=A", "HEAD", "--", path))
         if not commit or not re.fullmatch(r"[0-9a-f]{40}", commit): return a("failed", "decision.unreadable", revision=revision, refs=refs)
         refs["decision_commit"] = commit

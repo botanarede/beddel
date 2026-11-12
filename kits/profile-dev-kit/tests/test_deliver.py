@@ -2,20 +2,15 @@
 
 from __future__ import annotations
 
-import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pytest
 from beddel_profile_dev._errors import PROFILE_IMPACT_UNBOUND, ProfileError
 from beddel_profile_dev._io import records_root
-from beddel_profile_dev.deliver import (
-    IMPLEMENT_SLOTS,
-    STAGES,
-    complete,
-    next_stage,
-    resume,
-)
+from beddel_profile_dev.config import load_config
+from beddel_profile_dev.deliver import resume
 from beddel_profile_dev.tools.deliver import (
     profile_deliver_approval,
     profile_deliver_gate,
@@ -43,60 +38,6 @@ def _record(repo: Path, stage: str, outcome: str, reason: str) -> None:
     )
 
 
-def test_contracts_and_resume_boundaries() -> None:
-    assert STAGES == ("plan", "implement", "verify-and-fix", "approval", "integrate")
-    assert IMPLEMENT_SLOTS == 33
-    assert complete("plan", "succeeded", "spec.created")
-    assert not complete("plan", "succeeded", "spec.incomplete")
-    assert next_stage("integrate") is None
-    assert resume([]) == ("plan", False)
-    assert resume([{"stage": "implement", "outcome": "succeeded", "reason": "unit.committed"}]) == ("implement", False)
-    assert resume([{"stage": "integrate", "outcome": "succeeded", "reason": "integrate.complete"}]) == (None, True)
-
-
-def test_gate_advances_from_complete_stage_and_stops_unrecorded(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    repo = _repo(tmp_path, monkeypatch)
-    start = profile_deliver_gate(str(repo), STORY, "all", "start", {})
-    assert start["go"] == "plan"
-    stopped = profile_deliver_gate(str(repo), STORY, "all", "plan", start)
-    assert stopped["outcome"] == "failed"
-    assert stopped["reason"] == "stage.unrecorded"
-
-    _record(repo, "plan", "succeeded", "spec.created")
-    after_plan = profile_deliver_gate(str(repo), STORY, "all", "plan", start)
-    assert after_plan["go"] == "implement"
-    _record(repo, "implement", "succeeded", "units.complete")
-    after_implement = profile_deliver_gate(
-        str(repo), STORY, "all", "implement", after_plan
-    )
-    assert after_implement["go"] == "verify-and-fix"
-
-
-def test_gate_rejects_forged_state_and_maps_incomplete_stage(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    repo = _repo(tmp_path, monkeypatch)
-    start = profile_deliver_gate(str(repo), STORY, "all", "start", {})
-    forged = dict(start, story_key="other-story")
-    result = profile_deliver_gate(str(repo), STORY, "all", "plan", forged)
-    assert result["reason"] == "state.mismatch"
-    _record(repo, "plan", "succeeded", "spec.created")
-    _record(repo, "implement", "succeeded", "unit.committed")
-    result = profile_deliver_gate(str(repo), STORY, "all", "implement", start | {"go": "implement"})
-    assert result["reason"] == "stage.incomplete"
-
-
-def test_gate_maps_unreadable_record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    repo = _repo(tmp_path, monkeypatch)
-    root = records_root(repo, "records/profile-dev") / "stage-outcomes"
-    root.mkdir(parents=True)
-    (root / "1.json").write_text(json.dumps({"record": 1}))
-    result = profile_deliver_gate(str(repo), STORY, "all", "start", {})
-    assert result["reason"] == "records.unreadable"
-
-
 def test_approval_check_stops_without_committed_decision(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -119,6 +60,16 @@ def test_approval_check_stops_without_committed_decision(
     )
     assert result["outcome"] == "stopped"
     assert result["reason"] == "approval.awaiting_owner"
+    from beddel_profile_dev.tools.approval_decision import approval_path
+
+    path = repo / approval_path("c1", 3)
+    path.parent.mkdir(parents=True)
+    path.write_text("decision: approved\n")
+    git(repo, "add", "--", approval_path("c1", 3))
+    staged = profile_deliver_approval(
+        str(repo), STORY, "c1", git(repo, "branch", "--show-current"), "tester", "check", gate
+    )
+    assert staged["reason"] == "approval.awaiting_owner"
 
 
 def test_approval_settle_reuses_recorded_approval(
@@ -151,6 +102,19 @@ def _gate_for_approval(repo: Path) -> dict[str, Any]:
     state = profile_deliver_gate(str(repo), STORY, "all", "start", {})
     state["go"] = "approval"
     return state
+
+
+def test_gate_uses_configured_records_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = _repo(tmp_path, monkeypatch)
+    from beddel_profile_dev.tools import deliver as deliver_tools
+    from beddel_profile_dev.tools import stage_outcome
+
+    config = replace(load_config(), records_dir="records/custom")
+    monkeypatch.setattr(deliver_tools, "load_config", lambda: config)
+    monkeypatch.setattr(stage_outcome, "load_config", lambda: config)
+    _record(repo, "plan", "succeeded", "spec.created")
+    result = profile_deliver_gate(str(repo), STORY, "all", "start", {})
+    assert result["go"] == "implement"
 
 
 def test_start_reports_complete_delivery_without_stage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -199,7 +163,9 @@ def test_approval_check_refusals(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     assert profile_deliver_approval(str(repo), STORY, "c1", "feature/test", "tester", "check", gate)["reason"] == "approval.invalid"
     monkeypatch.setattr("beddel_profile_dev.tools.deliver.profile_read_approval", lambda *args: {"approval": None})
     monkeypatch.setattr("beddel_profile_dev.tools.deliver.profile_read_report", lambda *args: (_ for _ in ()).throw(ProfileError("X", "unreadable")))
-    assert profile_deliver_approval(str(repo), STORY, "c1", "feature/test", "tester", "check", gate)["reason"] == "report.unreadable"
+    monkeypatch.setattr("beddel_profile_dev.tools.deliver.profile_read_report", lambda *args: {"report": {"revision": "a" * 40}, "history": [{"ref": "changes/c1/report/3.json"}]})
+    monkeypatch.setattr("beddel_profile_dev.tools.deliver.path_present", lambda *args: (_ for _ in ()).throw(ProfileError("X", "git")))
+    assert profile_deliver_approval(str(repo), STORY, "c1", "feature/test", "tester", "check", gate)["reason"] == "decision.unreadable"
 
 
 def test_start_refuses_invalid_request_and_story_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

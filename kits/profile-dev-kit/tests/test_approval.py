@@ -282,6 +282,7 @@ def test_structural_approval_boundaries() -> None:
                 "record-approval-decision",
                 "write_create_only",
                 "approval_decision",
+                "approval.json",
             )
         )
     for deliver_source in (
@@ -298,6 +299,7 @@ def test_structural_approval_boundaries() -> None:
                 "record-approval-decision",
                 "write_create_only",
                 "approval_decision",
+                "approval.json",
             )
         )
     approval_workflows = {

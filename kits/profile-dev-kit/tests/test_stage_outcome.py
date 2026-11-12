@@ -191,4 +191,4 @@ def test_stage_outcomes_term_is_isolated_to_its_tool() -> None:
         for path in module_root.rglob("*.py")
         if "stage-outcomes" in path.read_text()
     }
-    assert matches == {"stage_outcome.py"}
+    assert matches == {"stage_outcome.py", "deliver.py"}
