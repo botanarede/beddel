@@ -92,7 +92,10 @@ def profile_deliver_gate(repo_path: str, story_key: str, request: str, step: str
     if step not in STAGES: return g(outcome="failed", reason="gate.failed", refs=_refs(request=request, stage=step, stage_reason="gate.failed"))
     if prior is None: return f("gate.failed")
     if not isinstance(prior, Mapping) or any(prior.get(key) != value for key, value in (("stage", "deliver"), ("story_key", story_key), ("request", request), ("repo", str(repo)))): return f("state.mismatch")
-    if prior.get("outcome") is not None or prior.get("go") != step: return dict(prior)
+    if prior.get("outcome") is not None or prior.get("go") != step:
+        if step == "integrate" and prior.get("outcome") is None:
+            return f("gate.failed")
+        return dict(prior)
     mark_value = prior.get("mark")
     if not isinstance(mark_value, int): return f("state.mismatch")
     mark = mark_value
@@ -123,6 +126,8 @@ def profile_deliver_approval(repo_path: str, story_key: str, change_id: str, bra
     if phase not in ("check", "settle"): return a("failed", "approval.invalid")
     if not isinstance(prior, Mapping) or prior.get("story_key") != story_key or prior.get("repo") != str(repo): return a("failed", "state.mismatch")
     if phase == "check":
+        if prior.get("outcome") is not None:
+            return dict(prior)
         if prior.get("stage") != "deliver" or prior.get("go") != "approval": return a("failed", "state.mismatch")
         if not is_valid_id(change_id): return a("refused", "change_id.invalid")
         if branch_reason(branch, None) is not None: return a("refused", "branch.invalid")

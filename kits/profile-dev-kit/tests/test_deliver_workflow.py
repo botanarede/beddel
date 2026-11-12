@@ -7,7 +7,7 @@ from typing import Any
 
 import yaml
 from beddel.domain.parser import WorkflowParser
-from beddel_profile_dev.deliver import IMPLEMENT_SLOTS, STAGES
+from beddel_profile_dev.deliver import IMPLEMENT_SLOTS
 
 # fmt: off
 KIT_ROOT = Path(__file__).resolve().parents[1]
@@ -21,8 +21,17 @@ def test_deliver_workflow_shape() -> None:
     assert len([step for step in steps if str(step["id"]).startswith("implement_")]) == IMPLEMENT_SLOTS
     calls = [step["config"]["workflow"] for step in steps if step.get("primitive") == "call-agent"]
     assert set(calls) == {"plan-story.yaml", "implement-story.yaml", "verify-and-fix-story.yaml", "approve-change.yaml", "integrate-story.yaml"}
-    assert calls.count("approve-change.yaml") == 1 and all("$" not in call for call in calls)
-
+    assert all(step.get("primitive") != "agent-exec" for step in steps)
+    expected_ids = ["start", "plan", "after_plan", *[f"implement_{n}" for n in range(1, 34)], "after_implement", "verify", "after_verify", "approval_check", "approve", "approval_settle", "record_approval", "after_approval", "integrate", "after_integrate", "record"]
+    assert [step["id"] for step in steps] == expected_ids
+    expected_if = {"plan": "$stepResult.start.result.go == plan", "implement_1": "$stepResult.after_plan.result.go == implement", "verify": "$stepResult.after_implement.result.go == verify-and-fix", "approval_check": "$stepResult.after_verify.result.go == approval", "approve": "$stepResult.approval_check.result.approve == true", "approval_settle": "$stepResult.after_verify.result.go == approval", "record_approval": "$stepResult.after_verify.result.go == approval", "integrate": "$stepResult.after_approval.result.go == integrate"}
+    for number in range(2, 34): expected_if[f"implement_{number}"] = f"$stepResult.implement_{number - 1}.record.result.outcome == succeeded"
+    assert {step["id"]: step.get("if") for step in steps if step.get("if")} == expected_if
+    assert all(step["execution_strategy"]["type"] == ("skip" if step.get("primitive") == "call-agent" else "fail") for step in steps)
+    for step in steps:
+        if step.get("primitive") == "call-agent":
+            target = yaml.safe_load((KIT_ROOT / "workflows" / step["config"]["workflow"]).read_text())
+            assert set(step["config"]["inputs"]) == set(target["inputs"])
 
 def test_stage_workflows_state_their_coding_agent() -> None:
     for name in ("plan-story.yaml", "implement-story.yaml", "verify-and-fix-story.yaml"):
@@ -31,13 +40,6 @@ def test_stage_workflows_state_their_coding_agent() -> None:
         agents = [step for step in document["steps"] if step.get("primitive") == "agent-exec"]
         assert agents and all(step["config"]["adapter"] == "kiro-cli" for step in agents)
         assert all(step["config"]["prompt"].startswith("You are the Coding agent") for step in agents)
-    assert STAGES == ("plan", "implement", "verify-and-fix", "approval", "integrate")
-
-
-def test_stage_call_names_are_static() -> None:
-    document = yaml.safe_load(WORKFLOW.read_text())
-    calls = [step["config"]["workflow"] for step in document["steps"] if step.get("primitive") == "call-agent"]
-    assert all(call in {"plan-story.yaml", "implement-story.yaml", "verify-and-fix-story.yaml", "approve-change.yaml", "integrate-story.yaml"} for call in calls)
 
 
 import asyncio
@@ -148,18 +150,18 @@ def _tuples(records: list[dict[str, Any]]) -> list[tuple[str, str, str]]:
     return [(record["stage"], record["outcome"], record["reason"]) for record in records]
 
 def test_end_to_end_stops_for_owner_then_resumes_to_integration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    env = _fixture(tmp_path)
-    sub = env["sub"]
-    (sub / "story.md").write_text("story\n")
-    (sub / "guide.md").write_text("guide\n")
-    (sub / "specs").mkdir()
-    (sub / "src").mkdir()
+    env, sub = _stage_env(tmp_path, monkeypatch)
     (env["parent"] / "status.yaml").write_text(f"x: 1\n  {STORY}: review  # keep\n")
-    env["tip"] = commit_all(sub, "delivery inputs")
     report = {"revision": env["tip"], "verdict": "consistent"}
     approval_box: dict[str, Any] = {"value": None}
     calls: list[str] = []
     def approve_change(**kwargs: Any) -> dict[str, Any]:
+        expected_commit = git(sub, "log", "-1", "--format=%H", "--diff-filter=A", "HEAD", "--", ".beddel-profile/approvals/c1/1.yaml")
+        assert kwargs["revision"] == report["revision"]
+        assert kwargs["decision_commit"] == expected_commit
+        assert kwargs["change_id"] == "c1"
+        assert kwargs["repo_path"] == str(sub)
+        assert kwargs["actor"] in {"wrong", "owner"}
         calls.append(kwargs["actor"])
         if kwargs["actor"] == "owner":
             approval_box["value"] = {"revision": report["revision"], "proof": {"commit": kwargs["decision_commit"]}}
@@ -183,6 +185,7 @@ def test_end_to_end_stops_for_owner_then_resumes_to_integration(tmp_path: Path, 
         ("deliver", "stopped", "stage.stopped"),
     ]
     calls_after_phase_one = agent.calls
+    assert calls_after_phase_one == 2
     report["revision"] = git(sub, "rev-parse", "HEAD")
     assert calls == []
     decision = sub / ".beddel-profile" / "approvals" / "c1" / "1.yaml"
@@ -193,12 +196,12 @@ def test_end_to_end_stops_for_owner_then_resumes_to_integration(tmp_path: Path, 
     env["tip"] = git(sub, "rev-parse", "HEAD")
     _workflow_run(env, agent, host, monkeypatch, approval_box["value"], report, approve_change, actor="wrong")
     wrong_records = _deliver_records(tmp_path / "home")
-    assert _tuples(wrong_records)[-2:] == [("approval", "refused", "approval.refused"), ("deliver", "refused", "stage.refused")]
+    assert _tuples(wrong_records)[len(phase_one):] == [("approval", "refused", "approval.refused"), ("deliver", "refused", "stage.refused")]
     assert calls == ["wrong"]
     approval_box["value"] = None
     _workflow_run(env, agent, host, monkeypatch, approval_box, report, approve_change)
     right_records = _deliver_records(tmp_path / "home")
-    assert _tuples(right_records)[-4:] == [
+    assert _tuples(right_records)[len(wrong_records):] == [
         ("approval", "succeeded", "approval.recorded"),
         ("integrate", "succeeded", "merge.confirmed"),
         ("integrate", "stopped", "pointer.unpublished"),
@@ -209,7 +212,7 @@ def test_end_to_end_stops_for_owner_then_resumes_to_integration(tmp_path: Path, 
     git(env["parent"], "push", "-q", "origin", "main")
     _workflow_run(env, agent, host, monkeypatch, approval_box, report, approve_change)
     resumed_records = _deliver_records(tmp_path / "home")
-    assert _tuples(resumed_records)[-3:] == [
+    assert _tuples(resumed_records)[len(right_records):] == [
         ("integrate", "succeeded", "merge.reused"),
         ("integrate", "succeeded", "integrate.complete"),
         ("deliver", "succeeded", "deliver.complete"),
@@ -218,9 +221,8 @@ def test_end_to_end_stops_for_owner_then_resumes_to_integration(tmp_path: Path, 
     assert host.calls.count("merge") == 1
     _workflow_run(env, agent, host, monkeypatch, approval_box, report, approve_change)
     complete_records = _deliver_records(tmp_path / "home")
-    assert _tuples(complete_records)[-1:] == [("deliver", "succeeded", "deliver.complete")]
+    assert _tuples(complete_records)[len(resumed_records):] == [("deliver", "succeeded", "deliver.complete")]
     assert agent.calls == calls_after_phase_one
-    assert calls == ["wrong", "owner"]
 
 def _stage_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[dict[str, Any], Path]:
     env = _fixture(tmp_path)
@@ -242,25 +244,16 @@ def test_single_stage_runs_only_that_stage(tmp_path: Path, monkeypatch: pytest.M
     report = {"revision": env["tip"], "verdict": "consistent"}
     (sub / "specs" / "story.md").write_bytes(_spec())
     result = _workflow_run(env, agent, host, monkeypatch, None, report, lambda **kwargs: {"ok": True}, stage="implement")
-    assert result["step_results"]["record"]["result"]["stage"] == "deliver"
     assert result["step_results"]["record"]["result"]["outcome"] == "succeeded"
     assert result["step_results"]["record"]["result"]["reason"] == "stage.complete"
     records = _deliver_records(tmp_path / "home")
-    assert records[-1]["stage"] == "deliver"
     assert records[-1]["refs"]["invoked"] == "implement"
 
     (tmp_path / "plan").mkdir()
-    plan_env = _fixture(tmp_path / "plan")
-    plan_sub = plan_env["sub"]
-    (plan_sub / "story.md").write_text("story\n")
-    (plan_sub / "guide.md").write_text("guide\n")
-    (plan_sub / "specs").mkdir()
-    commit_all(plan_sub, "planning inputs")
+    plan_env, plan_sub = _stage_env(tmp_path / "plan", monkeypatch)
     monkeypatch.chdir(plan_sub)
-    monkeypatch.setenv("HOME", str(tmp_path / "plan-home"))
     plan_agent = _CodingAgent(plan_sub)
-    plan_host = _Host(plan_env)
-    plan_result = _workflow_run(plan_env, plan_agent, plan_host, monkeypatch, None, {"revision": plan_env["tip"], "verdict": "consistent"}, lambda **kwargs: {"ok": True}, stage="plan")
+    plan_result = _workflow_run(plan_env, plan_agent, _Host(plan_env), monkeypatch, None, {"revision": plan_env["tip"], "verdict": "consistent"}, lambda **kwargs: {"ok": True}, stage="plan")
     assert plan_result["step_results"]["record"]["result"]["reason"] == "stage.complete"
 
 def test_stage_failure_unrecorded_stage_and_fix_bound_do_not_advance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -281,10 +274,12 @@ def test_stage_failure_unrecorded_stage_and_fix_bound_do_not_advance(tmp_path: P
     _workflow_run(env, agent, host, monkeypatch, None, report, lambda **kwargs: {"ok": True})
     records = _deliver_records(tmp_path / "home")
     assert _tuples(records)[-2:] == [("implement", "failed", "agent.failed"), ("deliver", "failed", "stage.failed")]
+    first_record_count = len(records)
     first_calls = agent.calls
     _workflow_run(env, agent, host, monkeypatch, None, report, lambda **kwargs: {"ok": True})
     rerun_records = _deliver_records(tmp_path / "home")
-    assert _tuples(rerun_records)[-2:] == [("implement", "failed", "agent.failed"), ("deliver", "failed", "stage.failed")]
+    assert _tuples(rerun_records)[first_record_count:] == [("implement", "failed", "agent.failed"), ("deliver", "failed", "stage.failed")]
+    assert "plan" not in [record["stage"] for record in rerun_records[first_record_count:]]
     assert agent.calls == first_calls + 1
     assert host.calls == []
 

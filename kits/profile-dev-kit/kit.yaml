@@ -136,9 +136,11 @@ tools:
   - name: profile_integrate_settle
     target: "beddel_profile_dev.tools.integrate:profile_integrate_settle"
     description: "Settle the parent integration boundary"
+    category: profile
   - name: profile_deliver_gate
     target: "beddel_profile_dev.tools.deliver:profile_deliver_gate"
     description: "Gate chained Delivery stages from recorded outcomes"
+    category: profile
   - name: profile_deliver_approval
     target: "beddel_profile_dev.tools.deliver:profile_deliver_approval"
     description: "Check and settle the Delivery Approval stage"

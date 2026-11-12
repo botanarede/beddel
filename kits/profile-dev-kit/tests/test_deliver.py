@@ -163,8 +163,12 @@ def test_approval_check_refusals(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     assert profile_deliver_approval(str(repo), STORY, "c1", "feature/test", "tester", "check", gate)["reason"] == "approval.invalid"
     monkeypatch.setattr("beddel_profile_dev.tools.deliver.profile_read_approval", lambda *args: {"approval": None})
     monkeypatch.setattr("beddel_profile_dev.tools.deliver.profile_read_report", lambda *args: (_ for _ in ()).throw(ProfileError("X", "unreadable")))
+    assert profile_deliver_approval(str(repo), STORY, "c1", "feature/test", "tester", "check", gate)["reason"] == "report.unreadable"
+    monkeypatch.setattr("beddel_profile_dev.tools.deliver.profile_read_report", lambda *args: {"report": {"revision": "a" * 40}, "history": []})
+    assert profile_deliver_approval(str(repo), STORY, "c1", "feature/test", "tester", "check", gate)["reason"] == "report.absent"
     monkeypatch.setattr("beddel_profile_dev.tools.deliver.profile_read_report", lambda *args: {"report": {"revision": "a" * 40}, "history": [{"ref": "changes/c1/report/3.json"}]})
-    monkeypatch.setattr("beddel_profile_dev.tools.deliver.path_present", lambda *args: (_ for _ in ()).throw(ProfileError("X", "git")))
+    monkeypatch.setattr("beddel_profile_dev.tools.deliver.path_present", lambda *args: True)
+    monkeypatch.setattr("beddel_profile_dev.tools.deliver.git_run", lambda *args, **kwargs: type("Git", (), {"returncode": 1, "stdout": b""})())
     assert profile_deliver_approval(str(repo), STORY, "c1", "feature/test", "tester", "check", gate)["reason"] == "decision.unreadable"
 
 
@@ -218,3 +222,26 @@ def test_start_resumes_after_latest_complete_stage(tmp_path: Path, monkeypatch: 
     _record(repo, "implement", "succeeded", "units.complete")
     second = profile_deliver_gate(str(repo), STORY, "all", "start", {})
     assert second["go"] == "verify-and-fix"
+
+
+def test_approval_check_forwards_terminal_prior(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _repo(tmp_path, monkeypatch)
+    prior = _gate_for_approval(repo)
+    prior["outcome"] = "stopped"
+    prior["reason"] = "approval.awaiting_owner"
+    result = profile_deliver_approval(
+        str(repo), STORY, "c1", "feature/test", "tester", "check", prior
+    )
+    assert result == prior
+
+
+def test_integrate_gate_rejects_non_terminal_prior(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _repo(tmp_path, monkeypatch)
+    prior = profile_deliver_gate(str(repo), STORY, "all", "start", {})
+    prior["go"] = "approval"
+    result = profile_deliver_gate(str(repo), STORY, "all", "integrate", prior)
+    assert (result["outcome"], result["reason"]) == ("failed", "gate.failed")

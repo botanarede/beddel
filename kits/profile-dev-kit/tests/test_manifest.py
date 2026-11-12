@@ -121,6 +121,8 @@ def test_manifest_declares_all_workflows_and_python_targets() -> None:
         "integrate-story",
         "deliver-story",
     ]
+    for tool in manifest["tools"]:
+        assert tool["category"] == "profile"
     declared = {t["name"] for t in manifest["tools"]}
     targeted = {t["name"] for t in manifest["targets"]["python"]["tools"]}
     assert manifest["targets"]["python"]["dependencies"] == []
