@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import stat
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
@@ -27,6 +28,23 @@ _REF_NAMES = ("boundary", "spec_path", "branch", "base_branch", "change_id", "re
 
 def _refs(**values: Any) -> dict[str, Any]:
     return {name: values.get(name, False if name == "status_written" else None) for name in _REF_NAMES}
+
+
+_CARRY_FIELDS = ("change_id", "repo", "spec_path", "branch", "base_branch", "parent", "parent_branch", "sub_path", "status_path", "status_value", "revision")
+
+
+def _carry(prior: Mapping[str, Any]) -> dict[str, Any]:
+    return {key: prior.get(key) for key in _CARRY_FIELDS}
+
+
+def _carry_refs(prior: Mapping[str, Any], **updates: Any) -> dict[str, Any]:
+    refs = dict(prior.get("refs") or {}) if isinstance(prior.get("refs"), Mapping) else {}
+    refs.update(updates)
+    return _refs(**refs)
+
+
+def _forwarded(prior: object) -> dict[str, Any] | None:
+    return dict(prior) if isinstance(prior, Mapping) and prior.get("outcome") is not None else None
 
 
 def _state(story: str | None, outcome: str | None, reason: str | None, refs: Mapping[str, Any] | None = None, **values: Any) -> dict[str, Any]:
@@ -71,9 +89,9 @@ def _gitlink(repo: Path, tree: str, sub_path: str) -> str | None:
         return None
     mode_oid, path = entries[0].split(b"\t", 1)
     fields = mode_oid.decode("ascii", "replace").split()
-    if len(fields) != 2 or fields[0] != "160000" or path.decode("utf-8", "replace") != sub_path:
+    if len(fields) != 3 or fields[0] != "160000" or path.decode("utf-8", "replace") != sub_path:
         return None
-    return fields[1]
+    return fields[2]
 
 
 def _valid_inputs(story_key: object, spec_path: object, branch: object, base_branch: object, remote: object, change_id: object, parent_path: object, parent_branch: object, status_path: object, status: object) -> tuple[str, str, str, str, str, str, str, str, str] | dict[str, Any]:
@@ -168,7 +186,10 @@ def profile_integrate_prepare(repo_path: str, story_key: str, spec_path: str, br
         if report.get("revision") != approved: return _refuse(story, "report.superseded", _refs(spec_path=spec, branch=branch, base_branch=base, change_id=change, revision=approved, tip=tip), change_id=change, repo=str(repo), spec_path=spec, branch=branch, base_branch=base, remote=remote, parent_branch=pbranch, status_path=status, status_value=value, revision=approved, tip=tip)
         if report.get("verdict") != "consistent": return _refuse(story, "verdict.has_pendency", _refs(spec_path=spec, branch=branch, base_branch=base, change_id=change, revision=approved, tip=tip), change_id=change, repo=str(repo), spec_path=spec, branch=branch, base_branch=base, remote=remote, parent_branch=pbranch, status_path=status, status_value=value, revision=approved, tip=tip)
         if not is_ancestor(repo, approved, tip) or not approved_only(footprint(repo, approved, tip)): return _refuse(story, "revision.unapproved", _refs(spec_path=spec, branch=branch, base_branch=base, change_id=change, revision=approved, tip=tip), change_id=change, repo=str(repo), spec_path=spec, branch=branch, base_branch=base, remote=remote, parent_branch=pbranch, status_path=status, status_value=value, revision=approved, tip=tip)
-        parent = _repository(parent_path)
+        try:
+            parent = _repository(parent_path)
+        except ProfileError:
+            return _refuse(story, "parent.invalid", _refs(spec_path=spec, branch=branch, base_branch=base, change_id=change, revision=approved, tip=tip), change_id=change, repo=str(repo), spec_path=spec, branch=branch, base_branch=base, remote=remote, parent=parent_path, parent_branch=pbranch, status_path=status, status_value=value, revision=approved, tip=tip)
         try: sub_path = Path(os.path.relpath(repo, parent)).as_posix()
         except ValueError: sub_path = ""
         if not relative_path(sub_path) or _gitlink(parent, "HEAD", sub_path) is None: return _refuse(story, "parent.invalid", _refs(spec_path=spec, branch=branch, base_branch=base, change_id=change, revision=approved, tip=tip, sub_path=sub_path), change_id=change, repo=str(repo), spec_path=spec, branch=branch, base_branch=base, remote=remote, parent=str(parent), parent_branch=pbranch, sub_path=sub_path, status_path=status, status_value=value, revision=approved, tip=tip)
@@ -184,12 +205,15 @@ def profile_integrate_prepare(repo_path: str, story_key: str, spec_path: str, br
         return _state(story, None, None, refs, phase="prepare", change_id=change, repo=str(repo), spec_path=spec, branch=branch, base_branch=base, remote=remote, parent=str(parent), parent_branch=pbranch, sub_path=sub_path, status_path=status, status_value=value, revision=approved, tip=tip)
     except ProfileError:
         return _fail(story, "prepare.failed", _refs(spec_path=spec, branch=branch, base_branch=base, change_id=change), change_id=change, repo=str(repo), spec_path=spec, branch=branch, base_branch=base, remote=None, parent_branch=pbranch, status_path=status, status_value=value)
-    except Exception:  # noqa: BLE001
+    except OSError:
         return _fail(story, "prepare.failed", _refs(spec_path=spec, branch=branch, base_branch=base, change_id=change), change_id=change, repo=str(repo), spec_path=spec, branch=branch, base_branch=base, remote=None, parent_branch=pbranch, status_path=status, status_value=value)
 
 
 @beddel_tool(name="profile_integrate_reconcile", description="Reconcile remote integration state", category="profile")
 def profile_integrate_reconcile(repo_path: str, story_key: str, change_id: str, phase: str, prior: Mapping[str, Any] | None, fetch: Mapping[str, Any] | None, push: Mapping[str, Any] | None = None, pull_request: Mapping[str, Any] | None = None, checks: Mapping[str, Any] | None = None, merge: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    forwarded = _forwarded(prior)
+    if forwarded is not None:
+        return forwarded
     story = story_key if isinstance(story_key, str) and _valid_story(story_key) else None
     if story is None or not isinstance(change_id, str) or not is_valid_id(change_id) or phase not in ("land", "confirm"): return _fail(story, "reconcile.failed", _refs(change_id=change_id), change_id=change_id, phase=phase)
     repo = _repository(repo_path)
@@ -202,35 +226,39 @@ def profile_integrate_reconcile(repo_path: str, story_key: str, change_id: str, 
     try:
         branch, remote, base = prior.get("branch"), prior.get("remote"), prior.get("base_branch")
         tip = resolve_revision(repo, f"refs/heads/{branch}")
-        if tip != prior.get("tip"): return _fail(story, "head.moved", _refs(**dict(prior.get("refs", {})), tip=tip), **{k: prior.get(k) for k in ("change_id", "repo", "spec_path", "branch", "base_branch", "parent", "parent_branch", "sub_path", "status_path", "status_value", "revision")}, phase=phase, tip=tip)
+        if tip != prior.get("tip"): return _fail(story, "head.moved", _carry_refs(prior, tip=tip), **_carry(prior), phase=phase, tip=tip)
         tracking = _tracking(repo, str(remote), str(base))
         if phase == "land":
             if is_ancestor(repo, tip, tracking): return _with(prior, merged=True, pr=False, phase="land", tip=tip)
-            if _symbolic_branch(repo) != branch: return _fail(story, "branch.not_current", _refs(**dict(prior.get("refs", {})), tip=tip), **{k: prior.get(k) for k in ("change_id", "repo", "spec_path", "branch", "base_branch", "parent", "parent_branch", "sub_path", "status_path", "status_value", "revision")}, phase="land", tip=tip, pr=False, merged=False)
+            if _symbolic_branch(repo) != branch: return _fail(story, "branch.not_current", _carry_refs(prior, tip=tip), **_carry(prior), phase="land", tip=tip, pr=False, merged=False)
             return _with(prior, phase="land", pr=True, merged=False, tip=tip)
         contained = is_ancestor(repo, tip, tracking)
         if contained:
             merge_sha = _merge_commit(repo, tip, tracking)
-            if merge_sha is None: return _fail(story, "merge.unconfirmed", _refs(**dict(prior.get("refs", {})), tip=tip), **{k: prior.get(k) for k in ("change_id", "repo", "spec_path", "branch", "base_branch", "remote", "parent", "parent_branch", "sub_path", "status_path", "status_value", "revision")}, phase="confirm", tip=tip)
+            if merge_sha is None: return _fail(story, "merge.unconfirmed", _carry_refs(prior, tip=tip), **_carry(prior), phase="confirm", tip=tip)
             if isinstance(merge, Mapping):
                 result = merge.get("result")
                 reported = result.get("merge_sha") if isinstance(result, Mapping) else None
-                if reported != merge_sha: return _fail(story, "merge.mismatch", _refs(**dict(prior.get("refs", {})), tip=tip, merge=merge_sha), **{k: prior.get(k) for k in ("change_id", "repo", "spec_path", "branch", "base_branch", "remote", "parent", "parent_branch", "sub_path", "status_path", "status_value", "revision")}, phase="confirm", tip=tip, merge=merge_sha)
+                if reported != merge_sha: return _fail(story, "merge.mismatch", _carry_refs(prior, tip=tip, merge=merge_sha), **_carry(prior), phase="confirm", tip=tip, merge=merge_sha)
             number = pull_request.get("result", {}).get("number") if isinstance(pull_request, Mapping) and isinstance(pull_request.get("result"), Mapping) else None
-            refs = _refs(**dict(prior.get("refs", {})), boundary="repository", tip=tip, merge=merge_sha, pr=number)
+            refs = _carry_refs(prior, boundary="repository", tip=tip, merge=merge_sha, pr=number)
             return _with(prior, outcome="succeeded", reason="merge.confirmed" if prior.get("pr") else "merge.reused", refs=refs, phase="confirm", tip=tip, merge=merge_sha, merged=True)
         if prior.get("pr") is True:
             for item, reason in ((push, "push.failed"), (pull_request, "pr.failed"), (checks, "checks.failed"), (merge, "merge.failed")):
-                if not _host_ok(item): return _fail(story, reason, _refs(**dict(prior.get("refs", {})), tip=tip), **{k: prior.get(k) for k in ("change_id", "repo", "spec_path", "branch", "base_branch", "parent", "parent_branch", "sub_path", "status_path", "status_value", "revision")}, phase="confirm", tip=tip)
-        return _fail(story, "merge.unconfirmed", _refs(**dict(prior.get("refs", {})), tip=tip), **{k: prior.get(k) for k in ("change_id", "repo", "spec_path", "branch", "base_branch", "parent", "parent_branch", "sub_path", "status_path", "status_value", "revision")}, phase="confirm", tip=tip)
+                if not _host_ok(item): return _fail(story, reason, _carry_refs(prior, tip=tip), **_carry(prior), phase="confirm", tip=tip)
+        return _fail(story, "merge.unconfirmed", _carry_refs(prior, tip=tip), **_carry(prior), phase="confirm", tip=tip)
     except ProfileError:
-        return _fail(story, "reconcile.failed", _refs(**dict(prior.get("refs", {}))), **{k: prior.get(k) for k in ("change_id", "repo", "spec_path", "branch", "base_branch", "parent", "parent_branch", "sub_path", "status_path", "status_value", "revision")}, phase=phase)
-    except Exception:  # noqa: BLE001
-        return _fail(story, "reconcile.failed", _refs(**dict(prior.get("refs", {}))), **{k: prior.get(k) for k in ("change_id", "repo", "spec_path", "branch", "base_branch", "parent", "parent_branch", "sub_path", "status_path", "status_value", "revision")}, phase=phase)
+        return _fail(story, "reconcile.failed", _carry_refs(prior), **_carry(prior), phase=phase)
+    except OSError:
+        return _fail(story, "reconcile.failed", _carry_refs(prior), **_carry(prior), phase=phase)
 
 
 @beddel_tool(name="profile_integrate_settle", description="Settle the parent integration boundary", category="profile")
 def profile_integrate_settle(repo_path: str, story_key: str, change_id: str, phase: str, prior: Mapping[str, Any] | None, fetch: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    if phase == "finish":
+        forwarded = _forwarded(prior)
+        if forwarded is not None:
+            return forwarded
     story = story_key if isinstance(story_key, str) and _valid_story(story_key) else None
     if story is None or not isinstance(change_id, str) or not is_valid_id(change_id) or phase not in ("pointer", "finish"): return _fail(story, "pointer.failed", _refs(change_id=change_id), change_id=change_id, phase=phase)
     repo = _repository(repo_path)
@@ -241,11 +269,11 @@ def profile_integrate_settle(repo_path: str, story_key: str, change_id: str, pha
         bad_fetch = _fetch_check(fetch, story, change_id, repo, phase)
         if bad_fetch is not None: return bad_fetch
     try:
-        if phase == "pointer" and (prior.get("phase") != "confirm" or prior.get("merged") is not True): return _fail(story, "pointer.failed", _refs(**dict(prior.get("refs", {}))), **{k: prior.get(k) for k in ("change_id", "repo", "spec_path", "branch", "base_branch", "remote", "parent", "parent_branch", "sub_path", "status_path", "status_value", "revision", "tip", "merge")}, phase="pointer")
-        if phase == "finish" and prior.get("phase") != "pointer": return _fail(story, "pointer.failed", _refs(**dict(prior.get("refs", {}))), **{k: prior.get(k) for k in ("change_id", "repo", "spec_path", "branch", "base_branch", "remote", "parent", "parent_branch", "sub_path", "status_path", "status_value", "revision", "tip", "merge", "pointer")}, phase="finish")
+        if phase == "pointer" and (prior.get("phase") != "confirm" or prior.get("merged") is not True): return _fail(story, "pointer.failed", _carry_refs(prior), **_carry(prior), phase="pointer")
+        if phase == "finish" and prior.get("phase") != "pointer": return _fail(story, "pointer.failed", _carry_refs(prior), **_carry(prior), phase="finish")
         parent = _repository(str(prior.get("parent")))
         sub_path, merge = prior.get("sub_path"), prior.get("merge")
-        if not isinstance(sub_path, str) or not relative_path(sub_path) or not isinstance(merge, str): return _fail(story, "pointer.failed", _refs(**dict(prior.get("refs", {}))), **{k: prior.get(k) for k in ("change_id", "repo", "spec_path", "branch", "base_branch", "remote", "parent", "parent_branch", "sub_path", "status_path", "status_value", "revision", "tip", "pointer")}, phase=phase)
+        if not isinstance(sub_path, str) or not relative_path(sub_path) or not isinstance(merge, str): return _fail(story, "pointer.failed", _carry_refs(prior), **_carry(prior), phase=phase)
         if phase == "pointer":
             parent_head = resolve_revision(parent, "HEAD")
             current = _gitlink(parent, "HEAD", sub_path)
@@ -253,47 +281,48 @@ def profile_integrate_settle(repo_path: str, story_key: str, change_id: str, pha
             if not reused and current is not None:
                 try: reused = is_ancestor(repo, merge, resolve_revision(repo, current))
                 except ProfileError: reused = False
-            if reused: return _with(prior, phase="pointer", pointer=parent_head, refs=_refs(**dict(prior.get("refs", {})), boundary="parent", pointer=parent_head, sub_path=sub_path))
-            if _symbolic_branch(parent) != prior.get("parent_branch"): return _fail(story, "parent.not_current", _refs(**dict(prior.get("refs", {})), boundary="parent", sub_path=sub_path), **{k: prior.get(k) for k in ("change_id", "repo", "spec_path", "branch", "base_branch", "remote", "parent", "parent_branch", "status_path", "status_value", "revision", "tip", "merge")}, phase="pointer")
-            if changed_paths(repo) - {prior.get("spec_path")}: return _fail(story, "worktree.dirty", _refs(**dict(prior.get("refs", {})), boundary="parent", sub_path=sub_path), **{k: prior.get(k) for k in ("change_id", "repo", "spec_path", "branch", "base_branch", "remote", "parent", "parent_branch", "status_path", "status_value", "revision", "tip", "merge")}, phase="pointer")
+            if reused: return _with(prior, phase="pointer", pointer=parent_head, refs=_carry_refs(prior, boundary="parent", pointer=parent_head, sub_path=sub_path))
+            if _symbolic_branch(parent) != prior.get("parent_branch"): return _fail(story, "parent.not_current", _carry_refs(prior, boundary="parent", sub_path=sub_path), **_carry(prior), phase="pointer")
+            if changed_paths(repo) - {prior.get("spec_path")}: return _fail(story, "worktree.dirty", _carry_refs(prior, boundary="parent", sub_path=sub_path), **_carry(prior), phase="pointer")
             if resolve_revision(repo, "HEAD") != merge:
                 switched = git_run(repo, "switch", "-q", "--detach", merge)
-                if switched is None or switched.returncode != 0: return _fail(story, "checkout.failed", _refs(**dict(prior.get("refs", {})), boundary="parent", sub_path=sub_path), **{k: prior.get(k) for k in ("change_id", "repo", "spec_path", "branch", "base_branch", "remote", "parent", "parent_branch", "status_path", "status_value", "revision", "tip", "merge")}, phase="pointer")
-            if resolve_revision(repo, "HEAD") != merge: return _fail(story, "checkout.failed", _refs(**dict(prior.get("refs", {})), boundary="parent", sub_path=sub_path), **{k: prior.get(k) for k in ("change_id", "repo", "spec_path", "branch", "base_branch", "remote", "parent", "parent_branch", "status_path", "status_value", "revision", "tip", "merge")}, phase="pointer")
+                if switched is None or switched.returncode != 0: return _fail(story, "checkout.failed", _carry_refs(prior, boundary="parent", sub_path=sub_path), **_carry(prior), phase="pointer")
+            if resolve_revision(repo, "HEAD") != merge: return _fail(story, "checkout.failed", _carry_refs(prior, boundary="parent", sub_path=sub_path), **_carry(prior), phase="pointer")
             old = parent_head
             subject, trailers = pointer_message(story, sub_path, merge)
             committed = git_run(parent, "commit", "-q", "-m", subject, "-m", trailers, "--only", "--", sub_path, timeout=120)
-            if committed is None or committed.returncode != 0: return _fail(story, "commit.failed", _refs(**dict(prior.get("refs", {})), boundary="parent", sub_path=sub_path), **{k: prior.get(k) for k in ("change_id", "repo", "spec_path", "branch", "base_branch", "remote", "parent", "parent_branch", "status_path", "status_value", "revision", "tip", "merge")}, phase="pointer")
+            if committed is None or committed.returncode != 0: return _fail(story, "commit.failed", _carry_refs(prior, boundary="parent", sub_path=sub_path), **_carry(prior), phase="pointer")
             pointer = resolve_revision(parent, "HEAD")
-            if _git_text(git_run(parent, "rev-parse", "HEAD^")) != old or _gitlink(parent, "HEAD", sub_path) != merge: return _fail(story, "commit.changed", _refs(**dict(prior.get("refs", {})), boundary="parent", sub_path=sub_path, pointer=pointer), **{k: prior.get(k) for k in ("change_id", "repo", "spec_path", "branch", "base_branch", "remote", "parent", "parent_branch", "status_path", "status_value", "revision", "tip", "merge")}, phase="pointer", pointer=pointer)
-            return _with(prior, phase="pointer", pointer=pointer, refs=_refs(**dict(prior.get("refs", {})), boundary="parent", sub_path=sub_path, pointer=pointer))
+            if _git_text(git_run(parent, "rev-parse", "HEAD^")) != old or _gitlink(parent, "HEAD", sub_path) != merge: return _fail(story, "commit.changed", _carry_refs(prior, boundary="parent", sub_path=sub_path, pointer=pointer), **{k: prior.get(k) for k in ("change_id", "repo", "spec_path", "branch", "base_branch", "remote", "parent", "parent_branch", "status_path", "status_value", "revision", "tip", "merge")}, phase="pointer", pointer=pointer)
+            return _with(prior, phase="pointer", pointer=pointer, refs=_carry_refs(prior, boundary="parent", sub_path=sub_path, pointer=pointer))
         tracking = _tracking(parent, str(prior.get("remote")), str(prior.get("parent_branch")))
         remote_gitlink = _gitlink(parent, tracking, sub_path)
         published = remote_gitlink == merge
         if not published and remote_gitlink is not None:
             try: published = is_ancestor(repo, merge, resolve_revision(repo, remote_gitlink))
             except ProfileError: published = False
-        if not published: return _with(prior, outcome="stopped", reason="pointer.unpublished", phase="finish", refs=_refs(**dict(prior.get("refs", {})), boundary="parent", sub_path=sub_path, pointer=prior.get("pointer")), pointer=prior.get("pointer"))
+        if not published: return _with(prior, outcome="stopped", reason="pointer.unpublished", phase="finish", refs=_carry_refs(prior, boundary="parent", sub_path=sub_path, pointer=prior.get("pointer")), pointer=prior.get("pointer"))
         status = prior.get("status_path")
-        if not status: return _with(prior, outcome="succeeded", reason="integrate.complete", phase="finish", refs=_refs(**dict(prior.get("refs", {})), boundary="parent", sub_path=sub_path, pointer=prior.get("pointer"), status_written=False), pointer=prior.get("pointer"))
+        if not status: return _with(prior, outcome="succeeded", reason="integrate.complete", phase="finish", refs=_carry_refs(prior, boundary="parent", sub_path=sub_path, pointer=prior.get("pointer"), status_written=False), pointer=prior.get("pointer"))
         data = read_confined(parent, str(status))
-        if data is None: return _fail(story, "status.unmatched", _refs(**dict(prior.get("refs", {})), boundary="parent", sub_path=sub_path, pointer=prior.get("pointer")), **{k: prior.get(k) for k in ("change_id", "repo", "spec_path", "branch", "base_branch", "remote", "parent", "parent_branch", "sub_path", "status_path", "status_value", "revision", "tip", "merge", "pointer")}, phase="finish")
+        if data is None: return _fail(story, "status.unmatched", _carry_refs(prior, boundary="parent", sub_path=sub_path, pointer=prior.get("pointer")), **_carry(prior), phase="finish")
         value = str(prior.get("status_value"))
-        if status_value(data, story) == value: return _with(prior, outcome="succeeded", reason="integrate.complete", phase="finish", refs=_refs(**dict(prior.get("refs", {})), boundary="parent", sub_path=sub_path, pointer=prior.get("pointer"), status_written=False), pointer=prior.get("pointer"))
+        if status_value(data, story) == value: return _with(prior, outcome="succeeded", reason="integrate.complete", phase="finish", refs=_carry_refs(prior, boundary="parent", sub_path=sub_path, pointer=prior.get("pointer"), status_written=False), pointer=prior.get("pointer"))
         updated = set_status(data, story, value)
-        if updated is None: return _fail(story, "status.unmatched", _refs(**dict(prior.get("refs", {})), boundary="parent", sub_path=sub_path, pointer=prior.get("pointer")), **{k: prior.get(k) for k in ("change_id", "repo", "spec_path", "branch", "base_branch", "remote", "parent", "parent_branch", "sub_path", "status_path", "status_value", "revision", "tip", "merge", "pointer")}, phase="finish")
+        if updated is None: return _fail(story, "status.unmatched", _carry_refs(prior, boundary="parent", sub_path=sub_path, pointer=prior.get("pointer")), **_carry(prior), phase="finish")
         target = confined(parent, str(status))
         fd, temporary = tempfile.mkstemp(prefix=".beddel-status-", dir=str(target.parent))
         try:
             with os.fdopen(fd, "wb") as handle: handle.write(updated)
+            os.chmod(temporary, stat.S_IMODE(os.stat(target).st_mode))
             os.replace(temporary, target)
         except OSError:
             try: os.unlink(temporary)
             except OSError: pass
-            return _fail(story, "status.failed", _refs(**dict(prior.get("refs", {})), boundary="parent", sub_path=sub_path, pointer=prior.get("pointer")), **{k: prior.get(k) for k in ("change_id", "repo", "spec_path", "branch", "base_branch", "remote", "parent", "parent_branch", "sub_path", "status_path", "status_value", "revision", "tip", "merge", "pointer")}, phase="finish")
-        return _with(prior, outcome="succeeded", reason="integrate.complete", phase="finish", refs=_refs(**dict(prior.get("refs", {})), boundary="parent", sub_path=sub_path, pointer=prior.get("pointer"), status_written=True), pointer=prior.get("pointer"))
+            return _fail(story, "status.failed", _carry_refs(prior, boundary="parent", sub_path=sub_path, pointer=prior.get("pointer")), **_carry(prior), phase="finish")
+        return _with(prior, outcome="succeeded", reason="integrate.complete", phase="finish", refs=_carry_refs(prior, boundary="parent", sub_path=sub_path, pointer=prior.get("pointer"), status_written=True), pointer=prior.get("pointer"))
     except ProfileError:
-        return _fail(story, "pointer.failed", _refs(**dict(prior.get("refs", {}))), **{k: prior.get(k) for k in ("change_id", "repo", "spec_path", "branch", "base_branch", "parent", "parent_branch", "sub_path", "status_path", "status_value", "revision", "tip", "merge", "pointer")}, phase=phase)
-    except Exception:  # noqa: BLE001
-        return _fail(story, "pointer.failed", _refs(**dict(prior.get("refs", {}))), **{k: prior.get(k) for k in ("change_id", "repo", "spec_path", "branch", "base_branch", "parent", "parent_branch", "sub_path", "status_path", "status_value", "revision", "tip", "merge", "pointer")}, phase=phase)
+        return _fail(story, "pointer.failed", _carry_refs(prior), **_carry(prior), phase=phase)
+    except OSError:
+        return _fail(story, "pointer.failed", _carry_refs(prior), **_carry(prior), phase=phase)
 # fmt: on
