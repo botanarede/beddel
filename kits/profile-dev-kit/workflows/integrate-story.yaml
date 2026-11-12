@@ -1,0 +1,231 @@
+id: integrate-story
+name: Integrate Story
+description: Entry integration stage that reads the recorded Approval, pushes the feature branch, creates or reuses a pull request, waits for checks, merges through the repository tools, confirms the merge by fetch, records the parent pointer and records the status after the pointer reaches the parent remote. It never approves, verifies or pushes the parent.
+version: "1.0"
+requires_kits:
+  - profile-dev-kit
+  - tools-git-kit
+  - tools-github-kit
+allowed_tools:
+  - profile_integrate_prepare
+  - profile_integrate_reconcile
+  - profile_integrate_settle
+  - profile_record_stage_outcome
+  - git_fetch
+  - git_push
+  - github_pr_create_or_reuse
+  - github_pr_checks_wait
+  - github_pr_merge
+inputs:
+  - repo_path
+  - story_key
+  - spec_path
+  - branch
+  - base_branch
+  - remote
+  - change_id
+  - parent_path
+  - parent_branch
+  - status_path
+steps:
+  - id: prepare
+    primitive: tool
+    execution_strategy:
+      type: skip
+    config:
+      tool: profile_integrate_prepare
+      arguments:
+        repo_path: "$input.repo_path"
+        story_key: "$input.story_key"
+        spec_path: "$input.spec_path"
+        branch: "$input.branch"
+        base_branch: "$input.base_branch"
+        remote: "$input.remote"
+        change_id: "$input.change_id"
+        parent_path: "$input.parent_path"
+        parent_branch: "$input.parent_branch"
+        status_path: "$input.status_path"
+        status_value: done
+  - id: fetch
+    primitive: tool
+    execution_strategy:
+      type: skip
+    config:
+      tool: git_fetch
+      timeout: 330
+      arguments:
+        cwd: "$input.repo_path"
+        remote: "$stepResult.prepare.result.remote"
+  - id: land
+    primitive: tool
+    execution_strategy:
+      type: fail
+    config:
+      tool: profile_integrate_reconcile
+      arguments:
+        repo_path: "$input.repo_path"
+        story_key: "$input.story_key"
+        change_id: "$input.change_id"
+        phase: land
+        prior: "$stepResult.prepare.result"
+        fetch: "$stepResult.fetch"
+  - id: push
+    primitive: tool
+    if: "$stepResult.land.result.pr == true"
+    execution_strategy:
+      type: skip
+    config:
+      tool: git_push
+      timeout: 330
+      arguments:
+        cwd: "$input.repo_path"
+        remote: "$stepResult.land.result.remote"
+  - id: pull_request
+    primitive: tool
+    if: "$stepResult.land.result.pr == true"
+    execution_strategy:
+      type: skip
+    config:
+      tool: github_pr_create_or_reuse
+      timeout: 400
+      arguments:
+        cwd: "$input.repo_path"
+        branch: "$stepResult.land.result.branch"
+        base: "$stepResult.land.result.base_branch"
+        story_key: "$stepResult.land.result.story_key"
+        spec_path: "$stepResult.land.result.spec_path"
+        change_id: "$stepResult.land.result.change_id"
+        revision: "$stepResult.land.result.revision"
+  - id: checks
+    primitive: tool
+    if: "$stepResult.land.result.pr == true"
+    execution_strategy:
+      type: skip
+    config:
+      tool: github_pr_checks_wait
+      timeout: 2000
+      arguments:
+        cwd: "$input.repo_path"
+        number: "$stepResult.pull_request.result.number"
+  - id: merge
+    primitive: tool
+    if: "$stepResult.land.result.pr == true"
+    execution_strategy:
+      type: skip
+    config:
+      tool: github_pr_merge
+      timeout: 400
+      arguments:
+        cwd: "$input.repo_path"
+        number: "$stepResult.pull_request.result.number"
+        merge_method: merge
+        expected_head_sha: "$stepResult.land.result.tip"
+  - id: refetch
+    primitive: tool
+    execution_strategy:
+      type: skip
+    config:
+      tool: git_fetch
+      timeout: 330
+      arguments:
+        cwd: "$input.repo_path"
+        remote: "$stepResult.land.result.remote"
+  - id: confirm
+    primitive: tool
+    if: "$stepResult.land.result.pr == true"
+    execution_strategy:
+      type: fail
+    output_key: confirmed
+    config:
+      tool: profile_integrate_reconcile
+      arguments:
+        repo_path: "$input.repo_path"
+        story_key: "$input.story_key"
+        change_id: "$input.change_id"
+        phase: confirm
+        prior: "$stepResult.land.result"
+        fetch: "$stepResult.refetch"
+        push: "$stepResult.push"
+        pull_request: "$stepResult.pull_request"
+        checks: "$stepResult.checks"
+        merge: "$stepResult.merge"
+  - id: confirm_reuse
+    primitive: tool
+    if: "$stepResult.land.result.pr != true"
+    execution_strategy:
+      type: fail
+    output_key: confirmed
+    config:
+      tool: profile_integrate_reconcile
+      arguments:
+        repo_path: "$input.repo_path"
+        story_key: "$input.story_key"
+        change_id: "$input.change_id"
+        phase: confirm
+        prior: "$stepResult.land.result"
+        fetch: "$stepResult.refetch"
+  - id: record_repo
+    primitive: tool
+    execution_strategy:
+      type: fail
+    config:
+      tool: profile_record_stage_outcome
+      arguments:
+        repo_path: "$input.repo_path"
+        story_key: "$stepResult.confirmed.result.story_key"
+        stage: integrate
+        outcome: "$stepResult.confirmed.result.outcome"
+        reason: "$stepResult.confirmed.result.reason"
+        refs: "$stepResult.confirmed.result.refs"
+  - id: pointer
+    primitive: tool
+    if: "$stepResult.confirmed.result.merged == true"
+    execution_strategy:
+      type: fail
+    config:
+      tool: profile_integrate_settle
+      arguments:
+        repo_path: "$input.repo_path"
+        story_key: "$input.story_key"
+        change_id: "$input.change_id"
+        phase: pointer
+        prior: "$stepResult.confirmed.result"
+  - id: fetch_parent
+    primitive: tool
+    if: "$stepResult.confirmed.result.merged == true"
+    execution_strategy:
+      type: skip
+    config:
+      tool: git_fetch
+      timeout: 330
+      arguments:
+        cwd: "$input.parent_path"
+        remote: "$stepResult.pointer.result.remote"
+  - id: finish
+    primitive: tool
+    if: "$stepResult.confirmed.result.merged == true"
+    execution_strategy:
+      type: fail
+    config:
+      tool: profile_integrate_settle
+      arguments:
+        repo_path: "$input.repo_path"
+        story_key: "$input.story_key"
+        change_id: "$input.change_id"
+        phase: finish
+        prior: "$stepResult.pointer.result"
+        fetch: "$stepResult.fetch_parent"
+  - id: record_parent
+    primitive: tool
+    if: "$stepResult.confirmed.result.merged == true"
+    execution_strategy:
+      type: fail
+    config:
+      tool: profile_record_stage_outcome
+      arguments:
+        repo_path: "$input.repo_path"
+        story_key: "$stepResult.finish.result.story_key"
+        stage: integrate
+        outcome: "$stepResult.finish.result.outcome"
+        reason: "$stepResult.finish.result.reason"
+        refs: "$stepResult.finish.result.refs"

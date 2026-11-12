@@ -211,7 +211,12 @@ def test_underivable_is_a_refusal(
 
 def test_structural_approval_boundaries() -> None:
     for path in PYTHON_ROOT.rglob("*.py"):
-        if path.name not in {"approval.py", "approval_decision.py", "_errors.py"}:
+        if path.name not in {
+            "approval.py",
+            "approval_decision.py",
+            "_errors.py",
+            "integrate.py",
+        }:
             assert "approv" not in path.read_text().lower()
     source = (PYTHON_ROOT / "beddel_profile_dev" / "tools" / "approval.py").read_text()
     assert source.count("write_create_only(") == 1
@@ -262,6 +267,22 @@ def test_structural_approval_boundaries() -> None:
         )
     assert "profile-dev/approval/1" in source
     assert "approval.json" in source
+    for integrate_source in (
+        PYTHON_ROOT / "beddel_profile_dev" / "integrate.py",
+        PYTHON_ROOT / "beddel_profile_dev" / "tools" / "integrate.py",
+    ):
+        integrate_text = integrate_source.read_text()
+        assert all(
+            forbidden not in integrate_text
+            for forbidden in (
+                "profile_approve_change",
+                "profile_record_approval_decision",
+                "approve-change",
+                "record-approval-decision",
+                "write_create_only",
+                "approval_decision",
+            )
+        )
     decision_source = (
         PYTHON_ROOT / "beddel_profile_dev" / "tools" / "approval_decision.py"
     ).read_text()
