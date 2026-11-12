@@ -125,6 +125,18 @@ tools:
     target: "beddel_profile_dev.tools.fix:profile_fix_settle"
     description: "Validate and commit one verification fix round"
     category: profile
+  - name: profile_integrate_prepare
+    target: "beddel_profile_dev.tools.integrate:profile_integrate_prepare"
+    description: "Prepare one approved Change for integration"
+    category: profile
+  - name: profile_integrate_reconcile
+    target: "beddel_profile_dev.tools.integrate:profile_integrate_reconcile"
+    description: "Reconcile remote integration state"
+    category: profile
+  - name: profile_integrate_settle
+    target: "beddel_profile_dev.tools.integrate:profile_integrate_settle"
+    description: "Settle the parent integration boundary"
+    category: profile
 
 workflows:
   - name: verify-change
@@ -160,6 +172,9 @@ workflows:
   - name: plan-story
     path: workflows/plan-story.yaml
     description: Plans one selected story into one implementation spec through a Coding agent; never implements, verifies or commits.
+  - name: integrate-story
+    path: workflows/integrate-story.yaml
+    description: Integrates one approved Change through the repository host and records the parent boundary; never approves, verifies or pushes the parent.
 
 targets:
   python:
@@ -213,6 +228,12 @@ targets:
         target: "beddel_profile_dev.tools.fix:profile_fix_reconcile"
       - name: profile_fix_settle
         target: "beddel_profile_dev.tools.fix:profile_fix_settle"
+      - name: profile_integrate_prepare
+        target: "beddel_profile_dev.tools.integrate:profile_integrate_prepare"
+      - name: profile_integrate_reconcile
+        target: "beddel_profile_dev.tools.integrate:profile_integrate_reconcile"
+      - name: profile_integrate_settle
+        target: "beddel_profile_dev.tools.integrate:profile_integrate_settle"
   typescript:
     status: unavailable
     unavailable_reason: >

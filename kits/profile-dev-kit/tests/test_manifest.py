@@ -37,6 +37,9 @@ _TOOLS = [
     "profile_implement_settle",
     "profile_fix_reconcile",
     "profile_fix_settle",
+    "profile_integrate_prepare",
+    "profile_integrate_reconcile",
+    "profile_integrate_settle",
 ]
 
 
@@ -113,6 +116,7 @@ def test_manifest_declares_all_workflows_and_python_targets() -> None:
         "implement-story",
         "verify-and-fix-story",
         "plan-story",
+        "integrate-story",
     ]
     declared = {t["name"] for t in manifest["tools"]}
     targeted = {t["name"] for t in manifest["targets"]["python"]["tools"]}

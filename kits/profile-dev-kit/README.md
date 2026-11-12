@@ -493,3 +493,32 @@ never ratify or write inventory versions.
 ```text
 beddel run -i ... workflows/verify-and-fix-story.yaml
 ```
+
+## Delivery: integrate stage
+
+`integrate-story` takes `repo_path`, `story_key`, `spec_path`, `branch`,
+`base_branch`, `remote`, `change_id`, `parent_path`, `parent_branch` and an
+optional `status_path`. It reads the recorded Approval and the latest
+consistent Report, validates the feature branch and parent gitlink, then runs
+fetch, land, push, pull request, checks, merge and refetch. The pull request
+contains references only: the story key, spec path, Change id and approved
+revision.
+
+The stage refuses before host work for an absent or invalid Approval, a pending
+Report, unapproved commits, invalid inputs, a bad parent or a malformed status
+file. It confirms the merge from Git after a successful fetch and pins the host
+merge to the checked branch tip. A rerun reuses a merged tip and an existing
+parent pointer instead of repeating those actions.
+
+It records one `integrate` outcome at the Change-repository boundary and one at
+the parent boundary. Common reasons include `approval.absent`,
+`verdict.has_pendency`, `revision.unapproved`, `merge.confirmed`,
+`merge.reused`, `pointer.unpublished`, `integrate.complete` and
+`fetch.failed`. The status mapping is edited only after a successful parent
+fetch confirms the pointer on the parent remote. The workflow never approves,
+verifies or pushes the parent; the owner commits the status file and pushes
+the parent.
+
+```text
+beddel run -i ... workflows/integrate-story.yaml
+```
