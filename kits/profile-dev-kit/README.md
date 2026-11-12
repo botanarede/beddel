@@ -520,5 +520,35 @@ verifies or pushes the parent; the owner commits the status file and pushes
 the parent.
 
 ```text
+```text
 beddel run -i ... workflows/integrate-story.yaml
 ```
+
+## Delivery: deliver workflow
+
+`deliver-story` takes `repo_path`, `story_key`, `stage`, the planning inputs
+`story_path`, `guide_path` and `spec_path`, the implementation inputs
+`branch`, `base_ref`, `change_id` and `inventory_version`, the Approval
+`actor`, and the integration inputs `base_branch`, `remote`, `parent_path`,
+`parent_branch` and `status_path`. Set `stage` to `all` to chain plan,
+implement, verify-and-fix, Approval and integrate, or select one stage.
+
+The gate reads the create-only Stage outcomes under the profile records root.
+A complete outcome advances the next stage; an incomplete, failed or stopped
+outcome ends the run at that boundary. The implement stage has 33 static
+nested calls so one unit is reconciled per run without a loop primitive.
+Reruns start after the latest complete stage, and a completed Delivery returns
+`deliver.complete` without invoking a stage.
+
+Approval waits for the owner to commit the decision for the latest Report in
+HEAD. It passes the unchanged `actor` to `approve-change` exactly once, records
+`approval.recorded`, `approval.reused`, `approval.refused` or the owner stop,
+and only then allows integrate. The workflow writes one `deliver` outcome with
+reasons such as `stage.stopped`, `stage.failed`, `stage.incomplete` and
+`deliver.complete`; it never writes an Approval decision or pushes the parent.
+Run it from the Change repository root, once per Change:
+
+```text
+beddel run -i ... workflows/deliver-story.yaml
+```
+

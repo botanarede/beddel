@@ -1,0 +1,139 @@
+id: deliver-story
+name: Deliver Story
+description: Entry Delivery workflow that runs plan, implement, verify-and-fix, Approval and integrate in order or runs one selected stage. Plan, implement and fix use a Coding agent through the agent-exec step of each stage workflow with the kiro-cli adapter. Approval waits for the owner's committed decision, runs approve-change once, and integrate requires the recorded Approval. It never decides Approval or pushes the parent.
+version: "1.0"
+requires_kits: [profile-dev-kit, agent-kiro-kit, tools-git-kit, tools-github-kit]
+allowed_tools: [profile_deliver_gate, profile_deliver_approval, profile_record_stage_outcome]
+inputs: [repo_path, story_key, stage, story_path, guide_path, spec_path, branch, base_ref, change_id, inventory_version, actor, base_branch, remote, parent_path, parent_branch, status_path]
+steps:
+  - id: start
+    primitive: tool
+    execution_strategy: {type: fail}
+    config:
+      tool: profile_deliver_gate
+      arguments: {repo_path: "$input.repo_path", story_key: "$input.story_key", request: "$input.stage", step: start, prior: {}}
+  - id: plan
+    primitive: call-agent
+    if: "$stepResult.start.result.go == plan"
+    execution_strategy: {type: skip}
+    config:
+      workflow: plan-story.yaml
+      inputs: {repo_path: "$input.repo_path", story_key: "$input.story_key", story_path: "$input.story_path", guide_path: "$input.guide_path", spec_path: "$input.spec_path"}
+  - id: after_plan
+    primitive: tool
+    execution_strategy: {type: fail}
+    config:
+      tool: profile_deliver_gate
+      arguments: {repo_path: "$input.repo_path", story_key: "$input.story_key", request: "$input.stage", step: plan, prior: "$stepResult.start.result"}
+  - &implement_call
+    id: implement_1
+    primitive: call-agent
+    if: "$stepResult.after_plan.result.go == implement"
+    execution_strategy: {type: skip}
+    config:
+      workflow: implement-story.yaml
+      inputs: &implement_inputs {repo_path: "$input.repo_path", story_key: "$input.story_key", spec_path: "$input.spec_path", branch: "$input.branch", base_ref: "$input.base_ref"}
+  - {<<: *implement_call, id: implement_2, if: "$stepResult.implement_1.record.result.outcome == succeeded"}
+  - {<<: *implement_call, id: implement_3, if: "$stepResult.implement_2.record.result.outcome == succeeded"}
+  - {<<: *implement_call, id: implement_4, if: "$stepResult.implement_3.record.result.outcome == succeeded"}
+  - {<<: *implement_call, id: implement_5, if: "$stepResult.implement_4.record.result.outcome == succeeded"}
+  - {<<: *implement_call, id: implement_6, if: "$stepResult.implement_5.record.result.outcome == succeeded"}
+  - {<<: *implement_call, id: implement_7, if: "$stepResult.implement_6.record.result.outcome == succeeded"}
+  - {<<: *implement_call, id: implement_8, if: "$stepResult.implement_7.record.result.outcome == succeeded"}
+  - {<<: *implement_call, id: implement_9, if: "$stepResult.implement_8.record.result.outcome == succeeded"}
+  - {<<: *implement_call, id: implement_10, if: "$stepResult.implement_9.record.result.outcome == succeeded"}
+  - {<<: *implement_call, id: implement_11, if: "$stepResult.implement_10.record.result.outcome == succeeded"}
+  - {<<: *implement_call, id: implement_12, if: "$stepResult.implement_11.record.result.outcome == succeeded"}
+  - {<<: *implement_call, id: implement_13, if: "$stepResult.implement_12.record.result.outcome == succeeded"}
+  - {<<: *implement_call, id: implement_14, if: "$stepResult.implement_13.record.result.outcome == succeeded"}
+  - {<<: *implement_call, id: implement_15, if: "$stepResult.implement_14.record.result.outcome == succeeded"}
+  - {<<: *implement_call, id: implement_16, if: "$stepResult.implement_15.record.result.outcome == succeeded"}
+  - {<<: *implement_call, id: implement_17, if: "$stepResult.implement_16.record.result.outcome == succeeded"}
+  - {<<: *implement_call, id: implement_18, if: "$stepResult.implement_17.record.result.outcome == succeeded"}
+  - {<<: *implement_call, id: implement_19, if: "$stepResult.implement_18.record.result.outcome == succeeded"}
+  - {<<: *implement_call, id: implement_20, if: "$stepResult.implement_19.record.result.outcome == succeeded"}
+  - {<<: *implement_call, id: implement_21, if: "$stepResult.implement_20.record.result.outcome == succeeded"}
+  - {<<: *implement_call, id: implement_22, if: "$stepResult.implement_21.record.result.outcome == succeeded"}
+  - {<<: *implement_call, id: implement_23, if: "$stepResult.implement_22.record.result.outcome == succeeded"}
+  - {<<: *implement_call, id: implement_24, if: "$stepResult.implement_23.record.result.outcome == succeeded"}
+  - {<<: *implement_call, id: implement_25, if: "$stepResult.implement_24.record.result.outcome == succeeded"}
+  - {<<: *implement_call, id: implement_26, if: "$stepResult.implement_25.record.result.outcome == succeeded"}
+  - {<<: *implement_call, id: implement_27, if: "$stepResult.implement_26.record.result.outcome == succeeded"}
+  - {<<: *implement_call, id: implement_28, if: "$stepResult.implement_27.record.result.outcome == succeeded"}
+  - {<<: *implement_call, id: implement_29, if: "$stepResult.implement_28.record.result.outcome == succeeded"}
+  - {<<: *implement_call, id: implement_30, if: "$stepResult.implement_29.record.result.outcome == succeeded"}
+  - {<<: *implement_call, id: implement_31, if: "$stepResult.implement_30.record.result.outcome == succeeded"}
+  - {<<: *implement_call, id: implement_32, if: "$stepResult.implement_31.record.result.outcome == succeeded"}
+  - {<<: *implement_call, id: implement_33, if: "$stepResult.implement_32.record.result.outcome == succeeded"}
+  - id: after_implement
+    primitive: tool
+    execution_strategy: {type: fail}
+    config:
+      tool: profile_deliver_gate
+      arguments: {repo_path: "$input.repo_path", story_key: "$input.story_key", request: "$input.stage", step: implement, prior: "$stepResult.after_plan.result"}
+  - id: verify
+    primitive: call-agent
+    if: "$stepResult.after_implement.result.go == verify-and-fix"
+    execution_strategy: {type: skip}
+    config:
+      workflow: verify-and-fix-story.yaml
+      inputs: {repo_path: "$input.repo_path", story_key: "$input.story_key", spec_path: "$input.spec_path", branch: "$input.branch", base_ref: "$input.base_ref", change_id: "$input.change_id", inventory_version: "$input.inventory_version"}
+  - id: after_verify
+    primitive: tool
+    execution_strategy: {type: fail}
+    config:
+      tool: profile_deliver_gate
+      arguments: {repo_path: "$input.repo_path", story_key: "$input.story_key", request: "$input.stage", step: verify-and-fix, prior: "$stepResult.after_implement.result"}
+  - id: approval_check
+    primitive: tool
+    if: "$stepResult.after_verify.result.go == approval"
+    execution_strategy: {type: fail}
+    config:
+      tool: profile_deliver_approval
+      arguments: {repo_path: "$input.repo_path", story_key: "$input.story_key", change_id: "$input.change_id", branch: "$input.branch", actor: "$input.actor", phase: check, prior: "$stepResult.after_verify.result"}
+  - id: approve
+    primitive: call-agent
+    if: "$stepResult.approval_check.result.approve == true"
+    execution_strategy: {type: skip}
+    config:
+      workflow: approve-change.yaml
+      inputs: {repo_path: "$input.repo_path", change_id: "$input.change_id", revision: "$stepResult.approval_check.result.revision", actor: "$input.actor", decision_commit: "$stepResult.approval_check.result.decision_commit"}
+  - id: approval_settle
+    primitive: tool
+    if: "$stepResult.after_verify.result.go == approval"
+    execution_strategy: {type: fail}
+    config:
+      tool: profile_deliver_approval
+      arguments: {repo_path: "$input.repo_path", story_key: "$input.story_key", change_id: "$input.change_id", branch: "$input.branch", actor: "$input.actor", phase: settle, prior: "$stepResult.approval_check.result"}
+  - id: record_approval
+    primitive: tool
+    if: "$stepResult.after_verify.result.go == approval"
+    execution_strategy: {type: fail}
+    config:
+      tool: profile_record_stage_outcome
+      arguments: {repo_path: "$input.repo_path", story_key: "$input.story_key", stage: approval, outcome: "$stepResult.approval_settle.result.outcome", reason: "$stepResult.approval_settle.result.reason", refs: "$stepResult.approval_settle.result.refs"}
+  - id: after_approval
+    primitive: tool
+    execution_strategy: {type: fail}
+    config:
+      tool: profile_deliver_gate
+      arguments: {repo_path: "$input.repo_path", story_key: "$input.story_key", request: "$input.stage", step: approval, prior: "$stepResult.after_verify.result"}
+  - id: integrate
+    primitive: call-agent
+    if: "$stepResult.after_approval.result.go == integrate"
+    execution_strategy: {type: skip}
+    config:
+      workflow: integrate-story.yaml
+      inputs: {repo_path: "$input.repo_path", story_key: "$input.story_key", spec_path: "$input.spec_path", branch: "$input.branch", base_branch: "$input.base_branch", remote: "$input.remote", change_id: "$input.change_id", parent_path: "$input.parent_path", parent_branch: "$input.parent_branch", status_path: "$input.status_path"}
+  - id: after_integrate
+    primitive: tool
+    execution_strategy: {type: fail}
+    config:
+      tool: profile_deliver_gate
+      arguments: {repo_path: "$input.repo_path", story_key: "$input.story_key", request: "$input.stage", step: integrate, prior: "$stepResult.after_approval.result"}
+  - id: record
+    primitive: tool
+    execution_strategy: {type: fail}
+    config:
+      tool: profile_record_stage_outcome
+      arguments: {repo_path: "$input.repo_path", story_key: "$stepResult.after_integrate.result.story_key", stage: deliver, outcome: "$stepResult.after_integrate.result.outcome", reason: "$stepResult.after_integrate.result.reason", refs: "$stepResult.after_integrate.result.refs"}
