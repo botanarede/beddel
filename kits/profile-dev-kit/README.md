@@ -520,5 +520,21 @@ verifies or pushes the parent; the owner commits the status file and pushes
 the parent.
 
 ```text
+```text
 beddel run -i ... workflows/integrate-story.yaml
 ```
+
+## Delivery: deliver workflow
+
+`deliver-story` chains five stages or runs one. It waits for committed Approval
+and records outcomes.
+
+Input `stage`: `all`, `plan`, `implement`, `verify-and-fix`, `approval` or
+`integrate`. `all` resumes after the story's latest complete Stage outcome;
+the owner commits the Approval decision, then a rerun runs `approve-change`
+once. Each run ends with a `deliver` record. One Change per run.
+
+```text
+beddel run -i ... workflows/deliver-story.yaml
+```
+

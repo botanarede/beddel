@@ -40,6 +40,8 @@ _TOOLS = [
     "profile_integrate_prepare",
     "profile_integrate_reconcile",
     "profile_integrate_settle",
+    "profile_deliver_gate",
+    "profile_deliver_approval",
 ]
 
 
@@ -117,7 +119,10 @@ def test_manifest_declares_all_workflows_and_python_targets() -> None:
         "verify-and-fix-story",
         "plan-story",
         "integrate-story",
+        "deliver-story",
     ]
+    for tool in manifest["tools"]:
+        assert tool["category"] == "profile"
     declared = {t["name"] for t in manifest["tools"]}
     targeted = {t["name"] for t in manifest["targets"]["python"]["tools"]}
     assert manifest["targets"]["python"]["dependencies"] == []

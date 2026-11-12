@@ -137,6 +137,14 @@ tools:
     target: "beddel_profile_dev.tools.integrate:profile_integrate_settle"
     description: "Settle the parent integration boundary"
     category: profile
+  - name: profile_deliver_gate
+    target: "beddel_profile_dev.tools.deliver:profile_deliver_gate"
+    description: "Gate chained Delivery stages from recorded outcomes"
+    category: profile
+  - name: profile_deliver_approval
+    target: "beddel_profile_dev.tools.deliver:profile_deliver_approval"
+    description: "Check and settle the Delivery Approval stage"
+    category: profile
 
 workflows:
   - name: verify-change
@@ -175,6 +183,9 @@ workflows:
   - name: integrate-story
     path: workflows/integrate-story.yaml
     description: Integrates one approved Change through the repository host and records the parent boundary; never approves, verifies or pushes the parent.
+  - name: deliver-story
+    path: workflows/deliver-story.yaml
+    description: Chains the Delivery stages or runs one selected stage, waits for Approval and records the complete Delivery outcome.
 
 targets:
   python:
@@ -234,6 +245,10 @@ targets:
         target: "beddel_profile_dev.tools.integrate:profile_integrate_reconcile"
       - name: profile_integrate_settle
         target: "beddel_profile_dev.tools.integrate:profile_integrate_settle"
+      - name: profile_deliver_gate
+        target: "beddel_profile_dev.tools.deliver:profile_deliver_gate"
+      - name: profile_deliver_approval
+        target: "beddel_profile_dev.tools.deliver:profile_deliver_approval"
   typescript:
     status: unavailable
     unavailable_reason: >

@@ -216,6 +216,7 @@ def test_structural_approval_boundaries() -> None:
             "approval_decision.py",
             "_errors.py",
             "integrate.py",
+            "deliver.py",
         }:
             assert "approv" not in path.read_text().lower()
     source = (PYTHON_ROOT / "beddel_profile_dev" / "tools" / "approval.py").read_text()
@@ -281,8 +282,45 @@ def test_structural_approval_boundaries() -> None:
                 "record-approval-decision",
                 "write_create_only",
                 "approval_decision",
+                "approval.json",
             )
         )
+    for deliver_source in (
+        PYTHON_ROOT / "beddel_profile_dev" / "deliver.py",
+        PYTHON_ROOT / "beddel_profile_dev" / "tools" / "deliver.py",
+    ):
+        deliver_text = deliver_source.read_text()
+        assert all(
+            forbidden not in deliver_text
+            for forbidden in (
+                "profile_approve_change",
+                "profile_record_approval_decision",
+                "approve-change",
+                "record-approval-decision",
+                "write_create_only",
+                "approval_decision",
+                "approval.json",
+            )
+        )
+    approval_workflows = {
+        path.name
+        for path in WORKFLOWS_ROOT.glob("*.yaml")
+        if "approve-change" in path.read_text()
+    }
+    assert approval_workflows == {"approve-change.yaml", "deliver-story.yaml"}
+    deliver = yaml.safe_load((WORKFLOWS_ROOT / "deliver-story.yaml").read_text())
+    approval_calls = [
+        step
+        for step in deliver["steps"]
+        if step.get("config", {}).get("workflow") == "approve-change.yaml"
+    ]
+    assert len(approval_calls) == 1
+    assert approval_calls[0]["id"] == "approve"
+    assert approval_calls[0]["primitive"] == "call-agent"
+    assert all(
+        "$" not in step.get("config", {}).get("workflow", "")
+        for step in deliver["steps"]
+    )
     decision_source = (
         PYTHON_ROOT / "beddel_profile_dev" / "tools" / "approval_decision.py"
     ).read_text()
