@@ -8,6 +8,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from beddel_agent_kiro import hook
 from beddel_agent_kiro.adapter import _DEFAULT_CLI_PATH, KiroCLIAgentAdapter
 
 from beddel.domain.errors import AgentError
@@ -27,6 +28,16 @@ from beddel.primitives.agent_exec import AgentExecPrimitive
 _PROMPT = "Write a hello world program"
 _PATCH_EXEC = "beddel_agent_kiro.adapter.asyncio.create_subprocess_exec"
 _PATCH_WAIT = "beddel_agent_kiro.adapter.asyncio.wait_for"
+
+
+@pytest.fixture(autouse=True)
+def _patch_cli_discovery(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(hook, "DEFAULT_POINTERS_DIR", tmp_path / "pointers")
+    monkeypatch.setattr(
+        KiroCLIAgentAdapter,
+        "_discover_cli",
+        staticmethod(lambda: _DEFAULT_CLI_PATH),
+    )
 
 
 def _make_context(workflow_id: str) -> ExecutionContext:
@@ -73,6 +84,7 @@ class TestConstructor:
         assert adapter._model == "claude-sonnet-4.6"
         assert adapter._cli_path == _DEFAULT_CLI_PATH
         assert adapter._timeout == 600
+        assert adapter._agent == "beddel-delivery"
 
     def test_custom_values(self) -> None:
         custom_path = Path("/usr/local/bin/kiro-cli")
@@ -166,7 +178,7 @@ class TestBuildCommand:
         agent_idx = cmd.index("--agent")
         assert cmd[agent_idx + 1] == "my-agent"
 
-    def test_tools_none_ignored(self) -> None:
+    def test_tools_none_uses_default_agent(self) -> None:
         adapter = KiroCLIAgentAdapter()
 
         cmd = adapter._build_command(
@@ -176,7 +188,8 @@ class TestBuildCommand:
             tools=None,
         )
 
-        assert "--agent" not in cmd
+        assert "--agent" in cmd
+        assert cmd[cmd.index("--agent") + 1] == "beddel-delivery"
 
     def test_tools_multiple_raises(self) -> None:
         """Multi-element tools list raises AgentError (CLI supports one --agent)."""
@@ -194,8 +207,8 @@ class TestBuildCommand:
         assert "at most one" in exc_info.value.message.lower()
         assert exc_info.value.details["tools"] == ["agent-a", "agent-b"]
 
-    def test_tools_empty_list_ignored(self) -> None:
-        """Empty tools list produces no --agent flag."""
+    def test_tools_empty_list_uses_default_agent(self) -> None:
+        """Empty tools list uses the configured default agent."""
         adapter = KiroCLIAgentAdapter()
 
         cmd = adapter._build_command(
@@ -205,7 +218,8 @@ class TestBuildCommand:
             tools=[],
         )
 
-        assert "--agent" not in cmd
+        assert "--agent" in cmd
+        assert cmd[cmd.index("--agent") + 1] == "beddel-delivery"
 
     def test_sandbox_unknown_raises(self) -> None:
         """Unknown sandbox value raises AgentError."""
@@ -279,7 +293,18 @@ class TestExecute:
         assert result.exit_code == 0
         assert result.output == "Task completed successfully"
         assert result.agent_id == "kiro-cli"
-        assert result.events == []
+        assert result.events == [
+            {
+                "type": "kiro-hook",
+                "events": 0,
+                "pre": 0,
+                "post": 0,
+                "denied": 0,
+                "stop": 0,
+                "errors": 0,
+                "log_sha256": None,
+            }
+        ]
         assert result.files_changed == []
         assert result.usage == {
             "model": "claude-sonnet-4.6",

@@ -2,6 +2,8 @@
 
 Kiro CLI agent adapter for the Beddel SDK. Implements the `IAgentAdapter` port to execute prompts via the Kiro CLI subprocess.
 
+Migration: install agent + hook.
+
 ## Dependencies
 
 None — uses subprocess only (no pip dependencies).
@@ -42,6 +44,9 @@ A Delivery stage declares trust through the step's `config.sandbox` value:
 - Headless mode ignores `sandbox` and uses the adapter's `trust_tools`; the
   default is `--trust-all-tools`.
 
+Every invocation pins `--agent-engine v3` and passes `--agent`: `tools[0]` or
+constructor `agent` (`beddel-delivery`).
+
 The step's `timeout` is the stage time bound. When `beddel run` builds this
 adapter with no constructor arguments, the adapter timeout is 600 seconds, so
 the step timeout must be at most 600 seconds. A step timeout kills and reaps
@@ -55,6 +60,20 @@ Delivery stage reads repository changes separately. Adapter errors use
 `BEDDEL-AGENT-701` for execution failures and `BEDDEL-AGENT-702` for adapter
 timeouts. A step timeout is raised as `BEDDEL-EXEC-005`; under the default FAIL
 strategy the step failure `BEDDEL-EXEC-002` wraps it as its cause.
+
+`<pointers>/<sha256(realpath(cwd))>.json` has absolute paths.
+Schema `beddel.kiro-hook-policy/1`; first-match-wins, no rules deny all.
+Hook exit 2 means pointer/policy/denial/error or missing log dir. Python
+3.11+ is required for `python3 -P`.
+
+Install and verify the operator-owned agent outside a workflow:
+
+```bash
+python3 -m beddel_agent_kiro.agent_config install --home DIR --pointers DIR [--replace]
+python3 -m beddel_agent_kiro.agent_config verify --home DIR --pointers DIR
+```
+
+POSIX; writes `~/.kiro/agents/beddel-delivery.json`.
 
 ## Headless Mode (CI/CD)
 
@@ -93,6 +112,8 @@ adapter = KiroCLIAgentAdapter(
 | `timeout` | `int` | `600` | Max execution time in seconds |
 | `api_key` | `str \| None` | `None` | API key for headless mode (falls back to `KIRO_API_KEY` env var) |
 | `trust_tools` | `list[str] \| None` | `None` | Tool categories to trust in headless mode (`None` = trust all) |
+| `agent` | `str` | `"beddel-delivery"` | Agent when `tools` is absent |
+| `pointers_dir` | `Path \| None` | `None` | Hook pointer directory |
 
 ### Docker Example
 
@@ -138,17 +159,23 @@ jobs:
 
 ### Binary Auto-Discovery
 
-When `cli_path` is not provided, the adapter discovers `kiro-cli` via:
+If `cli_path` is not provided, the adapter discovers an already-installed
+`kiro-cli` via:
 
 1. Default path: `~/.local/bin/kiro-cli`
 2. PATH lookup: `shutil.which("kiro-cli")`
-3. Auto-install: `curl -fsSL https://cli.kiro.dev/install | bash`
 
-If all steps fail, an `AgentError(BEDDEL-AGENT-701)` is raised.
+If both fail, `KIRO_CLI_MISSING`; manual text. No auto-install/network call.
+
+Schema `beddel.kiro-hook/1`; fields:
+`v`, `ts`, `seq`, `session_id`, `event`, `tool_name`, `tool_class`, `cmd_head`,
+`input_sha256`, `input_len`, `response_sha256`, `response_len`, `decision`,
+`rule_id`, `policy_sha256`, and `hook_ms`. Raw values never appear; results
+contain hook counts and the log digest.
 
 ## Running Tests
 
-Run the kit tests from the kit directory with the Beddel SDK installed:
+Run tests from its directory:
 
 ```bash
 pytest -q

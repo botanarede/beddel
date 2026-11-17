@@ -12,9 +12,8 @@ headless trust uses ``trust_tools`` or defaults to ``--trust-all-tools``.
 The CLI reports no changed-file list, so successful results always use
 ``files_changed=[]``.
 
-The CLI is auto-discovered from ``~/.local/bin/kiro-cli`` or via
-``shutil.which``.  If neither resolves, the adapter attempts a one-time
-auto-install from ``https://cli.kiro.dev/install``.
+The CLI is discovered from ``~/.local/bin/kiro-cli`` or via
+``shutil.which``.  The adapter never installs the CLI during a workflow run.
 
 Headless mode is activated when an ``api_key`` is provided or the
 ``KIRO_API_KEY`` environment variable is set.  In headless mode, the
@@ -28,7 +27,6 @@ import asyncio
 import contextlib
 import os
 import shutil
-import subprocess
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any
@@ -40,6 +38,9 @@ from beddel.error_codes import (
     AGENT_STREAM_INTERRUPTED,
     AGENT_TIMEOUT,
 )
+
+from beddel_agent_kiro import hook
+from beddel_agent_kiro.errors import KIRO_AGENT_INVALID, KIRO_CLI_MISSING
 
 __all__ = ["KiroCLIAgentAdapter"]
 
@@ -77,8 +78,7 @@ class KiroCLIAgentAdapter:
         model: Default model identifier for CLI invocations.
         cli_path: Explicit path to the ``kiro-cli`` binary.  When ``None``,
             auto-discovered from ``~/.local/bin/kiro-cli``, then
-            ``shutil.which``, then auto-installed from the official
-            installer script.
+            ``shutil.which``.  Missing binaries raise ``KIRO_CLI_MISSING``.
         timeout: Maximum execution time in seconds.  The subprocess is
             terminated and reaped when this bound expires or the caller
             cancels the execution.
@@ -90,6 +90,8 @@ class KiroCLIAgentAdapter:
             When ``None`` and headless is active, ``--trust-all-tools`` is
             appended.  When a list is provided, ``--trust-tools=<csv>`` is
             appended instead.
+        agent: Installed Kiro agent name used when ``tools`` is absent.
+        pointers_dir: Directory containing cwd-keyed stage policy pointers.
     """
 
     def __init__(
@@ -99,12 +101,16 @@ class KiroCLIAgentAdapter:
         timeout: int = 600,
         api_key: str | None = None,
         trust_tools: list[str] | None = None,
+        agent: str = "beddel-delivery",
+        pointers_dir: Path | None = None,
     ) -> None:
         self._model = model
         self._cli_path = cli_path or self._discover_cli()
         self._timeout = timeout
         self._headless: bool = bool(api_key or os.environ.get("KIRO_API_KEY"))
         self._trust_tools = trust_tools
+        self._agent = agent
+        self._pointers_dir = pointers_dir or hook.DEFAULT_POINTERS_DIR
 
     # ------------------------------------------------------------------
     # Binary discovery
@@ -112,55 +118,31 @@ class KiroCLIAgentAdapter:
 
     @staticmethod
     def _discover_cli() -> Path:
-        """Discover or auto-install the ``kiro-cli`` binary.
+        """Discover the already-installed ``kiro-cli`` binary.
 
         Discovery order:
             1. ``~/.local/bin/kiro-cli`` (default install location)
             2. ``shutil.which("kiro-cli")`` (PATH lookup)
-            3. Auto-install via official installer script, then retry step 1
-
-        Returns:
-            Path to the resolved ``kiro-cli`` binary.
 
         Raises:
-            AgentError: ``BEDDEL-AGENT-701`` if discovery and auto-install
-                both fail.
+            AgentError: ``KIRO_CLI_MISSING`` when neither location resolves.
         """
-        # Step 1: default location
         if _DEFAULT_CLI_PATH.exists():
             return _DEFAULT_CLI_PATH
 
-        # Step 2: PATH lookup
         which_result = shutil.which("kiro-cli")
         if which_result is not None:
             return Path(which_result)
 
-        # Step 3: auto-install
-        try:
-            subprocess.run(
-                ["bash", "-c", "curl -fsSL https://cli.kiro.dev/install | bash"],
-                capture_output=True,
-                timeout=60,
-            )
-        except (subprocess.TimeoutExpired, OSError):
-            pass
-
-        # Retry default location after install attempt
-        if _DEFAULT_CLI_PATH.exists():
-            return _DEFAULT_CLI_PATH
-
-        # Step 4: give up
         raise AgentError(
-            code=AGENT_EXECUTION_FAILED,
-            message="kiro-cli not found and auto-install failed",
+            code=KIRO_CLI_MISSING,
+            message="kiro-cli is not installed or discoverable",
             details={
-                "searched": [
-                    str(_DEFAULT_CLI_PATH),
-                    "shutil.which('kiro-cli')",
-                    "curl -fsSL https://cli.kiro.dev/install | bash",
-                ],
+                "searched": [str(_DEFAULT_CLI_PATH), "shutil.which('kiro-cli')"],
                 "hint": (
-                    "Install manually: curl -fsSL https://cli.kiro.dev/install | bash"
+                    "Install kiro-cli manually: https://kiro.dev/docs/cli/ "
+                    "(for example curl -fsSL https://cli.kiro.dev/install | bash), "
+                    "then re-run."
                 ),
             },
         )
@@ -191,9 +173,9 @@ class KiroCLIAgentAdapter:
                 ``--trust-tools=`` (empty value), ``"workspace-write"``
                 and ``"danger-full-access"`` append ``-a``.  Ignored in
                 headless mode.
-            tools: Optional list of tool/agent config names.  When a
-                single-element list is provided, appends
-                ``--agent <name>``.
+            tools: Optional list of tool/agent config names.  A single
+                element overrides the configured agent; an empty or absent
+                list uses the configured default agent.
             output_schema: Optional JSON Schema dict (currently unused
                 by the CLI backend).
 
@@ -208,6 +190,7 @@ class KiroCLIAgentAdapter:
                 ``BEDDEL-AGENT-701`` on non-zero exit code.
         """
         model_used = model or self._model
+        agent_used = tools[0] if tools else self._agent
         cmd = self._build_command(prompt, model=model_used, sandbox=sandbox, tools=tools)
 
         proc = await asyncio.create_subprocess_exec(
@@ -237,6 +220,16 @@ class KiroCLIAgentAdapter:
         stderr_text = stderr_bytes.decode("utf-8", errors="replace") if stderr_bytes else ""
 
         if proc.returncode != 0:
+            if proc.returncode == 4:
+                raise AgentError(
+                    code=KIRO_AGENT_INVALID,
+                    message=f"Kiro CLI agent is not installed: {agent_used}",
+                    details={
+                        "exit_code": proc.returncode,
+                        "agent": agent_used,
+                        "hint": "Install or verify the agent with beddel_agent_kiro.agent_config.",
+                    },
+                )
             raise AgentError(
                 code=AGENT_EXECUTION_FAILED,
                 message=f"Kiro CLI exited with code {proc.returncode}",
@@ -250,7 +243,7 @@ class KiroCLIAgentAdapter:
         return AgentResult(
             exit_code=proc.returncode,
             output=stdout_text,
-            events=[],
+            events=[hook.summarize(self._pointers_dir, Path.cwd())],
             files_changed=[],
             usage={"model": model_used, "timeout": self._timeout},
             agent_id="kiro-cli",
@@ -375,20 +368,20 @@ class KiroCLIAgentAdapter:
                     },
                 )
 
-        # Model
-        cmd.extend(["--model", model])
+        # Model and pinned engine
+        cmd.extend(["--agent-engine", "v3", "--model", model])
 
         # Tools → --agent (CLI supports at most one --agent flag)
-        if tools:
-            if len(tools) > 1:
-                raise AgentError(
-                    code=AGENT_EXECUTION_FAILED,
-                    message=f"Kiro CLI supports at most one agent, got {len(tools)}",
-                    details={"tools": tools},
-                )
-            cmd.extend(["--agent", tools[0]])
+        if tools is not None and len(tools) > 1:
+            raise AgentError(
+                code=AGENT_EXECUTION_FAILED,
+                message=f"Kiro CLI supports at most one agent, got {len(tools)}",
+                details={"tools": tools},
+            )
+        agent_name = tools[0] if tools else self._agent
+        cmd.extend(["--agent", agent_name])
 
-        # Prompt as final positional argument
+        # Prompt as final positional arg
         cmd.append(prompt)
 
         return cmd

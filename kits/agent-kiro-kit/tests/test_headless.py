@@ -8,23 +8,24 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from beddel_agent_kiro import hook
 from beddel_agent_kiro.adapter import _DEFAULT_CLI_PATH, KiroCLIAgentAdapter
-
 from beddel.domain.errors import AgentError
 from beddel.error_codes import AGENT_EXECUTION_FAILED
+from beddel_agent_kiro.errors import KIRO_CLI_MISSING
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _patch_pointer_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(hook, "DEFAULT_POINTERS_DIR", tmp_path / "pointers")
+
 
 _PROMPT = "Deploy the application"
 _PATCH_EXEC = "beddel_agent_kiro.adapter.asyncio.create_subprocess_exec"
 _PATCH_WHICH = "beddel_agent_kiro.adapter.shutil.which"
-_PATCH_SUBPROCESS_RUN = "beddel_agent_kiro.adapter.subprocess.run"
 _PATCH_PATH_EXISTS = "beddel_agent_kiro.adapter._DEFAULT_CLI_PATH"
 
 
@@ -263,72 +264,18 @@ class TestBinaryDiscovery:
             result = KiroCLIAgentAdapter._discover_cli()
         assert result == Path(found_path)
 
-    def test_discovery_auto_install_success(self, tmp_path: Path) -> None:
-        """Step 3: auto-install succeeds and binary appears at default path."""
-        fake_default = tmp_path / "kiro-cli"
-        # Initially does not exist
-        call_count = 0
-
-        def _exists_side_effect() -> bool:
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return False  # First check: not found
-            fake_default.touch()
-            return True  # After install: found
-
-        mock_path = MagicMock(spec=Path)
-        mock_path.exists = _exists_side_effect
-        mock_path.__str__ = lambda _: str(fake_default)
-        mock_path.__fspath__ = lambda _: str(fake_default)
-        mock_path.__eq__ = lambda self, other: str(self) == str(other)
-        mock_path.__hash__ = lambda _: hash(str(fake_default))
-
-        with (
-            patch("beddel_agent_kiro.adapter._DEFAULT_CLI_PATH", fake_default),
-            patch(_PATCH_WHICH, return_value=None),
-            patch(_PATCH_SUBPROCESS_RUN) as mock_run,
-        ):
-            # Make the path exist after subprocess.run is called
-            def side_effect(*args: Any, **kwargs: Any) -> MagicMock:
-                fake_default.touch()
-                return MagicMock(returncode=0)
-
-            mock_run.side_effect = side_effect
-            result = KiroCLIAgentAdapter._discover_cli()
-
-        assert result == fake_default
-        mock_run.assert_called_once()
-
-    def test_discovery_all_fail_raises(self, tmp_path: Path) -> None:
-        """Step 4: all discovery steps fail, raises AgentError."""
+    def test_discovery_missing_does_not_install(self, tmp_path: Path) -> None:
+        """Missing binaries raise without invoking an installer."""
         fake_default = tmp_path / "nonexistent" / "kiro-cli"
         with (
             patch("beddel_agent_kiro.adapter._DEFAULT_CLI_PATH", fake_default),
             patch(_PATCH_WHICH, return_value=None),
-            patch(_PATCH_SUBPROCESS_RUN) as mock_run,
+            pytest.raises(AgentError) as exc_info,
         ):
-            mock_run.return_value = MagicMock(returncode=0)
-            with pytest.raises(AgentError) as exc_info:
-                KiroCLIAgentAdapter._discover_cli()
+            KiroCLIAgentAdapter._discover_cli()
 
-        assert exc_info.value.code == AGENT_EXECUTION_FAILED
-        assert "kiro-cli not found" in exc_info.value.message
-
-    def test_discovery_auto_install_timeout(self, tmp_path: Path) -> None:
-        """Auto-install times out gracefully."""
-        import subprocess as sp
-
-        fake_default = tmp_path / "nonexistent" / "kiro-cli"
-        with (
-            patch("beddel_agent_kiro.adapter._DEFAULT_CLI_PATH", fake_default),
-            patch(_PATCH_WHICH, return_value=None),
-            patch(_PATCH_SUBPROCESS_RUN, side_effect=sp.TimeoutExpired(cmd="bash", timeout=60)),
-        ):
-            with pytest.raises(AgentError) as exc_info:
-                KiroCLIAgentAdapter._discover_cli()
-
-        assert exc_info.value.code == AGENT_EXECUTION_FAILED
+        assert exc_info.value.code == KIRO_CLI_MISSING
+        assert "kiro.dev/docs/cli" in exc_info.value.details["hint"]
 
 
 # ===================================================================

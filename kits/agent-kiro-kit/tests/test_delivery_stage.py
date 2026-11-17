@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import signal
@@ -25,7 +26,10 @@ from beddel.error_codes import (
 )
 from beddel.primitives import register_builtins
 from beddel.tools.kits import discover_kits, load_kit_adapters
+from beddel_agent_kiro import hook
 from beddel_agent_kiro.adapter import KiroCLIAgentAdapter
+from beddel_agent_kiro.agent_config import install
+from beddel_agent_kiro.errors import KIRO_AGENT_INVALID
 
 
 @pytest.fixture
@@ -37,6 +41,7 @@ def fake_cli(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Pat
         f"""#!{sys.executable}
 import json
 import os
+import subprocess
 import sys
 import time
 
@@ -51,6 +56,46 @@ with open(os.environ["FAKE_KIRO_LOG"], "w") as log_file:
 
 mode = os.environ.get("FAKE_KIRO_MODE", "ok")
 if mode == "ok":
+    sys.stdout.write("ok")
+elif mode == "agent_missing":
+    sys.exit(4)
+elif mode == "hooks":
+    agent_name = sys.argv[sys.argv.index("--agent") + 1]
+    with open(os.path.join(os.environ["HOME"], ".kiro", "agents", agent_name + ".json")) as agent_file:
+        agent = json.load(agent_file)
+    hook_results = []
+    tool_allowed = True
+    for hook in agent["hooks"]:
+        event_name = hook["trigger"]
+        if event_name == "postToolUse" and not tool_allowed:
+            continue
+        payload = {{
+            "cwd": os.getcwd(),
+            "hook_event_name": event_name,
+            "session_id": "fake-session",
+        }}
+        if event_name != "stop":
+            payload["tool_name"] = "shell"
+            payload["tool_input"] = {{"command": os.environ.get("FAKE_KIRO_COMMAND", "true")}}
+        if event_name == "postToolUse":
+            payload["tool_response"] = {{"ok": True}}
+        completed = subprocess.run(
+            hook["action"]["command"],
+            input=json.dumps(payload),
+            text=True,
+            shell=True,
+            check=False,
+        )
+        hook_results.append(completed.returncode)
+        if event_name == "preToolUse" and completed.returncode == 2:
+            tool_allowed = False
+        if event_name == "preToolUse" and completed.returncode == 0:
+            marker = os.environ.get("FAKE_KIRO_MARKER")
+            if marker:
+                open(marker, "w").close()
+    record["hook_results"] = hook_results
+    with open(os.environ["FAKE_KIRO_LOG"], "w") as log_file:
+        json.dump(record, log_file)
     sys.stdout.write("ok")
 elif mode == "fail":
     sys.exit(3)
@@ -67,6 +112,7 @@ elif mode == "grandchild":
     )
     cli_path.chmod(0o755)
     monkeypatch.setenv("FAKE_KIRO_LOG", str(log_path))
+    monkeypatch.setattr(hook, "DEFAULT_POINTERS_DIR", tmp_path / "pointers")
     monkeypatch.setenv("FAKE_KIRO_MODE", "ok")
     monkeypatch.delenv("KIRO_API_KEY", raising=False)
     return cli_path, log_path
@@ -103,10 +149,101 @@ async def test_success_returns_structured_result(fake_cli: tuple[Path, Path]) ->
 
     assert result.exit_code == 0
     assert result.output == "ok"
-    assert result.events == []
+    assert result.events[0]["type"] == "kiro-hook"
+    assert result.events[0]["events"] == 0
     assert result.files_changed == []
     assert result.usage == {"model": "model-default", "timeout": 17}
     assert result.agent_id == "kiro-cli"
+
+
+@pytest.mark.asyncio
+async def test_agent_missing_exit_maps_to_kit_error(
+    fake_cli: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cli_path, _log_path = fake_cli
+    monkeypatch.setenv("FAKE_KIRO_MODE", "agent_missing")
+    adapter = KiroCLIAgentAdapter(cli_path=cli_path)
+
+    with pytest.raises(AgentError) as exc_info:
+        await adapter.execute("prompt", tools=["custom-agent"])
+
+    assert exc_info.value.code == KIRO_AGENT_INVALID
+    assert exc_info.value.details["agent"] == "custom-agent"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("command", "expected_events", "expected_marker", "expected_first"),
+    [("true", 3, True, 0), ("git push", 2, False, 2)],
+)
+async def test_trust_all_hook_policy_counts(
+    fake_cli: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    command: str,
+    expected_events: int,
+    expected_marker: bool,
+    expected_first: int,
+) -> None:
+    cli_path, _log_path = fake_cli
+    home = tmp_path / "home"
+    pointers = tmp_path / "pointers"
+    install(home, pointers)
+    policy_path = tmp_path / "policy.json"
+    log_path = tmp_path / "hook.jsonl"
+    policy_path.write_text(
+        json.dumps(
+            {
+                "schema": "beddel.kiro-hook-policy/1",
+                "rules": [
+                    {
+                        "id": "shell.git-push",
+                        "effect": "deny",
+                        "tool_class": "shell",
+                        "argv_prefix": ["git", "push"],
+                    },
+                    {"id": "shell.any", "effect": "allow", "tool_class": "shell"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    os.chmod(policy_path, 0o600)
+    monkeypatch.chdir(tmp_path)
+    pointer = hook.pointer_path(pointers, str(tmp_path))
+    pointer.write_text(
+        json.dumps(
+            {"policy": str(policy_path), "log_path": str(log_path), "stage": "test"}
+        ),
+        encoding="utf-8",
+    )
+    os.chmod(pointer, 0o600)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("FAKE_KIRO_MODE", "hooks")
+    monkeypatch.setenv("FAKE_KIRO_COMMAND", command)
+    marker = tmp_path / "allowed.marker"
+    monkeypatch.setenv("FAKE_KIRO_MARKER", str(marker))
+    adapter = KiroCLIAgentAdapter(cli_path=cli_path, pointers_dir=pointers)
+
+    result = await adapter.execute("prompt")
+    fake_record = _read_record(fake_cli[1])
+
+    assert fake_record["hook_results"][0] == expected_first
+    if expected_first == 0:
+        assert (
+            result.events[0]["pre"]
+            == result.events[0]["post"]
+            == result.events[0]["stop"]
+            == 1
+        )
+    else:
+        assert result.events[0]["pre"] == result.events[0]["stop"] == 1
+        assert result.events[0]["post"] == 0
+    assert (
+        result.events[0]["log_sha256"]
+        == hashlib.sha256(log_path.read_bytes()).hexdigest()
+    )
+    assert marker.exists() is expected_marker
 
 
 @pytest.mark.asyncio
@@ -124,6 +261,8 @@ async def test_argv_uses_model_agent_and_read_only_trust(
         "chat",
         "--no-interactive",
         "--trust-tools=",
+        "--agent-engine",
+        "v3",
         "--model",
         "m-x",
         "--agent",
