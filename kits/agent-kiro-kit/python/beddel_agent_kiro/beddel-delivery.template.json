@@ -1,0 +1,56 @@
+{
+  "name": "beddel-delivery",
+  "description": "Beddel Delivery agent (agent-kiro-kit)",
+  "prompt": null,
+  "tools": [
+    "glob",
+    "grep",
+    "read",
+    "shell",
+    "write"
+  ],
+  "allowedTools": [],
+  "resources": [],
+  "mcpServers": {},
+  "includeMcpJson": false,
+  "hooks": [
+    {
+      "name": "preToolUse-0",
+      "trigger": "preToolUse",
+      "action": {
+        "type": "command",
+        "command": "{HOOK}"
+      },
+      "timeout": 10
+    },
+    {
+      "name": "postToolUse-0",
+      "trigger": "postToolUse",
+      "action": {
+        "type": "command",
+        "command": "{HOOK}"
+      },
+      "timeout": 10
+    },
+    {
+      "name": "stop-0",
+      "trigger": "stop",
+      "action": {
+        "type": "command",
+        "command": "{HOOK}"
+      },
+      "timeout": 10
+    }
+  ],
+  "permissions": {
+    "rules": [
+      {
+        "capability": "fs_read",
+        "match": [
+          "./**"
+        ],
+        "effect": "allow"
+      }
+    ]
+  }
+}
