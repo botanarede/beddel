@@ -114,10 +114,12 @@ import json
 import sys
 from typing import Any
 
+import pytest
 from beddel.domain.executor import WorkflowExecutor
 from beddel.domain.kit import parse_kit_manifest
 from beddel.domain.models import DefaultDependencies
 from beddel.domain.registry import PrimitiveRegistry
+from beddel.error_codes import PRIM_TOOL_EXEC_FAILED
 from beddel.primitives import register_builtins
 from beddel.tools.kits import load_kit
 
@@ -127,6 +129,7 @@ KIT_ROOT = PATH.parents[1]
 KITS_ROOT = KIT_ROOT.parent
 sys.path.insert(0, str(KITS_ROOT / "tools-git-kit" / "python"))
 sys.path.insert(0, str(KITS_ROOT / "tools-github-kit" / "python"))
+
 STORY = "7-6-integrate-workflow-completes-only-after-approval"
 BRANCH = "feat/work"
 
@@ -171,6 +174,7 @@ class _Host:
         self.env = env
         self.calls: list[str] = []
         self.fail_checks = False
+        self.check_error_code: str | None = None
         self.no_checks = False
 
     async def create(self, **kwargs: Any) -> dict[str, Any]:
@@ -180,6 +184,10 @@ class _Host:
     async def checks(self, **kwargs: Any) -> dict[str, Any]:
         self.calls.append("checks")
         if self.fail_checks:
+            if self.check_error_code is not None:
+                from beddel_tools_github import GitHubToolError
+
+                raise GitHubToolError(self.check_error_code, "fake checks failure")
             raise RuntimeError("checks failed")
         return {
             "number": kwargs["number"],
@@ -210,6 +218,7 @@ def _run(
     report: dict[str, Any] | None,
     monkeypatch: Any,
     overrides: dict[str, Any] | None = None,
+    real_merge: bool = False,
 ) -> dict[str, Any]:
     from beddel_profile_dev.tools import integrate as module
 
@@ -222,11 +231,12 @@ def _run(
     registry: dict[str, Any] = {}
     for name in ("profile-dev-kit", "tools-git-kit", "tools-github-kit"):
         registry.update(load_kit(parse_kit_manifest(KITS_ROOT / name / "kit.yaml")))
+    real_github_merge = registry["github_pr_merge"]
     registry.update(
         {
             "github_pr_create_or_reuse": host.create,
             "github_pr_checks_wait": host.checks,
-            "github_pr_merge": host.merge,
+            "github_pr_merge": real_github_merge if real_merge else host.merge,
         }
     )
     registry.update(overrides or {})
@@ -353,21 +363,43 @@ def test_workflow_absent_approval_has_no_host_calls_or_push(
     )
 
 
+@pytest.mark.parametrize(
+    "error_code",
+    ["GITHUB_CHECKS_PENDING", "GITHUB_CHECKS_FAILED", "GITHUB_PR_MISMATCH"],
+)
 def test_workflow_checks_failure_has_no_parent_record(
-    tmp_path: Path, monkeypatch: Any
+    tmp_path: Path, monkeypatch: Any, error_code: str
 ) -> None:
+    from beddel_tools_github import GitHubCLI
+
     env = _fixture(tmp_path)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     (tmp_path / "home").mkdir(exist_ok=True)
     host = _Host(env)
     host.fail_checks = True
+    host.check_error_code = error_code
     approval, report = _approval(env)
-    _run(env, host, approval, report, monkeypatch)
+    gh_calls: list[tuple[Any, ...]] = []
+
+    async def no_gh(self: Any, *args: Any, **kwargs: Any) -> Any:
+        gh_calls.append(args)
+        raise AssertionError("gh must not be invoked")
+
+    monkeypatch.setattr(GitHubCLI, "run", no_gh)
+    result = _run(env, host, approval, report, monkeypatch, real_merge=True)
     records = _records(tmp_path / "home")
     assert [(record["outcome"], record["reason"]) for record in records] == [
         ("failed", "checks.failed")
     ]
     assert host.calls == ["pr", "checks"]
+    # The tool primitive normalizes kit-local GITHUB_* errors to its stable code.
+    assert {
+        (error["step_id"], error["error_code"]) for error in result["absorbed_errors"]
+    } == {
+        ("checks", PRIM_TOOL_EXEC_FAILED),
+        ("merge", PRIM_TOOL_EXEC_FAILED),
+    }
+    assert gh_calls == []
 
 
 def test_workflow_failed_refetch_reuses_merge(tmp_path: Path, monkeypatch: Any) -> None:
@@ -390,4 +422,5 @@ def test_workflow_failed_refetch_reuses_merge(tmp_path: Path, monkeypatch: Any) 
     assert _records(tmp_path / "home")[-1]["reason"] == "fetch.failed"
     _run(env, host, approval, report, monkeypatch)
     assert _records(tmp_path / "home")[-2]["reason"] == "merge.reused"
+    assert _records(tmp_path / "home")[-2]["refs"]["no_checks"] is None
     assert host.calls.count("merge") == 1

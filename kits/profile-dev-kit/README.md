@@ -519,7 +519,9 @@ the parent boundary. Common reasons include `approval.absent`,
 `fetch.failed`. The status mapping is edited only after a successful parent
 fetch confirms the pointer on the parent remote. The workflow never approves,
 verifies or pushes the parent; the owner commits the status file and pushes
-the parent. Agent pushes to `main` are denied by the runtime and by the Story 8.6 spec, not by `AGENTS.md`, which permits a direct monorepo push to `main` under Planned Story Delivery Authorization.
+the parent. Agent pushes to `main` are denied by the runtime and by the Story 8.6
+spec, not by `AGENTS.md`, which permits a direct monorepo push to `main` under
+Planned Story Delivery Authorization.
 
 ```text
 beddel run -i ... workflows/integrate-story.yaml
