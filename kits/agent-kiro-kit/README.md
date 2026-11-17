@@ -63,7 +63,10 @@ strategy the step failure `BEDDEL-EXEC-002` wraps it as its cause.
 
 Operator install/verify: `PYTHONPATH=<kit>/python python3 -m beddel_agent_kiro.agent_config install|verify`; supports `--home`, `--pointers`, `--replace`.
 Pointer `<pointers>/<sha256(realpath(cwd))>.json`; policy `beddel.kiro-hook-policy/1`, first-match-wins, no rules deny all; Python 3.11+; errors `KIRO_AGENT_INVALID`/`KIRO_CLI_MISSING`.
-Log schema `beddel.kiro-hook/1`: `v`, `ts`, `seq`, `session_id`, `event`, `tool_name`, `tool_class`, `cmd_head`, `input_sha256`, `input_len`, `response_sha256`, `response_len`, `decision`, `rule_id`, `policy_sha256`, `hook_ms`.
+Pointer or log path security failures deny without writing through the pointer. Logs use
+`beddel.kiro-hook/1` and 16 fields; results include `type=kiro-hook`, counts,
+and `log_sha256`. Exit 2 means deny/error; raw values are never logged.
+`policy_sha256` is the SHA-256 of raw policy bytes.
 
 ## Headless Mode (CI/CD)
 
@@ -155,7 +158,7 @@ If `cli_path` is not provided, the adapter discovers an already-installed
 1. Default path: `~/.local/bin/kiro-cli`
 2. PATH lookup: `shutil.which("kiro-cli")`
 
-If both fail, `KIRO_CLI_MISSING`; manual text. No auto-install/network call.
+If both fail, `KIRO_CLI_MISSING` is raised. The adapter never auto-installs.
 
 ## Running Tests
 
