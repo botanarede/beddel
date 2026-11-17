@@ -23,7 +23,7 @@ from beddel_profile_dev.tools.implement import branch_reason
 from beddel_profile_dev.tools.report import profile_read_report
 
 
-_REF_NAMES = ("boundary", "spec_path", "branch", "base_branch", "change_id", "revision", "tip", "approval", "report", "pr", "merge", "sub_path", "pointer", "status_path", "status_written")
+_REF_NAMES = ("boundary", "spec_path", "branch", "base_branch", "change_id", "revision", "tip", "approval", "report", "pr", "merge", "sub_path", "pointer", "status_path", "status_written", "no_checks")
 
 
 def _refs(**values: Any) -> dict[str, Any]:
@@ -230,6 +230,7 @@ def profile_integrate_reconcile(repo_path: str, story_key: str, change_id: str, 
         tracking = _tracking(repo, str(remote), str(base))
         if phase == "land":
             if is_ancestor(repo, tip, tracking): return _with(prior, merged=True, pr=False, phase="land", tip=tip)
+            if not is_ancestor(repo, tracking, tip): return _refuse(story, "base.stale", _carry_refs(prior, tip=tip), **_carry(prior), phase="land", tip=tip, pr=False, merged=False)
             if _symbolic_branch(repo) != branch: return _fail(story, "branch.not_current", _carry_refs(prior, tip=tip), **_carry(prior), phase="land", tip=tip, pr=False, merged=False)
             return _with(prior, phase="land", pr=True, merged=False, tip=tip)
         contained = is_ancestor(repo, tip, tracking)
@@ -241,7 +242,9 @@ def profile_integrate_reconcile(repo_path: str, story_key: str, change_id: str, 
                 reported = result.get("merge_sha") if isinstance(result, Mapping) else None
                 if reported != merge_sha: return _fail(story, "merge.mismatch", _carry_refs(prior, tip=tip, merge=merge_sha), **_carry(prior), phase="confirm", tip=tip, merge=merge_sha)
             number = pull_request.get("result", {}).get("number") if isinstance(pull_request, Mapping) and isinstance(pull_request.get("result"), Mapping) else None
-            refs = _carry_refs(prior, boundary="repository", tip=tip, merge=merge_sha, pr=number)
+            check_result = checks.get("result") if isinstance(checks, Mapping) else None
+            no_checks = check_result.get("no_checks") if isinstance(check_result, Mapping) and isinstance(check_result.get("no_checks"), bool) else None
+            refs = _carry_refs(prior, boundary="repository", tip=tip, merge=merge_sha, pr=number, no_checks=no_checks)
             return _with(prior, outcome="succeeded", reason="merge.confirmed" if prior.get("pr") else "merge.reused", refs=refs, phase="confirm", tip=tip, merge=merge_sha, merged=True)
         if prior.get("pr") is True:
             for item, reason in ((push, "push.failed"), (pull_request, "pr.failed"), (checks, "checks.failed"), (merge, "merge.failed")):

@@ -25,10 +25,12 @@ Revision: <revision>
 ```
 
 `github_pr_checks_wait` invokes `gh pr view <number> --json
-number,state,headRefOid,statusCheckRollup`. A configured check is every entry
-in that rollup. Completed `SUCCESS`, `NEUTRAL`, and `SKIPPED` CheckRuns and
-`SUCCESS` StatusContexts pass. Pending entries wait; all other conclusions or
-states fail. An empty rollup passes only after `grace` seconds.
+number,state,headRefOid,statusCheckRollup`. With `expected_head_sha`, any other
+head raises `GITHUB_PR_MISMATCH`, so checks are pinned to the head being merged.
+A configured check is every entry in that rollup. Completed `SUCCESS`,
+`NEUTRAL`, and `SKIPPED` CheckRuns and `SUCCESS` StatusContexts pass. Pending
+entries never pass and wait; all other conclusions or states fail. An empty
+rollup passes only after `grace` seconds.
 
 `github_pr_merge` first views the requested number, refuses failed or pending
 checks, runs `gh pr merge <number> --<merge|squash|rebase> --match-head-commit

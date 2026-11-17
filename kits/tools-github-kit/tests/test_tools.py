@@ -55,12 +55,16 @@ def _pr(*, base: str = "main", number: int = 7, state: str = "OPEN") -> dict[str
 
 
 def _view(
-    rollup: list[dict[str, Any]], *, number: int = 7, state: str = "OPEN"
+    rollup: list[dict[str, Any]],
+    *,
+    number: int = 7,
+    state: str = "OPEN",
+    head_sha: str = _SHA,
 ) -> dict[str, Any]:
     return {
         "number": number,
         "state": state,
-        "headRefOid": _SHA,
+        "headRefOid": head_sha,
         "statusCheckRollup": rollup,
     }
 
@@ -287,6 +291,67 @@ async def test_checks_passed(fake_gh: tuple[Path, Path, Path]) -> None:
         "number,state,headRefOid,statusCheckRollup",
     ]
     assert entry["cwd"] == str(root)
+
+
+@pytest.mark.asyncio
+async def test_checks_head_mismatch_is_rejected_after_one_call(
+    fake_gh: tuple[Path, Path, Path],
+) -> None:
+    root, log, script = fake_gh
+    _write_script(script, {"stdout": json.dumps(_view([_success()], head_sha=_SHA2))})
+    with pytest.raises(GitHubToolError) as exc:
+        await github_pr_checks_wait(
+            cwd=str(root), number=7, expected_head_sha=_SHA, grace=0, max_wait=1
+        )
+    _assert_code(exc, GITHUB_PR_MISMATCH)
+    assert len(_read_log(log)) == 1
+
+
+@pytest.mark.asyncio
+async def test_checks_expected_head_matches(
+    fake_gh: tuple[Path, Path, Path],
+) -> None:
+    root, _log, script = fake_gh
+    _write_script(script, {"stdout": json.dumps(_view([_success()]))})
+    result = await github_pr_checks_wait(
+        cwd=str(root), number=7, expected_head_sha=_SHA, grace=0, max_wait=1
+    )
+    assert result["passed"] is True and result["no_checks"] is False
+
+
+@pytest.mark.asyncio
+async def test_checks_invalid_expected_head_runs_nothing(
+    fake_gh: tuple[Path, Path, Path],
+) -> None:
+    root, log, _script = fake_gh
+    with pytest.raises(GitHubToolError) as exc:
+        await github_pr_checks_wait(cwd=str(root), number=7, expected_head_sha="z" * 40)
+    _assert_code(exc, GITHUB_ARGUMENT_REFUSED)
+    assert exc.value.details == {"argument": "expected_head_sha"}
+    assert not log.exists()
+
+
+@pytest.mark.asyncio
+async def test_registered_late_checks_pass_within_grace(
+    fake_gh: tuple[Path, Path, Path],
+) -> None:
+    root, log, script = fake_gh
+    _write_script(
+        script,
+        {"stdout": json.dumps(_view([]))},
+        {"stdout": json.dumps(_view([_pending()]))},
+        {"stdout": json.dumps(_view([_success()]))},
+    )
+    result = await github_pr_checks_wait(
+        cwd=str(root),
+        number=7,
+        expected_head_sha=_SHA,
+        interval=0.01,
+        max_wait=10,
+        grace=5,
+    )
+    assert result["passed"] is True and result["no_checks"] is False
+    assert len(_read_log(log)) == 3
 
 
 @pytest.mark.asyncio

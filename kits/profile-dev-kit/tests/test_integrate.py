@@ -100,3 +100,57 @@ def test_settle_rejects_missing_prior(tmp_path: Path) -> None:
 @pytest.mark.parametrize("value", ["Done", "done now", "", "x" * 33])
 def test_status_value_contract(value: str) -> None:
     assert integrate.STATUS_VALUE.fullmatch(value) is None
+
+
+def _land_prior(repo: Path, tip: str) -> dict[str, Any]:
+    return {
+        "stage": "integrate",
+        "phase": "prepare",
+        "story_key": STORY,
+        "change_id": "c1",
+        "repo": str(repo),
+        "branch": "feature/work",
+        "base_branch": "main",
+        "remote": "origin",
+        "tip": tip,
+        "refs": {},
+        "outcome": None,
+    }
+
+
+def test_reconcile_rejects_stale_base_and_reuses_contained_tip(
+    tmp_path: Path,
+) -> None:
+    repo = init_repo(tmp_path / "repo")
+    git(repo, "config", "user.name", "Fixture")
+    git(repo, "config", "user.email", "fixture@example.invalid")
+    (repo / "base").write_text("base\n")
+    base = commit_all(repo, "base")
+    git(repo, "switch", "-c", "feature/work")
+    (repo / "feature").write_text("feature\n")
+    tip = commit_all(repo, "feature")
+    git(repo, "switch", "-c", "main", base)
+    (repo / "remote").write_text("remote\n")
+    remote_tip = commit_all(repo, "remote")
+    git(repo, "switch", "feature/work")
+    git(repo, "update-ref", "refs/remotes/origin/main", remote_tip)
+    prior = _land_prior(repo, tip)
+    stale = tools.profile_integrate_reconcile(
+        str(repo), STORY, "c1", "land", prior, {"ok": True}
+    )
+    assert stale["outcome"] == "refused"
+    assert stale["reason"] == "base.stale"
+    assert stale["remote"] is None
+    assert stale["pr"] is False
+
+    git(repo, "update-ref", "refs/remotes/origin/main", tip)
+    reused = tools.profile_integrate_reconcile(
+        str(repo), STORY, "c1", "land", prior, {"ok": True}
+    )
+    assert reused["outcome"] is None
+    assert reused["merged"] is True
+    assert reused["pr"] is False
+
+
+def test_integrate_refs_have_sixteen_keys() -> None:
+    assert len(tools._REF_NAMES) == 16
