@@ -11,8 +11,9 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from beddel_agent_kiro import hook
 from beddel_agent_kiro.adapter import _DEFAULT_CLI_PATH, KiroCLIAgentAdapter
+from beddel_agent_kiro import hook
+
 from beddel.domain.errors import AgentError
 from beddel.error_codes import AGENT_EXECUTION_FAILED
 from beddel_agent_kiro.errors import KIRO_CLI_MISSING
@@ -21,6 +22,11 @@ from beddel_agent_kiro.errors import KIRO_CLI_MISSING
 @pytest.fixture(autouse=True)
 def _patch_pointer_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(hook, "DEFAULT_POINTERS_DIR", tmp_path / "pointers")
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 
 _PROMPT = "Deploy the application"
@@ -265,14 +271,15 @@ class TestBinaryDiscovery:
         assert result == Path(found_path)
 
     def test_discovery_missing_does_not_install(self, tmp_path: Path) -> None:
-        """Missing binaries raise without invoking an installer."""
+        """Missing binaries fail at construction without an installer."""
         fake_default = tmp_path / "nonexistent" / "kiro-cli"
         with (
             patch("beddel_agent_kiro.adapter._DEFAULT_CLI_PATH", fake_default),
             patch(_PATCH_WHICH, return_value=None),
+            patch("subprocess.run", side_effect=AssertionError("installer called")),
             pytest.raises(AgentError) as exc_info,
         ):
-            KiroCLIAgentAdapter._discover_cli()
+            KiroCLIAgentAdapter()
 
         assert exc_info.value.code == KIRO_CLI_MISSING
         assert "kiro.dev/docs/cli" in exc_info.value.details["hint"]

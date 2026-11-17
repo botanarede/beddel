@@ -11,8 +11,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from . import hook
-
 __all__ = ["install", "main", "render", "verify"]
 
 _AGENT_NAME = "beddel-delivery"
@@ -50,7 +48,7 @@ def _private_dir(path: Path) -> None:
         if not path.is_dir() or path.is_symlink():
             raise OSError(f"not a directory: {path}")
     else:
-        path.mkdir(mode=0o700)
+        path.mkdir(parents=True, mode=0o700)
         created = True
     if created:
         os.chmod(path, 0o700)
@@ -112,7 +110,7 @@ def _parser() -> argparse.ArgumentParser:
     for name in ("install", "verify"):
         command = subparsers.add_parser(name)
         command.add_argument("--home", type=Path, default=Path.home())
-        command.add_argument("--pointers", type=Path, default=hook.DEFAULT_POINTERS_DIR)
+        command.add_argument("--pointers", type=Path, default=None)
         if name == "install":
             command.add_argument("--replace", action="store_true")
     return parser
@@ -121,8 +119,15 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     """Run the operator command and return its process exit code."""
     args = _parser().parse_args(argv)
-    pointers = args.pointers.expanduser().resolve()
     home = args.home.expanduser().resolve()
+    pointers = (
+        (
+            args.pointers
+            or home / ".local" / "state" / "beddel" / "kiro-hook" / "pointers"
+        )
+        .expanduser()
+        .resolve()
+    )
     if args.command == "install":
         try:
             target, digest = install(home, pointers, args.replace)

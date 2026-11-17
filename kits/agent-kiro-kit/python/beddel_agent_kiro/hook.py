@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TextIO
 
+# fmt: off
+
 DEFAULT_POINTERS_DIR = Path.home() / ".local/state/beddel/kiro-hook/pointers"
 SCHEMA = "beddel.kiro-hook/1"
 _POLICY_SCHEMA = "beddel.kiro-hook-policy/1"
@@ -25,29 +27,14 @@ _CMD_RE = re.compile(r"[a-z0-9._-]{1,32}")
 _SPLIT_RE = re.compile(r"&&|\|\||[;|&\n]")
 _CLASSES = {"read", "write", "shell", "other"}
 _LOG_KEYS = (
-    "v",
-    "ts",
-    "seq",
-    "session_id",
-    "event",
-    "tool_name",
-    "tool_class",
-    "cmd_head",
-    "input_sha256",
-    "input_len",
-    "response_sha256",
-    "response_len",
-    "decision",
-    "rule_id",
-    "policy_sha256",
-    "hook_ms",
+    "v", "ts", "seq", "session_id", "event", "tool_name", "tool_class",
+    "cmd_head", "input_sha256", "input_len", "response_sha256", "response_len",
+    "decision", "rule_id", "policy_sha256", "hook_ms",
 )
 
 
 def _canonical(value: Any) -> bytes:
-    return json.dumps(
-        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False
-    ).encode("utf-8")
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
 
 def _digest(value: Any) -> tuple[str, int]:
@@ -56,7 +43,6 @@ def _digest(value: Any) -> tuple[str, int]:
 
 
 def pointer_path(pointers: Path, cwd: str | os.PathLike[str]) -> Path:
-    """Return the cwd-realpath keyed pointer path."""
     digest = hashlib.sha256(os.path.realpath(os.fspath(cwd)).encode()).hexdigest()
     return Path(pointers) / f"{digest}.json"
 
@@ -82,6 +68,14 @@ def _command(tool_input: Any) -> str | None:
     return None
 
 
+def _safe_text(value: Any) -> str | None:
+    return value if isinstance(value, str) and len(value) <= 128 else None
+
+
+def _event_name(value: Any) -> str | None:
+    return {"pretooluse": "pre", "posttooluse": "post", "stop": "stop"}.get(str(value or "").lower())
+
+
 def _segments(command: str) -> list[str]:
     return [part.strip() for part in _SPLIT_RE.split(command) if part.strip()]
 
@@ -100,11 +94,8 @@ def cmd_head(command: Any) -> str | None:
 
 def _secure_file(path: Path) -> bool:
     try:
-        return (
-            path.is_file()
-            and not path.is_symlink()
-            and not (path.stat().st_mode & 0o022)
-        )
+        mode = path.stat().st_mode
+        return path.is_file() and not path.is_symlink() and not (mode & 0o022) and path.stat().st_uid == os.getuid()
     except OSError:
         return False
 
@@ -118,34 +109,20 @@ def _load_json(path: Path) -> Any:
 def _validate_policy(policy: Any) -> None:
     if not isinstance(policy, dict) or set(policy) != _POLICY_KEYS:
         raise ValueError("invalid policy keys")
-    if policy.get("schema") != _POLICY_SCHEMA or not isinstance(
-        policy.get("rules"), list
-    ):
+    if policy.get("schema") != _POLICY_SCHEMA or not isinstance(policy.get("rules"), list):
         raise ValueError("invalid policy schema")
     seen: set[str] = set()
     for rule in policy["rules"]:
         if not isinstance(rule, dict) or not set(rule) <= _RULE_KEYS:
             raise ValueError("invalid policy rule")
         rule_id = rule.get("id")
-        if (
-            not isinstance(rule_id, str)
-            or not _ID_RE.fullmatch(rule_id)
-            or rule_id in seen
-        ):
+        if not isinstance(rule_id, str) or not _ID_RE.fullmatch(rule_id) or rule_id in seen:
             raise ValueError("invalid or duplicate rule id")
         seen.add(rule_id)
-        if (
-            rule.get("effect") not in {"allow", "deny"}
-            or rule.get("tool_class") not in _CLASSES
-        ):
+        if rule.get("effect") not in {"allow", "deny"} or rule.get("tool_class") not in _CLASSES:
             raise ValueError("invalid policy rule")
         prefix = rule.get("argv_prefix")
-        if prefix is not None and (
-            rule["tool_class"] != "shell"
-            or not isinstance(prefix, list)
-            or not prefix
-            or not all(isinstance(item, str) for item in prefix)
-        ):
+        if prefix is not None and (rule["tool_class"] != "shell" or not isinstance(prefix, list) or not prefix or not all(isinstance(item, str) for item in prefix)):
             raise ValueError("invalid argv prefix")
 
 
@@ -156,27 +133,25 @@ def _pointer_paths(data: dict[str, Any]) -> tuple[Path, Path]:
     if not isinstance(policy, str) or not isinstance(log_path, str):
         raise TypeError("invalid pointer paths")
     policy_path, log = Path(policy), Path(log_path)
-    if (
-        not policy_path.is_absolute()
-        or not log.is_absolute()
-        or not isinstance(data.get("stage"), str)
-    ):
+    if not policy_path.is_absolute() or not log.is_absolute() or not isinstance(data.get("stage"), str):
         raise ValueError("invalid pointer paths")
     return policy_path, log
 
 
-def _load_context(
-    data: dict[str, Any],
-) -> tuple[dict[str, Any], dict[str, Any], str, Path]:
+def _load_context(data: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], str, Path]:
     policy_path, log_path = _pointer_paths(data)
-    policy = _load_json(policy_path)
+    if policy_path.is_symlink() or not policy_path.is_file():
+        raise ValueError("insecure or missing policy")
+    raw = policy_path.read_bytes()
+    policy_sha = hashlib.sha256(raw).hexdigest()
+    if not _secure_file(policy_path):
+        raise ValueError("insecure policy")
+    policy = json.loads(raw)
     _validate_policy(policy)
-    return data, policy, hashlib.sha256(_canonical(policy)).hexdigest(), log_path
+    return data, policy, policy_sha, log_path
 
 
-def _evaluate(
-    policy: dict[str, Any], tool_class: str, command: str | None
-) -> tuple[str, str]:
+def _evaluate(policy: dict[str, Any], tool_class: str, command: str | None) -> tuple[str, str]:
     if tool_class == "shell":
         if command is None:
             return "deny", "shell.no_command"
@@ -191,18 +166,7 @@ def _evaluate(
             tokens = shlex.split(part)
         except ValueError:
             return "deny", "shell.parse"
-        rule = next(
-            (
-                r
-                for r in policy["rules"]
-                if r["tool_class"] == tool_class
-                and (
-                    r.get("argv_prefix") is None
-                    or tokens[: len(r["argv_prefix"])] == r["argv_prefix"]
-                )
-            ),
-            None,
-        )
+        rule = next((r for r in policy["rules"] if r["tool_class"] == tool_class and (r.get("argv_prefix") is None or tokens[:len(r["argv_prefix"])] == r["argv_prefix"])), None)
         if rule is None:
             return "deny", "policy.default_deny"
         if rule["effect"] != "allow":
@@ -211,41 +175,18 @@ def _evaluate(
     return "allow", selected or "policy.allow"
 
 
-def _record(
-    event: str,
-    decision: str,
-    rule_id: str,
-    policy_sha: str | None,
-    elapsed: float,
-    payload: dict[str, Any],
-    command: str | None,
-    tool_class: str | None,
-) -> dict[str, Any]:
-    inp = (
-        _digest(payload.get("tool_input")) if event in {"pre", "post"} else (None, None)
-    )
-    response = (
-        _digest(payload.get("tool_response")) if event == "post" else (None, None)
-    )
+def _record(event: str, decision: str, rule_id: str, policy_sha: str | None, elapsed: float, payload: dict[str, Any], command: str | None, tool_class: str | None) -> dict[str, Any]:
+    inp = _digest(payload.get("tool_input")) if event in {"pre", "post"} else (None, None)
+    response = _digest(payload.get("tool_response")) if event == "post" else (None, None)
     values = {
-        "v": SCHEMA,
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "seq": 0,
-        "session_id": payload.get("session_id"),
-        "event": event,
-        "tool_name": payload.get("tool_name") if event != "stop" else None,
+        "v": SCHEMA, "ts": datetime.now(timezone.utc).isoformat(), "seq": 0,
+        "session_id": _safe_text(payload.get("session_id")), "event": event,
+        "tool_name": _safe_text(payload.get("tool_name")) if event != "stop" else None,
         "tool_class": tool_class if event != "stop" else None,
-        "cmd_head": cmd_head(command)
-        if event != "stop" and tool_class == "shell"
-        else None,
-        "input_sha256": inp[0],
-        "input_len": inp[1],
-        "response_sha256": response[0],
-        "response_len": response[1],
-        "decision": decision,
-        "rule_id": rule_id,
-        "policy_sha256": policy_sha,
-        "hook_ms": elapsed,
+        "cmd_head": cmd_head(command) if event != "stop" and tool_class == "shell" else None,
+        "input_sha256": inp[0], "input_len": inp[1], "response_sha256": response[0],
+        "response_len": response[1], "decision": decision, "rule_id": rule_id,
+        "policy_sha256": policy_sha, "hook_ms": elapsed,
     }
     return {key: values[key] for key in _LOG_KEYS}
 
@@ -278,11 +219,9 @@ def _append_log(path: Path, record: dict[str, Any]) -> None:
                 except (json.JSONDecodeError, TypeError):
                     pass
         record["seq"] = maximum + 1
-        raw = (
-            json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n"
-        ).encode()
+        raw = (json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n").encode()
         while raw:
-            raw = raw[os.write(fd, raw) :]
+            raw = raw[os.write(fd, raw):]
         os.fsync(fd)
     finally:
         if locked:
@@ -293,12 +232,7 @@ def _append_log(path: Path, record: dict[str, Any]) -> None:
 
 
 def _emit(decision: str, rule_id: str) -> None:
-    print(
-        f"decision=allow rule_id={rule_id}"
-        if decision == "allow"
-        else f"beddel-kiro-hook: {rule_id}",
-        file=None if decision == "allow" else sys.stderr,
-    )
+    print(f"decision=allow rule_id={rule_id}" if decision == "allow" else f"beddel-kiro-hook: {rule_id}", file=None if decision == "allow" else sys.stderr)
 
 
 def _run(payload: dict[str, Any], pointers: Path) -> int:
@@ -306,69 +240,40 @@ def _run(payload: dict[str, Any], pointers: Path) -> int:
     if not isinstance(cwd, str):
         raise TypeError("missing cwd")
     pointer = pointer_path(pointers, cwd)
-    if not _secure_file(pointer):
+    if pointer.is_symlink() or not pointer.is_file():
         _emit("deny", "pointer.missing")
         return 2
+    event = _event_name(payload.get("hook_event_name"))
     log_path: Path | None = None
     policy_sha: str | None = None
     loaded = False
     try:
-        data = _load_json(pointer)
+        data = json.loads(pointer.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
             raise TypeError("invalid pointer")
         _, log_path = _pointer_paths(data)
+        policy_path, _ = _pointer_paths(data)
+        try:
+            policy_sha = hashlib.sha256(policy_path.read_bytes()).hexdigest()
+        except OSError:
+            pass
         data, policy, policy_sha, log_path = _load_context(data)
+        if not _secure_file(pointer):
+            raise ValueError("insecure pointer")
         loaded = True
-        name = str(payload.get("hook_event_name", "")).lower()
-        event = {
-            "pretooluse": "pre",
-            "pre": "pre",
-            "posttooluse": "post",
-            "post": "post",
-            "stop": "stop",
-            "sessionend": "stop",
-        }.get(name)
         if event is None:
             raise ValueError("unknown event")
         started = time.perf_counter()
         tool_class = classify(payload.get("tool_name"))
         command = _command(payload.get("tool_input"))
-        decision, rule = (
-            _evaluate(policy, tool_class, command)
-            if event == "pre"
-            else ("allow", f"hook.{event}")
-        )
-        _append_log(
-            log_path,
-            _record(
-                event,
-                decision,
-                rule,
-                policy_sha,
-                (time.perf_counter() - started) * 1000,
-                payload,
-                command,
-                tool_class,
-            ),
-        )
+        decision, rule = _evaluate(policy, tool_class, command) if event == "pre" else ("allow", f"hook.{event}")
+        _append_log(log_path, _record(event, decision, rule, policy_sha, (time.perf_counter() - started) * 1000, payload, command, tool_class))
         _emit(decision, rule)
         return 0 if decision == "allow" else 2
     except BaseException:  # noqa: BLE001
         if log_path is not None:
             try:
-                _append_log(
-                    log_path,
-                    _record(
-                        "error",
-                        "error",
-                        "hook.internal" if loaded else "policy.invalid",
-                        policy_sha,
-                        0.0,
-                        payload,
-                        None,
-                        None,
-                    ),
-                )
+                _append_log(log_path, _record(event or "unknown", "error", "hook.internal" if loaded else "policy.invalid", policy_sha, 0.0, payload, None, None))
             except BaseException:  # noqa: BLE001
                 log_path = None
         _emit("error", "hook.internal" if loaded else "policy.invalid")
@@ -391,16 +296,7 @@ def main(argv: list[str] | None = None, stdin: TextIO | None = None) -> int:
 
 
 def summarize(pointers: Path, cwd: Path) -> dict[str, Any]:
-    result: dict[str, Any] = {
-        "type": "kiro-hook",
-        "events": 0,
-        "pre": 0,
-        "post": 0,
-        "denied": 0,
-        "stop": 0,
-        "errors": 0,
-        "log_sha256": None,
-    }
+    result: dict[str, Any] = {"type": "kiro-hook", "events": 0, "pre": 0, "post": 0, "denied": 0, "stop": 0, "errors": 0, "log_sha256": None}
     try:
         data = _load_json(pointer_path(pointers, str(cwd)))
         if not isinstance(data, dict):
@@ -411,19 +307,17 @@ def summarize(pointers: Path, cwd: Path) -> dict[str, Any]:
         raw = log_path.read_bytes()
         result["log_sha256"] = hashlib.sha256(raw).hexdigest()
         for line in raw.decode("utf-8", errors="replace").splitlines():
+            result["events"] += 1
             try:
                 record = json.loads(line)
             except (json.JSONDecodeError, UnicodeError):
                 continue
             event = record.get("event") if isinstance(record, dict) else None
             if event in {"pre", "post", "stop"}:
-                result["events"] += 1
                 result[event] += 1
             if isinstance(record, dict) and record.get("decision") == "deny":
                 result["denied"] += 1
-            if isinstance(record, dict) and (
-                record.get("decision") == "error" or event == "error"
-            ):
+            if isinstance(record, dict) and (record.get("decision") == "error" or event == "error"):
                 result["errors"] += 1
     except BaseException:  # noqa: BLE001
         return result

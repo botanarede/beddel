@@ -64,6 +64,7 @@ elif mode == "hooks":
     with open(os.path.join(os.environ["HOME"], ".kiro", "agents", agent_name + ".json")) as agent_file:
         agent = json.load(agent_file)
     hook_results = []
+    hook_output = []
     tool_allowed = True
     for hook in agent["hooks"]:
         event_name = hook["trigger"]
@@ -76,7 +77,7 @@ elif mode == "hooks":
         }}
         if event_name != "stop":
             payload["tool_name"] = "shell"
-            payload["tool_input"] = {{"command": os.environ.get("FAKE_KIRO_COMMAND", "true")}}
+            payload["tool_input"] = {{"command": os.environ.get("FAKE_KIRO_COMMAND", "true"), "marker": os.environ.get("FAKE_KIRO_MARKER_TEXT", "")}}
         if event_name == "postToolUse":
             payload["tool_response"] = {{"ok": True}}
         completed = subprocess.run(
@@ -85,7 +86,9 @@ elif mode == "hooks":
             text=True,
             shell=True,
             check=False,
+            capture_output=True,
         )
+        hook_output.append(completed.stdout + completed.stderr)
         hook_results.append(completed.returncode)
         if event_name == "preToolUse" and completed.returncode == 2:
             tool_allowed = False
@@ -94,6 +97,7 @@ elif mode == "hooks":
             if marker:
                 open(marker, "w").close()
     record["hook_results"] = hook_results
+    record["hook_output"] = hook_output
     with open(os.environ["FAKE_KIRO_LOG"], "w") as log_file:
         json.dump(record, log_file)
     sys.stdout.write("ok")
@@ -169,6 +173,8 @@ async def test_agent_missing_exit_maps_to_kit_error(
 
     assert exc_info.value.code == KIRO_AGENT_INVALID
     assert exc_info.value.details["agent"] == "custom-agent"
+    assert exc_info.value.details["exit_code"] == 4
+    assert exc_info.value.details["hint"]
 
 
 @pytest.mark.asyncio
@@ -222,13 +228,17 @@ async def test_trust_all_hook_policy_counts(
     monkeypatch.setenv("FAKE_KIRO_MODE", "hooks")
     monkeypatch.setenv("FAKE_KIRO_COMMAND", command)
     marker = tmp_path / "allowed.marker"
+    marker_text = "TOP-SECRET-HOOK-MARKER"
     monkeypatch.setenv("FAKE_KIRO_MARKER", str(marker))
+    monkeypatch.setenv("FAKE_KIRO_MARKER_TEXT", marker_text)
     adapter = KiroCLIAgentAdapter(cli_path=cli_path, pointers_dir=pointers)
 
-    result = await adapter.execute("prompt")
+    result = await adapter.execute("prompt", sandbox="workspace-write")
     fake_record = _read_record(fake_cli[1])
 
+    assert "-a" in fake_record["argv"]
     assert fake_record["hook_results"][0] == expected_first
+    assert result.events[0]["denied"] == int(expected_first == 2)
     if expected_first == 0:
         assert (
             result.events[0]["pre"]
@@ -244,6 +254,8 @@ async def test_trust_all_hook_policy_counts(
         == hashlib.sha256(log_path.read_bytes()).hexdigest()
     )
     assert marker.exists() is expected_marker
+    assert marker_text not in json.dumps(result.events)
+    assert marker_text not in "".join(fake_record["hook_output"])
 
 
 @pytest.mark.asyncio

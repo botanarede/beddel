@@ -2,8 +2,6 @@
 
 Kiro CLI agent adapter for the Beddel SDK. Implements the `IAgentAdapter` port to execute prompts via the Kiro CLI subprocess.
 
-Migration: install agent + hook.
-
 ## Dependencies
 
 None — uses subprocess only (no pip dependencies).
@@ -61,19 +59,11 @@ Delivery stage reads repository changes separately. Adapter errors use
 timeouts. A step timeout is raised as `BEDDEL-EXEC-005`; under the default FAIL
 strategy the step failure `BEDDEL-EXEC-002` wraps it as its cause.
 
-`<pointers>/<sha256(realpath(cwd))>.json` has absolute paths.
-Schema `beddel.kiro-hook-policy/1`; first-match-wins, no rules deny all.
-Hook exit 2 means pointer/policy/denial/error or missing log dir. Python
-3.11+ is required for `python3 -P`.
+### Delivery agent and hooks
 
-Install and verify the operator-owned agent outside a workflow:
-
-```bash
-python3 -m beddel_agent_kiro.agent_config install --home DIR --pointers DIR [--replace]
-python3 -m beddel_agent_kiro.agent_config verify --home DIR --pointers DIR
-```
-
-POSIX; writes `~/.kiro/agents/beddel-delivery.json`.
+Operator install/verify: `PYTHONPATH=<kit>/python python3 -m beddel_agent_kiro.agent_config install|verify`; supports `--home`, `--pointers`, `--replace`.
+Pointer `<pointers>/<sha256(realpath(cwd))>.json`; policy `beddel.kiro-hook-policy/1`, first-match-wins, no rules deny all; Python 3.11+; errors `KIRO_AGENT_INVALID`/`KIRO_CLI_MISSING`.
+Log schema `beddel.kiro-hook/1`: `v`, `ts`, `seq`, `session_id`, `event`, `tool_name`, `tool_class`, `cmd_head`, `input_sha256`, `input_len`, `response_sha256`, `response_len`, `decision`, `rule_id`, `policy_sha256`, `hook_ms`.
 
 ## Headless Mode (CI/CD)
 
@@ -167,15 +157,9 @@ If `cli_path` is not provided, the adapter discovers an already-installed
 
 If both fail, `KIRO_CLI_MISSING`; manual text. No auto-install/network call.
 
-Schema `beddel.kiro-hook/1`; fields:
-`v`, `ts`, `seq`, `session_id`, `event`, `tool_name`, `tool_class`, `cmd_head`,
-`input_sha256`, `input_len`, `response_sha256`, `response_len`, `decision`,
-`rule_id`, `policy_sha256`, and `hook_ms`. Raw values never appear; results
-contain hook counts and the log digest.
-
 ## Running Tests
 
-Run tests from its directory:
+Run the kit tests from the kit directory with the Beddel SDK installed:
 
 ```bash
 pytest -q

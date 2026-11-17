@@ -71,20 +71,22 @@ def _call(pointers: Path, payload: dict[str, Any]) -> tuple[int, str, str]:
 
 
 @pytest.mark.parametrize(
-    "command",
+    ("command", "rule"),
     [
-        "true\nblocked",
-        "true|blocked",
-        "true&blocked",
-        "true||blocked",
-        "true;blocked",
-        "echo `blocked`",
-        "cat <(blocked)",
-        "cat >(blocked)",
-        "'unbalanced",
+        ("true\nblocked", "shell.blocked"),
+        ("true|blocked", "shell.blocked"),
+        ("true&blocked", "shell.blocked"),
+        ("true||blocked", "shell.blocked"),
+        ("true;blocked", "shell.blocked"),
+        ("echo `blocked`", "shell.substitution"),
+        ("cat <(blocked)", "shell.substitution"),
+        ("cat >(blocked)", "shell.substitution"),
+        ("'unbalanced", "shell.parse"),
     ],
 )
-def test_shell_segments_and_substitutions_deny(tmp_path: Path, command: str) -> None:
+def test_shell_segments_and_substitutions_deny(
+    tmp_path: Path, command: str, rule: str
+) -> None:
     rules = [
         {
             "id": "shell.blocked",
@@ -96,7 +98,7 @@ def test_shell_segments_and_substitutions_deny(tmp_path: Path, command: str) -> 
     ]
     pointers, _policy, log = _setup(tmp_path, rules)
     code, _out, err = _call(pointers, _event(tmp_path, command=command))
-    assert code == 2 and "beddel-kiro-hook:" in err
+    assert code == 2 and f"beddel-kiro-hook: {rule}" in err
     assert command not in log.read_text(encoding="utf-8")
 
 
@@ -114,7 +116,13 @@ def test_allow_pointer_errors_and_no_command(tmp_path: Path) -> None:
     policy.write_text("{}", encoding="utf-8")
     os.chmod(policy, 0o600)
     assert "policy.invalid" in _call(pointers, _event(policy.parent))[2]
-    assert '"decision":"error"' in log.read_text(encoding="utf-8")
+    pointers, _policy, _log = _setup(tmp_path / "default")
+    root = tmp_path / "default"
+    code, _out, err = _call(pointers, _event(root, tool="other", command="x"))
+    assert code == 2 and "policy.default_deny" in err
+    assert hook.cmd_head("K=v x") is None
+    assert hook.cmd_head("/usr/bin/Git") == "git"
+    assert hook.cmd_head("écho") is None
 
 
 def test_post_stop_redaction_schema_and_digest(tmp_path: Path) -> None:
@@ -250,4 +258,22 @@ def test_getattr_and_rendered_commands(tmp_path: Path) -> None:
             env=env,
         ).returncode
         == 2
+    )
+
+
+def test_internal_and_pointer_error_rows(tmp_path: Path) -> None:
+    pointers, policy, log = _setup(tmp_path)
+    assert hook.main(["--pointers", str(pointers)], io.StringIO("{")) == 2
+    assert _call(pointers, {"hook_event_name": "preToolUse"})[0] == 2
+    assert _call(pointers, _event(tmp_path, name="other"))[0] == 2
+    policy.chmod(0o622)
+    code, _out, err = _call(pointers, _event(tmp_path, command="true"))
+    assert code == 2 and "policy.invalid" in err
+    record = json.loads(log.read_text(encoding="utf-8").splitlines()[-1])
+    assert record["policy_sha256"]
+    pointer = hook.pointer_path(pointers, str(tmp_path))
+    pointer.chmod(0o622)
+    assert "policy.invalid" in _call(pointers, _event(tmp_path, command="true"))[2]
+    assert (
+        json.loads(log.read_text(encoding="utf-8").splitlines()[-1])["event"] == "pre"
     )

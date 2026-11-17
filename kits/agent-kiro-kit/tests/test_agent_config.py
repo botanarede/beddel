@@ -71,3 +71,10 @@ def test_install_preserves_preexisting_kiro_mode(tmp_path: Path) -> None:
     kiro.chmod(0o755)
     install(home, tmp_path / "pointers")
     assert kiro.stat().st_mode & 0o777 == 0o755
+
+
+def test_default_pointers_follow_home(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "sentinel-home")
+    assert main(["install", "--home", str(tmp_path)]) == 0
+    assert (tmp_path / ".local/state/beddel/kiro-hook/pointers").is_dir()
+    assert not (tmp_path / "sentinel-home/.local/state").exists()

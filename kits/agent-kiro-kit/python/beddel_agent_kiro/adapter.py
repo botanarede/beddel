@@ -381,7 +381,7 @@ class KiroCLIAgentAdapter:
         agent_name = tools[0] if tools else self._agent
         cmd.extend(["--agent", agent_name])
 
-        # Prompt as final positional arg
+        # Prompt as final positional argument
         cmd.append(prompt)
 
         return cmd
