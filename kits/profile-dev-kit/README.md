@@ -502,24 +502,25 @@ optional `status_path`. It reads the recorded Approval and the latest
 consistent Report, validates the feature branch and parent gitlink, then runs
 fetch, land, push, pull request, checks, merge and refetch. The pull request
 contains references only: the story key, spec path, Change id and approved
-revision.
+revision. Merge runs only after `github_pr_checks_wait` passes for the tip;
+pending checks never pass, and a no-checks result is recorded as `no_checks`.
 
 The stage refuses before host work for an absent or invalid Approval, a pending
 Report, unapproved commits, invalid inputs, a bad parent or a malformed status
-file. It confirms the merge from Git after a successful fetch and pins the host
-merge to the checked branch tip. A rerun reuses a merged tip and an existing
-parent pointer instead of repeating those actions.
+file. It refuses with `base.stale` when the fetched base is not an ancestor of
+the tip. It confirms the merge from Git after a successful fetch and pins the
+host merge to the checked branch tip. A rerun reuses a merged tip and an
+existing parent pointer instead of repeating those actions.
 
 It records one `integrate` outcome at the Change-repository boundary and one at
 the parent boundary. Common reasons include `approval.absent`,
-`verdict.has_pendency`, `revision.unapproved`, `merge.confirmed`,
+`verdict.has_pendency`, `revision.unapproved`, `base.stale`, `merge.confirmed`,
 `merge.reused`, `pointer.unpublished`, `integrate.complete` and
 `fetch.failed`. The status mapping is edited only after a successful parent
 fetch confirms the pointer on the parent remote. The workflow never approves,
 verifies or pushes the parent; the owner commits the status file and pushes
-the parent.
+the parent. Agent pushes to `main` are denied by the runtime and by the Story 8.6 spec, not by `AGENTS.md`, which permits a direct monorepo push to `main` under Planned Story Delivery Authorization.
 
-```text
 ```text
 beddel run -i ... workflows/integrate-story.yaml
 ```

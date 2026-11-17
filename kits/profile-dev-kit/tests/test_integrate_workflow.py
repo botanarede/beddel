@@ -76,6 +76,18 @@ def test_integrate_workflow_shape() -> None:
         "revision",
     }
     assert (
+        next(step for step in document["steps"] if step["id"] == "checks")["config"][
+            "arguments"
+        ]["expected_head_sha"]
+        == "$stepResult.land.result.tip"
+    )
+    assert (
+        next(step for step in document["steps"] if step["id"] == "merge")["config"][
+            "arguments"
+        ]["number"]
+        == "$stepResult.checks.result.number"
+    )
+    assert (
         next(step for step in document["steps"] if step["id"] == "merge")["config"][
             "arguments"
         ]["merge_method"]
@@ -159,6 +171,7 @@ class _Host:
         self.env = env
         self.calls: list[str] = []
         self.fail_checks = False
+        self.no_checks = False
 
     async def create(self, **kwargs: Any) -> dict[str, Any]:
         self.calls.append("pr")
@@ -168,9 +181,17 @@ class _Host:
         self.calls.append("checks")
         if self.fail_checks:
             raise RuntimeError("checks failed")
-        return {"status": "passed"}
+        return {
+            "number": kwargs["number"],
+            "head_sha": kwargs["expected_head_sha"],
+            "passed": True,
+            "no_checks": self.no_checks,
+            "checks": [] if self.no_checks else ["ci"],
+        }
 
     async def merge(self, **kwargs: Any) -> dict[str, Any]:
+        if not isinstance(kwargs["number"], int):
+            raise TypeError("merge number must be an integer")
         self.calls.append("merge")
         if self.fail_checks:
             raise RuntimeError("merge blocked after checks failure")
@@ -261,6 +282,8 @@ def test_workflow_happy_path_owner_push_and_complete_rerun(
         "merge.confirmed",
         "pointer.unpublished",
     ]
+    assert records[0]["refs"]["no_checks"] is False
+    assert records[1]["refs"]["no_checks"] is False
     assert first["step_results"]["pointer"]["result"]["pointer"]
     git(env["parent"], "push", "-q", "origin", "main")
     second = _run(env, host, approval, report, monkeypatch)
@@ -274,6 +297,42 @@ def test_workflow_happy_path_owner_push_and_complete_rerun(
     third = _run(env, host, approval, report, monkeypatch)
     assert third["step_results"]["finish"]["result"]["refs"]["status_written"] is False
     assert host.calls.count("merge") == 1
+
+
+def test_workflow_records_no_checks(tmp_path: Path, monkeypatch: Any) -> None:
+    env = _fixture(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    (tmp_path / "home").mkdir(exist_ok=True)
+    host = _Host(env)
+    host.no_checks = True
+    approval, report = _approval(env)
+    _run(env, host, approval, report, monkeypatch)
+    records = _records(tmp_path / "home")
+    assert [record["refs"]["no_checks"] for record in records] == [True, True]
+
+
+def test_workflow_stale_base_refuses_without_host_work(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    env = _fixture(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    (tmp_path / "home").mkdir(exist_ok=True)
+    clone = env["root"] / "stale-base"
+    git(env["root"], "clone", "-q", str(env["sub_bare"]), str(clone))
+    (clone / "base-advance").write_text("advanced\n")
+    commit_all(clone, "advance base")
+    git(clone, "push", "-q", "origin", "main")
+    host = _Host(env)
+    approval, report = _approval(env)
+    _run(env, host, approval, report, monkeypatch)
+    records = _records(tmp_path / "home")
+    assert [(record["outcome"], record["reason"]) for record in records] == [
+        ("refused", "base.stale")
+    ]
+    assert host.calls == []
+    assert (
+        git(env["sub_bare"], "for-each-ref", "--format=%(refname)") == "refs/heads/main"
+    )
 
 
 def test_workflow_absent_approval_has_no_host_calls_or_push(
@@ -308,7 +367,7 @@ def test_workflow_checks_failure_has_no_parent_record(
     assert [(record["outcome"], record["reason"]) for record in records] == [
         ("failed", "checks.failed")
     ]
-    assert host.calls == ["pr", "checks", "merge"]
+    assert host.calls == ["pr", "checks"]
 
 
 def test_workflow_failed_refetch_reuses_merge(tmp_path: Path, monkeypatch: Any) -> None:

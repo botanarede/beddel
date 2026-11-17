@@ -486,6 +486,7 @@ async def github_pr_checks_wait(
     *,
     cwd: str,
     number: int,
+    expected_head_sha: str | None = None,
     interval: float = 10,
     max_wait: float = 1800,
     grace: float = 30,
@@ -494,6 +495,11 @@ async def github_pr_checks_wait(
     """Poll the pull request rollup until it passes, fails, or times out."""
     cwd_value = _validate_cwd(cwd)
     number_value = _validate_number(number)
+    expected_value = (
+        None
+        if expected_head_sha is None
+        else _validate_sha(expected_head_sha, "expected_head_sha")
+    )
     interval_value, max_wait_value, grace_value = _validate_wait_values(
         interval, max_wait, grace
     )
@@ -504,6 +510,11 @@ async def github_pr_checks_wait(
     first_poll = True
     while True:
         view, rollup, command = await _read_checks(cli, cwd_value, number_value)
+        if expected_value is not None and view["headRefOid"] != expected_value:
+            raise GitHubToolError(
+                GITHUB_PR_MISMATCH,
+                "The pull request does not match the requested number or head.",
+            )
         status, names, failed = _rollup_status(rollup, command)
         now = time.monotonic()
         if status == "empty":

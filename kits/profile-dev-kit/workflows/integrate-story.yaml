@@ -107,6 +107,7 @@ steps:
       arguments:
         cwd: "$input.repo_path"
         number: "$stepResult.pull_request.result.number"
+        expected_head_sha: "$stepResult.land.result.tip"
   - id: merge
     primitive: tool
     if: "$stepResult.land.result.pr == true"
@@ -117,7 +118,7 @@ steps:
       timeout: 400
       arguments:
         cwd: "$input.repo_path"
-        number: "$stepResult.pull_request.result.number"
+        number: "$stepResult.checks.result.number"
         merge_method: merge
         expected_head_sha: "$stepResult.land.result.tip"
   - id: refetch
