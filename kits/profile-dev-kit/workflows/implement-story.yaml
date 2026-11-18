@@ -13,12 +13,14 @@ allowed_tools:
   - profile_hook_arm
   - profile_hook_disarm
   - profile_hook_proof
+  - profile_stage_instruction
 inputs:
   - repo_path
   - story_key
   - spec_path
   - branch
   - base_ref
+  - instruction
 steps:
   - id: hook_open
     primitive: tool
@@ -40,6 +42,16 @@ steps:
         spec_path: "$input.spec_path"
         branch: "$input.branch"
         base_ref: "$input.base_ref"
+  - id: method
+    primitive: tool
+    if: "$input.instruction"
+    execution_strategy:
+      type: fail
+    config:
+      tool: profile_stage_instruction
+      arguments:
+        stage: implement
+        instruction: "$input.instruction"
   - id: arm
     primitive: tool
     if: "$stepResult.prepare.result.implement == true"
@@ -51,9 +63,10 @@ steps:
         repo_path: "$input.repo_path"
         stage: implement
         hook: "$stepResult.hook_open.result"
+        method: "$stepResult.method.result"
   - id: implement
     primitive: agent-exec
-    if: "$stepResult.arm.result.armed == true"
+    if: "$stepResult.arm.result.native == true"
     execution_strategy:
       type: skip
     timeout: 600
@@ -67,6 +80,23 @@ steps:
         $stepResult.prepare.result.unit_id Change only those paths and files under
         them. Leave the spec unchanged. Do not stage, commit, push, create or switch
         branches, approve, verify or integrate.
+  - id: implement_method
+    primitive: agent-exec
+    if: "$stepResult.arm.result.method == true"
+    output_key: implement
+    execution_strategy:
+      type: skip
+    timeout: 600
+    config:
+      adapter: kiro-cli
+      sandbox: workspace-write
+      prompt: >-
+        You are the Coding agent for one implementation unit. Read the spec at
+        $input.spec_path and implement only the paths named by
+        $stepResult.prepare.result.unit_paths for unit
+        $stepResult.prepare.result.unit_id Change only those paths and files under
+        them. Leave the spec unchanged. Do not stage, commit, push, create or switch
+        branches, approve, verify or integrate. Method instruction: $stepResult.method.result.instruction
   - id: disarm
     primitive: tool
     if: "$stepResult.prepare.result.implement == true"
@@ -77,6 +107,7 @@ steps:
       arguments:
         repo_path: "$input.repo_path"
         armed: "$stepResult.arm.result"
+        agent: "$stepResult.implement"
   - id: settle
     primitive: tool
     execution_strategy:
@@ -118,6 +149,8 @@ steps:
         hook: "$stepResult.hook_open.result"
         calls:
           - "$stepResult.arm.result"
+        timings:
+          - "$stepResult.disarm.result"
         settled: "$stepResult.settle.result"
   - id: proof_stop
     primitive: tool
@@ -130,6 +163,7 @@ steps:
         stage: implement
         hook: "$stepResult.hook_open.result"
         calls: []
+        timings: []
         settled: "$stepResult.settle_stop.result"
   - id: record
     primitive: tool

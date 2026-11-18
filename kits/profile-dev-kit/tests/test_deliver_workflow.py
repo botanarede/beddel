@@ -22,9 +22,9 @@ def test_deliver_workflow_shape() -> None:
     calls = [step["config"]["workflow"] for step in steps if step.get("primitive") == "call-agent"]
     assert set(calls) == {"plan-story.yaml", "implement-story.yaml", "verify-and-fix-story.yaml", "approve-change.yaml", "integrate-story.yaml"}
     assert all(step.get("primitive") != "agent-exec" for step in steps)
-    expected_ids = ["start", "plan", "after_plan", *[f"implement_{n}" for n in range(1, 34)], "after_implement", "verify", "after_verify", "approval_check", "approve", "approval_settle", "record_approval", "after_approval", "integrate", "after_integrate", "record"]
+    expected_ids = ["method", "start", "plan", "after_plan", *[f"implement_{n}" for n in range(1, 34)], "after_implement", "verify", "after_verify", "approval_check", "approve", "approval_settle", "record_approval", "after_approval", "integrate", "after_integrate", "record"]
     assert [step["id"] for step in steps] == expected_ids
-    expected_if = {"plan": "$stepResult.start.result.go == plan", "implement_1": "$stepResult.after_plan.result.go == implement", "verify": "$stepResult.after_implement.result.go == verify-and-fix", "approval_check": "$stepResult.after_verify.result.go == approval", "approve": "$stepResult.approval_check.result.approve == true", "approval_settle": "$stepResult.after_verify.result.go == approval", "record_approval": "$stepResult.after_verify.result.go == approval", "integrate": "$stepResult.after_approval.result.go == integrate"}
+    expected_if = {"method": "$input.method", "plan": "$stepResult.start.result.go == plan", "implement_1": "$stepResult.after_plan.result.go == implement", "verify": "$stepResult.after_implement.result.go == verify-and-fix", "approval_check": "$stepResult.after_verify.result.go == approval", "approve": "$stepResult.approval_check.result.approve == true", "approval_settle": "$stepResult.after_verify.result.go == approval", "record_approval": "$stepResult.after_verify.result.go == approval", "integrate": "$stepResult.after_approval.result.go == integrate"}
     for number in range(2, 34): expected_if[f"implement_{number}"] = f"$stepResult.implement_{number - 1}.record.result.outcome == succeeded"
     assert {step["id"]: step.get("if") for step in steps if step.get("if")} == expected_if
     assert all(step["execution_strategy"]["type"] == ("skip" if step.get("primitive") == "call-agent" else "fail") for step in steps)
@@ -32,6 +32,8 @@ def test_deliver_workflow_shape() -> None:
         if step.get("primitive") == "call-agent":
             target = yaml.safe_load((KIT_ROOT / "workflows" / step["config"]["workflow"]).read_text())
             assert set(step["config"]["inputs"]) == set(target["inputs"])
+            if step["config"]["workflow"] in {"plan-story.yaml", "implement-story.yaml", "verify-and-fix-story.yaml"}:
+                assert "instruction" in step["config"]["inputs"]
 
 def test_stage_workflows_state_their_coding_agent() -> None:
     for name in ("plan-story.yaml", "implement-story.yaml", "verify-and-fix-story.yaml"):
@@ -95,6 +97,7 @@ def _workflow_run(
     actor: str = "owner",
     fix_report: dict[str, Any] | None = None,
     loader_error: bool = False,
+    method: str = "",
 ) -> dict[str, Any]:
     from beddel_profile_dev.tools import deliver as deliver_tools
     from beddel_profile_dev.tools import fix as fix_tools
@@ -139,6 +142,8 @@ def _workflow_run(
         "actor": actor, "base_branch": "main", "remote": "origin", "parent_path": str(env["parent"]),
         "parent_branch": "main", "status_path": "status.yaml",
     }
+    if method:
+        inputs["method"] = method
     return asyncio.run(WorkflowExecutor(primitive, deps=dependencies).execute(WorkflowParser.parse(WORKFLOW.read_text()), inputs))
 
 def _deliver_records(home: Path) -> list[dict[str, Any]]:

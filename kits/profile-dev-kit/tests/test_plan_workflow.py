@@ -155,6 +155,7 @@ def test_workflow_shape() -> None:
         "story_path",
         "guide_path",
         "spec_path",
+        "instruction",
     ]
     assert document["allowed_tools"] == [
         "profile_plan_reconcile",
@@ -164,13 +165,16 @@ def test_workflow_shape() -> None:
         "profile_hook_arm",
         "profile_hook_disarm",
         "profile_hook_proof",
+        "profile_stage_instruction",
     ]
     assert "Coding agent" in document["description"]
     assert {step["id"] for step in document["steps"]} == {
         "hook_open",
         "reconcile",
+        "method",
         "arm",
         "author",
+        "author_method",
         "disarm",
         "settle",
         "proof",
@@ -186,7 +190,14 @@ def test_workflow_shape() -> None:
     steps = {step.id: step for step in workflow.steps}
     assert steps["reconcile"].execution_strategy.type.value == "skip"
     assert steps["arm"].if_condition == "$stepResult.reconcile.result.author == true"
-    assert steps["author"].if_condition == "$stepResult.arm.result.armed == true"
+    assert steps["author"].if_condition == "$stepResult.arm.result.native == true"
+    assert (
+        steps["author_method"].if_condition == "$stepResult.arm.result.method == true"
+    )
+    assert steps["author_method"].config["prompt"] == (
+        steps["author"].config["prompt"]
+        + " Method instruction: $stepResult.method.result.instruction"
+    )
     assert steps["disarm"].if_condition == "$stepResult.reconcile.result.author == true"
     assert steps["settle"].execution_strategy.type.value == "fail"
     assert steps["proof"].execution_strategy.type.value == "fail"

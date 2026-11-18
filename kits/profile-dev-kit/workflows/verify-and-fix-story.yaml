@@ -13,6 +13,7 @@ allowed_tools:
   - profile_hook_arm
   - profile_hook_disarm
   - profile_hook_proof
+  - profile_stage_instruction
 inputs:
   - repo_path
   - story_key
@@ -21,6 +22,7 @@ inputs:
   - base_ref
   - change_id
   - inventory_version
+  - instruction
 steps:
   - id: hook_open
     primitive: tool
@@ -73,6 +75,16 @@ steps:
         change_id: "$input.change_id"
         max_fix_rounds: 2
         prior: "$stepResult.reconcile.result"
+  - id: method
+    primitive: tool
+    if: "$input.instruction"
+    execution_strategy:
+      type: fail
+    config:
+      tool: profile_stage_instruction
+      arguments:
+        stage: verify-and-fix
+        instruction: "$input.instruction"
   - id: arm_1
     primitive: tool
     if: "$stepResult.round_1.result.fix == true"
@@ -84,9 +96,10 @@ steps:
         repo_path: "$input.repo_path"
         stage: verify-and-fix
         hook: "$stepResult.hook_open.result"
+        method: "$stepResult.method.result"
   - id: fix_1
     primitive: agent-exec
-    if: "$stepResult.arm_1.result.armed == true"
+    if: "$stepResult.arm_1.result.native == true"
     execution_strategy:
       type: skip
     timeout: 600
@@ -100,6 +113,23 @@ steps:
         $stepResult.round_1.result.scope_paths; change only those paths and
         leave the spec unchanged. Do not stage, commit, push, create or switch
         branches, approve, verify, ratify or integrate.
+  - id: fix_1_method
+    primitive: agent-exec
+    if: "$stepResult.arm_1.result.method == true"
+    output_key: fix_1
+    execution_strategy:
+      type: skip
+    timeout: 600
+    config:
+      adapter: kiro-cli
+      sandbox: workspace-write
+      prompt: >-
+        You are the Coding agent for one bounded verification fix round. Read
+        the spec at $input.spec_path; apply only the recorded Findings in
+        $stepResult.round_1.result.findings within the paths
+        $stepResult.round_1.result.scope_paths; change only those paths and
+        leave the spec unchanged. Do not stage, commit, push, create or switch
+        branches, approve, verify, ratify or integrate. Method instruction: $stepResult.method.result.instruction
   - id: disarm_1
     primitive: tool
     if: "$stepResult.round_1.result.fix == true"
@@ -110,6 +140,7 @@ steps:
       arguments:
         repo_path: "$input.repo_path"
         armed: "$stepResult.arm_1.result"
+        agent: "$stepResult.fix_1"
   - id: settle_1
     primitive: tool
     if: "$stepResult.round_1.result.fix == true"
@@ -182,9 +213,10 @@ steps:
         repo_path: "$input.repo_path"
         stage: verify-and-fix
         hook: "$stepResult.hook_open.result"
+        method: "$stepResult.method.result"
   - id: fix_2
     primitive: agent-exec
-    if: "$stepResult.arm_2.result.armed == true"
+    if: "$stepResult.arm_2.result.native == true"
     execution_strategy:
       type: skip
     timeout: 600
@@ -198,6 +230,23 @@ steps:
         $stepResult.round_2.result.scope_paths; change only those paths and
         leave the spec unchanged. Do not stage, commit, push, create or switch
         branches, approve, verify, ratify or integrate.
+  - id: fix_2_method
+    primitive: agent-exec
+    if: "$stepResult.arm_2.result.method == true"
+    output_key: fix_2
+    execution_strategy:
+      type: skip
+    timeout: 600
+    config:
+      adapter: kiro-cli
+      sandbox: workspace-write
+      prompt: >-
+        You are the Coding agent for one bounded verification fix round. Read
+        the spec at $input.spec_path; apply only the recorded Findings in
+        $stepResult.round_2.result.findings within the paths
+        $stepResult.round_2.result.scope_paths; change only those paths and
+        leave the spec unchanged. Do not stage, commit, push, create or switch
+        branches, approve, verify, ratify or integrate. Method instruction: $stepResult.method.result.instruction
   - id: disarm_2
     primitive: tool
     if: "$stepResult.round_2.result.fix == true"
@@ -208,6 +257,7 @@ steps:
       arguments:
         repo_path: "$input.repo_path"
         armed: "$stepResult.arm_2.result"
+        agent: "$stepResult.fix_2"
   - id: settle_2
     primitive: tool
     if: "$stepResult.round_2.result.fix == true"
@@ -281,6 +331,9 @@ steps:
         calls:
           - "$stepResult.arm_1.result"
           - "$stepResult.arm_2.result"
+        timings:
+          - "$stepResult.disarm_1.result"
+          - "$stepResult.disarm_2.result"
         settled: "$stepResult.close.result"
   - id: record
     primitive: tool

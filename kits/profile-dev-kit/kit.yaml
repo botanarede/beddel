@@ -161,6 +161,14 @@ tools:
     target: "beddel_profile_dev.tools.deliver:profile_deliver_approval"
     description: "Check and settle the Delivery Approval stage"
     category: profile
+  - name: profile_deliver_method
+    target: "beddel_profile_dev.tools.method:profile_deliver_method"
+    description: "Read a committed Delivery method"
+    category: profile
+  - name: profile_stage_instruction
+    target: "beddel_profile_dev.tools.method:profile_stage_instruction"
+    description: "Validate one neutral stage instruction"
+    category: profile
   - name: profile_read_delivery_summary
     target: "beddel_profile_dev.tools.summary:profile_read_delivery_summary"
     description: "Read a delivery cost summary from existing profile records"
@@ -280,6 +288,10 @@ targets:
         target: "beddel_profile_dev.tools.deliver:profile_deliver_gate"
       - name: profile_deliver_approval
         target: "beddel_profile_dev.tools.deliver:profile_deliver_approval"
+      - name: profile_deliver_method
+        target: "beddel_profile_dev.tools.method:profile_deliver_method"
+      - name: profile_stage_instruction
+        target: "beddel_profile_dev.tools.method:profile_stage_instruction"
       - name: profile_read_delivery_summary
         target: "beddel_profile_dev.tools.summary:profile_read_delivery_summary"
   typescript:

@@ -13,12 +13,14 @@ allowed_tools:
   - profile_hook_arm
   - profile_hook_disarm
   - profile_hook_proof
+  - profile_stage_instruction
 inputs:
   - repo_path
   - story_key
   - story_path
   - guide_path
   - spec_path
+  - instruction
 steps:
   - id: hook_open
     primitive: tool
@@ -40,6 +42,16 @@ steps:
         story_path: "$input.story_path"
         guide_path: "$input.guide_path"
         spec_path: "$input.spec_path"
+  - id: method
+    primitive: tool
+    if: "$input.instruction"
+    execution_strategy:
+      type: fail
+    config:
+      tool: profile_stage_instruction
+      arguments:
+        stage: plan
+        instruction: "$input.instruction"
   - id: arm
     primitive: tool
     if: "$stepResult.reconcile.result.author == true"
@@ -51,9 +63,10 @@ steps:
         repo_path: "$input.repo_path"
         stage: plan
         hook: "$stepResult.hook_open.result"
+        method: "$stepResult.method.result"
   - id: author
     primitive: agent-exec
-    if: "$stepResult.arm.result.armed == true"
+    if: "$stepResult.arm.result.native == true"
     execution_strategy:
       type: skip
     timeout: 600
@@ -70,6 +83,26 @@ steps:
         set story_key to $input.story_key and size_cap_bytes to 64000. Keep the spec
         within the 64000-byte cap. Change no other file. Do not implement, test, verify,
         commit or push.
+  - id: author_method
+    primitive: agent-exec
+    if: "$stepResult.arm.result.method == true"
+    output_key: author
+    execution_strategy:
+      type: skip
+    timeout: 600
+    config:
+      adapter: kiro-cli
+      sandbox: workspace-write
+      prompt: >-
+        You are the Coding agent for one plan stage. Read the selected story source at
+        $input.story_path and the planning guide at $input.guide_path and write exactly one
+        complete implementation spec to $input.spec_path and ensure its YAML front matter
+        contains story_key, requirements, repositories, dependencies, size_cap_bytes and
+        a units list, each entry with an id, the repository-relative paths it may change
+        and a Conventional Commit subject;
+        set story_key to $input.story_key and size_cap_bytes to 64000. Keep the spec
+        within the 64000-byte cap. Change no other file. Do not implement, test, verify,
+        commit or push. Method instruction: $stepResult.method.result.instruction
   - id: disarm
     primitive: tool
     if: "$stepResult.reconcile.result.author == true"
@@ -80,6 +113,7 @@ steps:
       arguments:
         repo_path: "$input.repo_path"
         armed: "$stepResult.arm.result"
+        agent: "$stepResult.author"
   - id: settle
     primitive: tool
     execution_strategy:
@@ -104,6 +138,8 @@ steps:
         hook: "$stepResult.hook_open.result"
         calls:
           - "$stepResult.arm.result"
+        timings:
+          - "$stepResult.disarm.result"
         settled: "$stepResult.settle.result"
   - id: record
     primitive: tool

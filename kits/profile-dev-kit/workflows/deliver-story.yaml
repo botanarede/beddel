@@ -3,9 +3,16 @@ name: Deliver Story
 description: Entry Delivery workflow that runs plan, implement, verify-and-fix, Approval and integrate in order or runs one selected stage. Plan, implement and fix use a Coding agent through the agent-exec step of each stage workflow with the kiro-cli adapter. Approval waits for the owner's committed decision, runs approve-change once, and integrate requires the recorded Approval. It never decides Approval or pushes the parent.
 version: "1.0"
 requires_kits: [profile-dev-kit, agent-kiro-kit, tools-git-kit, tools-github-kit]
-allowed_tools: [profile_deliver_gate, profile_deliver_approval, profile_record_stage_outcome]
-inputs: [repo_path, story_key, stage, story_path, guide_path, spec_path, branch, base_ref, change_id, inventory_version, actor, base_branch, remote, parent_path, parent_branch, status_path]
+allowed_tools: [profile_deliver_gate, profile_deliver_approval, profile_record_stage_outcome, profile_deliver_method]
+inputs: [repo_path, story_key, stage, story_path, guide_path, spec_path, branch, base_ref, change_id, inventory_version, actor, base_branch, remote, parent_path, parent_branch, status_path, method]
 steps:
+  - id: method
+    primitive: tool
+    if: "$input.method"
+    execution_strategy: {type: fail}
+    config:
+      tool: profile_deliver_method
+      arguments: {repo_path: "$input.repo_path", method: "$input.method"}
   - id: start
     primitive: tool
     execution_strategy: {type: fail}
@@ -18,7 +25,7 @@ steps:
     execution_strategy: {type: skip}
     config:
       workflow: plan-story.yaml
-      inputs: {repo_path: "$input.repo_path", story_key: "$input.story_key", story_path: "$input.story_path", guide_path: "$input.guide_path", spec_path: "$input.spec_path"}
+      inputs: {repo_path: "$input.repo_path", story_key: "$input.story_key", story_path: "$input.story_path", guide_path: "$input.guide_path", spec_path: "$input.spec_path", instruction: "$stepResult.method.result.plan"}
   - id: after_plan
     primitive: tool
     execution_strategy: {type: fail}
@@ -32,7 +39,7 @@ steps:
     execution_strategy: {type: skip}
     config:
       workflow: implement-story.yaml
-      inputs: &implement_inputs {repo_path: "$input.repo_path", story_key: "$input.story_key", spec_path: "$input.spec_path", branch: "$input.branch", base_ref: "$input.base_ref"}
+      inputs: &implement_inputs {repo_path: "$input.repo_path", story_key: "$input.story_key", spec_path: "$input.spec_path", branch: "$input.branch", base_ref: "$input.base_ref", instruction: "$stepResult.method.result.implement"}
   - {<<: *implement_call, id: implement_2, if: "$stepResult.implement_1.record.result.outcome == succeeded"}
   - {<<: *implement_call, id: implement_3, if: "$stepResult.implement_2.record.result.outcome == succeeded"}
   - {<<: *implement_call, id: implement_4, if: "$stepResult.implement_3.record.result.outcome == succeeded"}
@@ -77,7 +84,7 @@ steps:
     execution_strategy: {type: skip}
     config:
       workflow: verify-and-fix-story.yaml
-      inputs: {repo_path: "$input.repo_path", story_key: "$input.story_key", spec_path: "$input.spec_path", branch: "$input.branch", base_ref: "$input.base_ref", change_id: "$input.change_id", inventory_version: "$input.inventory_version"}
+      inputs: {repo_path: "$input.repo_path", story_key: "$input.story_key", spec_path: "$input.spec_path", branch: "$input.branch", base_ref: "$input.base_ref", change_id: "$input.change_id", inventory_version: "$input.inventory_version", instruction: "$stepResult.method.result.fix"}
   - id: after_verify
     primitive: tool
     execution_strategy: {type: fail}
