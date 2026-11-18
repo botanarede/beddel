@@ -217,6 +217,7 @@ def test_structural_approval_boundaries() -> None:
             "_errors.py",
             "integrate.py",
             "deliver.py",
+            "method.py",
         }:
             assert "approv" not in path.read_text().lower()
     source = (PYTHON_ROOT / "beddel_profile_dev" / "tools" / "approval.py").read_text()

@@ -46,6 +46,7 @@ _TOOLS = [
     "profile_integrate_settle",
     "profile_deliver_gate",
     "profile_deliver_approval",
+    "profile_deliver_derive",
     "profile_deliver_method",
     "profile_stage_instruction",
     "profile_read_delivery_summary",
@@ -127,6 +128,7 @@ def test_manifest_declares_all_workflows_and_python_targets() -> None:
         "plan-story",
         "integrate-story",
         "deliver-story",
+        "deliver",
         "read-delivery-summary",
     ]
     for tool in manifest["tools"]:

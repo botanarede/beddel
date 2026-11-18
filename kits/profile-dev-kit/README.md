@@ -599,6 +599,30 @@ The method file is the only place that selects a named delivery method.
 beddel run -i ... workflows/deliver-story.yaml
 ```
 
+## Delivery: three-input entry (Story 8.3b)
+
+The `deliver` entry takes only `repo_path`, `story_key` and `method`. It reads
+`.beddel-profile/method.yaml` from `HEAD`. The seven path and branch inputs
+(`story_path`, `guide_path`, `spec_path`, `status_path`, `branch`, `remote` and
+`base_branch`) come from that file, so every method, `native` included, needs it
+committed. The entry also derives `stage` (always `all`), `base_ref`,
+`change_id` (the story key), `inventory_version`, `actor`, `parent_path` and
+`parent_branch` from committed Git state and the profile records.
+`native` and an empty method use today's kit prompts; a named method
+selects its committed `plan`, `implement` and `fix` instructions.
+
+A derivation refusal records exactly one `deliver` outcome with one of
+`story_key.invalid`, `method.invalid`, `method.absent`, `method.unknown`,
+`base.unknown`, `change_id.invalid`, `inventory.absent`,
+`inventory.ambiguous`, `actor.unknown` or `records.unreadable`. A refusal for an
+invalid story key is recorded without a story key. It invokes no
+Delivery stage, pointer or agent. The existing `deliver-story` entry and its
+sixteen inputs remain available unchanged.
+
+```text
+beddel run --json-output -i repo_path=<repo> -i story_key=<story> -i method=<name> workflows/deliver.yaml
+```
+
 ## Delivery: summary (Story 8.7)
 
 `read-delivery-summary` is a read-only entry workflow. Given `repo_path` and

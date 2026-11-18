@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import itertools
+import json
+import os
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -9,8 +12,12 @@ import pytest
 import yaml
 from beddel.domain.errors import BeddelError
 from beddel.domain.models import AgentResult
+from beddel_profile_dev._io import records_root
+from beddel_profile_dev.tools.method import profile_deliver_derive
+from beddel_profile_dev.tools.ratify import profile_ratify_inventory
+from beddel_profile_dev.tools.stage_outcome import profile_record_stage_outcome
 
-from ._helpers import commit_all, emit_hook_events
+from ._helpers import commit_all, emit_hook_events, good, init_repo, write_version
 from .test_deliver_workflow import (
     _CodingAgent,
     _deliver_records,
@@ -21,8 +28,11 @@ from .test_deliver_workflow import (
 )
 from .test_integrate_workflow import _Host
 from .test_method import _method
+from .test_run_cli import _beddel_argv
 from .test_verify_fix_workflow import _install_review
 
+KIT_ROOT = Path(__file__).resolve().parents[1]
+STORY = "8-3b-deliver-method-fixture"
 TO_APPROVAL = [
     ("plan", "succeeded", "spec.created"),
     ("implement", "succeeded", "unit.committed"),
@@ -211,3 +221,210 @@ def test_invalid_method_file_fails_before_any_stage(
     assert error.value.code == "BEDDEL-EXEC-002"
     assert agent.calls == 0
     assert not list((tmp_path / "home").rglob("stage-outcomes/*.json"))
+
+
+@pytest.mark.parametrize(
+    ("story_key", "method", "reason"),
+    [
+        (STORY, "alpha", "method.absent"),
+        ("../x", "native", "story_key.invalid"),
+    ],
+)
+def test_beddel_run_three_inputs_refuses_without_a_method_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    story_key: str,
+    method: str,
+    reason: str,
+) -> None:
+    home = tmp_path / "home"
+    repo = init_repo(tmp_path / "repo")
+    commit_all(repo)
+    (home / ".config" / "beddel").mkdir(parents=True)
+    (home / ".config" / "beddel" / "config.json").write_text(
+        json.dumps({"kits_paths": [str(KIT_ROOT.parent)]})
+    )
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith(("GIT_", "BEDDEL_", "PYTHON"))
+    }
+    env.update({"HOME": str(home), "XDG_CONFIG_HOME": str(home / ".config")})
+    command = [
+        *_beddel_argv(),
+        "run",
+        "--json-output",
+        "-i",
+        f"repo_path={repo}",
+        "-i",
+        f"story_key={story_key}",
+        "-i",
+        f"method={method}",
+        str(KIT_ROOT / "workflows" / "deliver.yaml"),
+    ]
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        env=env,
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    stored = [
+        json.loads(path.read_text()) for path in home.rglob("stage-outcomes/*.json")
+    ]
+    assert [(r["stage"], r["outcome"], r["reason"]) for r in stored] == [
+        ("deliver", "refused", reason)
+    ]
+
+
+def test_three_input_workflow_shape() -> None:
+    document = yaml.safe_load((KIT_ROOT / "workflows" / "deliver.yaml").read_text())
+    assert document["id"] == "deliver"
+    assert document["inputs"] == ["repo_path", "story_key", "method"]
+    assert document["allowed_tools"] == [
+        "profile_deliver_derive",
+        "profile_record_stage_outcome",
+    ]
+    assert [step["id"] for step in document["steps"]] == ["derive", "deliver", "record"]
+    assert document["steps"][1]["config"]["workflow"] == "deliver-story.yaml"
+    deliver_inputs = document["steps"][1]["config"]["inputs"]
+    base_inputs = yaml.safe_load(
+        (KIT_ROOT / "workflows" / "deliver-story.yaml").read_text()
+    )["inputs"]
+    assert set(deliver_inputs) == set(base_inputs) | {"method"}
+    assert {
+        name: ref == f"$stepResult.derive.result.inputs.{name}"
+        for name, ref in deliver_inputs.items()
+    } == dict.fromkeys(deliver_inputs, True)
+
+
+def test_derive_refusal_records_a_refused_deliver_outcome(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = init_repo(tmp_path / "repo")
+    commit_all(repo)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    derived = profile_deliver_derive(str(repo), STORY, "native")
+    assert derived == {
+        "ok": False,
+        "story_key": STORY,
+        "reason": "method.absent",
+        "refs": {
+            "request": "all",
+            "resume": None,
+            "stage": "start",
+            "stage_record": None,
+            "stage_outcome": None,
+            "stage_reason": "method.absent",
+            "first_record": None,
+            "invoked": None,
+        },
+    }
+    stored = profile_record_stage_outcome(
+        str(repo),
+        derived["story_key"],
+        "deliver",
+        "refused",
+        derived["reason"],
+        derived["refs"],
+    )
+    assert stored["outcome"] == "refused"
+    path = records_root(repo, "records/profile-dev") / "stage-outcomes/1.json"
+    assert path.exists()
+
+
+def _entry_method() -> dict[str, object]:
+    return {
+        "schema": "profile-dev/method/1",
+        "inputs": {
+            "story_path": "story.md",
+            "guide_path": "guide.md",
+            "spec_path": "specs/story.md",
+            "status_path": "status.yaml",
+            "branch": "feat/work",
+            "remote": "origin",
+            "base_branch": "main",
+        },
+        "methods": {
+            "alpha": {
+                "plan": "Plan this story.",
+                "implement": "Implement this unit.",
+                "fix": "Fix these findings.",
+            }
+        },
+    }
+
+
+def _prepare_entry_fixture(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[dict[str, Any], Path]:
+    root.mkdir(parents=True, exist_ok=True)
+    env, sub = _stage_env(root, monkeypatch)
+    profile = sub / ".beddel-profile"
+    profile.mkdir(exist_ok=True)
+    (profile / "method.yaml").write_text(
+        yaml.safe_dump(_entry_method(), sort_keys=False)
+    )
+    write_version(sub, "v1", good())
+    commit_all(sub, "method and inventory")
+    profile_ratify_inventory(str(sub), "v1", "Fixture")
+    env["tip"] = commit_all(sub, "inventory ratification")
+    return env, sub
+
+
+def test_three_input_entry_runs_native_and_named_method_to_the_approval_stop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    native_env, native_sub = _prepare_entry_fixture(tmp_path / "native", monkeypatch)
+    _install_review(monkeypatch)
+    native_agent = _Prompts(native_sub)
+    native_report = {"revision": native_env["tip"], "verdict": "consistent"}
+    _workflow_run(
+        native_env,
+        native_agent,
+        _Host(native_env),
+        monkeypatch,
+        None,
+        native_report,
+        lambda **_: {"ok": True},
+        method="native",
+        entry=True,
+    )
+    native_records = _deliver_records(tmp_path / "native" / "home")
+    assert _tuples(native_records) == TO_APPROVAL
+    assert not any("Method instruction" in prompt for prompt in native_agent.prompts)
+    native_derived = profile_deliver_derive(
+        str(native_sub),
+        "7-7-deliver-story-workflow-chains-stages-and-resumes",
+        "native",
+    )
+    assert native_derived["inputs"]["base_ref"] == native_env["base"]
+    assert Path(native_derived["inputs"]["parent_path"]) == native_env["parent"]
+    assert native_derived["inputs"]["parent_branch"] == "main"
+
+    alpha_env, alpha_sub = _prepare_entry_fixture(tmp_path / "alpha", monkeypatch)
+    _install_review(monkeypatch)
+    alpha_agent = _Prompts(alpha_sub)
+    alpha_report = {"revision": alpha_env["tip"], "verdict": "consistent"}
+    _workflow_run(
+        alpha_env,
+        alpha_agent,
+        _Host(alpha_env),
+        monkeypatch,
+        None,
+        alpha_report,
+        lambda **_: {"ok": True},
+        method="alpha",
+        entry=True,
+    )
+    alpha_records = _deliver_records(tmp_path / "alpha" / "home")
+    assert _tuples(alpha_records) == TO_APPROVAL
+    assert alpha_agent.prompts[0].endswith("Method instruction: Plan this story.")
+    assert alpha_agent.prompts[1].endswith("Method instruction: Implement this unit.")
+    alpha_derived = profile_deliver_derive(
+        str(alpha_sub), "7-7-deliver-story-workflow-chains-stages-and-resumes", "alpha"
+    )
+    assert alpha_derived["inputs"]["base_ref"] == alpha_env["base"]
