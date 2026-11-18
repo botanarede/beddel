@@ -137,9 +137,9 @@ def profile_hook_proof(
     else:
         hook_keys = counts
         reason = (
-            "hooks.errors"
-            if counts["hook_errors"] > 0
-            else ("hooks.missing" if counts["hook_stop"] != n_calls else None)
+            "hooks.missing"
+            if counts["hook_stop"] != n_calls
+            else ("hooks.errors" if counts["hook_errors"] > 0 else None)
         )
     return {
         "stage": stage,

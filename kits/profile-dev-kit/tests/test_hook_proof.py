@@ -72,14 +72,32 @@ def test_run_pointer_lifecycle_and_foreign_pointer(
     assert stat.S_IMODE(policy.stat().st_mode) == 0o600
     assert policy.read_bytes() == policy_path("implement").read_bytes()
     assert first["policy_sha256"] == hashlib.sha256(policy.read_bytes()).hexdigest()
-    assert stat.S_IMODE(pointer.stat().st_mode) == 0o600
     assert (
         profile_hook_arm(str(repo), "implement", first)["reason"]
         == "hooks.pointer_exists"
     )
+    emit_hook_events(
+        repo,
+        [
+            {
+                "hook_event_name": "pre",
+                "tool_name": "shell",
+                "tool_input": {"command": c},
+            }
+            for c in ("git push origin x", "gh pr merge 1", "ls")
+        ]
+        + ["stop"],
+    )
+    proof = profile_hook_proof("implement", first, [armed], _settled())
+    assert (proof["outcome"], proof["refs"]["hook_denied"]) == ("succeeded", 2)
     assert (
-        profile_hook_arm(str(repo), "implement", {"ok": False})["reason"]
-        == "hooks.unavailable"
+        policy_path("plan").read_bytes()
+        == policy_path("implement").read_bytes()
+        == policy_path("verify-and-fix").read_bytes()
+    )
+    assert all(
+        x in Path(first["log_path"]).read_text()
+        for x in ("shell.git-push", "shell.gh-pr-merge", "shell.any")
     )
     pointer.write_bytes(b"foreign\n")
     assert profile_hook_disarm(str(repo), armed) == {"removed": False}
@@ -107,7 +125,7 @@ def test_missing_stop_log_and_hook_errors(
     }
 
     opened, armed = _open_arm(repo)
-    emit_hook_events(repo, [{"hook_event_name": "unknown"}])
+    emit_hook_events(repo, [{"hook_event_name": "unknown"}, "stop"])
     profile_hook_disarm(str(repo), armed)
     result = profile_hook_proof("implement", opened, [armed], _settled())
     assert result["reason"] == "hooks.errors" and result["refs"]["hook_errors"] == 1

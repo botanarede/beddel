@@ -487,8 +487,7 @@ inputs.
 
 The hook wrapper does not normalize shell wrappers or grammar variants beyond
 the agent-kit hook's existing rules. The installed agent must use the default
-pointer directory. Review remains unchanged and receives no pointer or hook
-proof in this MVP.
+pointer directory. Review gets no pointer or hook proof (D-37).
 
 ## Delivery: implement stage
 
