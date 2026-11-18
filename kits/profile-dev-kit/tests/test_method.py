@@ -283,6 +283,61 @@ def test_derive_refusal_reasons_cover_the_matrix(
         == "method.invalid"
     )
 
+    repo_remote, _ = _committed_method_repo(tmp_path / "remote")
+    remote_method = _method()
+    remote_method["inputs"] = {**remote_method["inputs"], "remote": "{story_key}"}
+    (repo_remote / ".beddel-profile" / "method.yaml").write_text(
+        yaml.safe_dump(remote_method)
+    )
+    commit_all(repo_remote, "bad rendered remote")
+    assert (
+        profile_deliver_derive(str(repo_remote), "a..b", "alpha")["reason"]
+        == "method.invalid"
+    )
+
+    repo_nested, _ = _committed_method_repo(tmp_path / "nested")
+    nested = repo_nested / ".beddel-profile" / "inventory" / "sub"
+    nested.mkdir(parents=True)
+    (nested / "v1.yaml").write_text(yaml.safe_dump(good()))
+    (repo_nested / ".beddel-profile" / "inventory" / "v1.ratification.yaml").write_text(
+        "x\n"
+    )
+    commit_all(repo_nested, "nested inventory file")
+    assert (
+        profile_deliver_derive(str(repo_nested), STORY, "alpha")["reason"]
+        == "inventory.absent"
+    )
+
+
+def test_derive_actor_follows_the_latest_approval_then_user_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    repo, _base = _committed_method_repo(tmp_path)
+    subprocess.run(["git", "-C", str(repo), "config", "user.name", "Local"], check=True)
+    write_version(repo, "v1", good())
+    (repo / ".beddel-profile" / "inventory" / "v1.ratification.yaml").write_text("x\n")
+    approvals = repo / ".beddel-profile" / "approvals" / STORY
+    approvals.mkdir(parents=True)
+    (approvals / "1.yaml").write_text("approved_by: older\n")
+    commit_all(repo, "older approval")
+    assert profile_deliver_derive(str(repo), STORY, "alpha")["inputs"]["actor"] == (
+        "older"
+    )
+    (approvals / "2.yaml").write_text("approved_by: ''\n")
+    commit_all(repo, "invalid latest approval")
+    assert profile_deliver_derive(str(repo), STORY, "alpha")["inputs"]["actor"] == (
+        "Local"
+    )
+    (approvals / "3.yaml").write_text(
+        "approved_by: a\napproved_at: 2026-13-01T00:00:00Z\n"
+    )
+    commit_all(repo, "unparseable latest approval")
+    assert profile_deliver_derive(str(repo), STORY, "alpha")["inputs"]["actor"] == (
+        "Local"
+    )
+
 
 def test_kit_names_no_planning_method() -> None:
     needle = "b" + "mad"

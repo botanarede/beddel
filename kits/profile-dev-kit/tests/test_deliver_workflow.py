@@ -138,24 +138,18 @@ def _workflow_run(
         workflow_loader=load_workflow,
     )
     if entry:
-        inputs = {
-            "repo_path": str(env["sub"]),
-            "story_key": STORY,
-            "method": method,
-        }
-        workflow = ENTRY_WORKFLOW
-    else:
-        inputs = {
-            "repo_path": str(env["sub"]), "story_key": STORY, "stage": stage,
-            "story_path": "story.md", "guide_path": "guide.md", "spec_path": "specs/story.md",
-            "branch": BRANCH, "base_ref": env["base"], "change_id": "c1", "inventory_version": "v1",
-            "actor": actor, "base_branch": "main", "remote": "origin", "parent_path": str(env["parent"]),
-            "parent_branch": "main", "status_path": "status.yaml",
-        }
-        if method:
-            inputs["method"] = method
-        workflow = WORKFLOW
-    return asyncio.run(WorkflowExecutor(primitive, deps=dependencies).execute(WorkflowParser.parse(workflow.read_text()), inputs))
+        entry_inputs = {"repo_path": str(env["sub"]), "story_key": STORY, "method": method}
+        return asyncio.run(WorkflowExecutor(primitive, deps=dependencies).execute(WorkflowParser.parse(ENTRY_WORKFLOW.read_text()), entry_inputs))
+    inputs = {
+        "repo_path": str(env["sub"]), "story_key": STORY, "stage": stage,
+        "story_path": "story.md", "guide_path": "guide.md", "spec_path": "specs/story.md",
+        "branch": BRANCH, "base_ref": env["base"], "change_id": "c1", "inventory_version": "v1",
+        "actor": actor, "base_branch": "main", "remote": "origin", "parent_path": str(env["parent"]),
+        "parent_branch": "main", "status_path": "status.yaml",
+    }
+    if method:
+        inputs["method"] = method
+    return asyncio.run(WorkflowExecutor(primitive, deps=dependencies).execute(WorkflowParser.parse(WORKFLOW.read_text()), inputs))
 
 def _deliver_records(home: Path) -> list[dict[str, Any]]:
     return [

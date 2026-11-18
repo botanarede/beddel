@@ -71,6 +71,8 @@ def _inventory_version(repo: Path, inventory_dir: str) -> str | None:
         if not path.startswith(inventory_dir + "/"):
             continue
         name = path.rsplit("/", 1)[-1]
+        if path != f"{inventory_dir}/{name}":
+            continue
         if not name.endswith(".yaml") or name.endswith(".ratification.yaml"):
             continue
         version = name[:-5]
@@ -86,24 +88,23 @@ def _inventory_version(repo: Path, inventory_dir: str) -> str | None:
 
 def _actor(repo: Path, story_key: str) -> str | None:
     paths = _tree_paths(repo, f"{APPROVALS_DIR}{story_key}")
-    if paths is not None:
-        candidates: list[tuple[int, str]] = []
-        for path in paths:
-            match = _RECORD_PATH.fullmatch(path)
-            if match is None or f"/{story_key}/" not in path:
-                continue
-            data = blob_at(repo, "HEAD", path)
-            if data is None:
-                continue
-            try:
-                value = yaml.safe_load(data)
-            except (yaml.YAMLError, RecursionError):
-                continue
-            approved = value.get("approved_by") if isinstance(value, Mapping) else None
-            if isinstance(approved, str) and valid_actor(approved):
-                candidates.append((int(match.group(1)), approved))
-        if candidates:
-            return max(candidates)[1]
+    latest: tuple[int, str] | None = None
+    for path in paths or []:
+        match = _RECORD_PATH.fullmatch(path)
+        if match is None or f"/{story_key}/" not in path:
+            continue
+        number = int(match.group(1))
+        if latest is None or number > latest[0]:
+            latest = (number, path)
+    if latest is not None:
+        data = blob_at(repo, "HEAD", latest[1])
+        try:
+            value = yaml.safe_load(data) if data is not None else None
+        except (TypeError, ValueError, yaml.YAMLError, RecursionError):
+            value = None
+        approved = value.get("approved_by") if isinstance(value, Mapping) else None
+        if isinstance(approved, str) and valid_actor(approved):
+            return approved
     return _git_text(git_run(repo, "config", "--get", "user.name"))
 
 
