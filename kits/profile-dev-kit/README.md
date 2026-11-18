@@ -462,8 +462,9 @@ The plan, implement and verify-and-fix stages use tracked policies at
 `policies/plan.json`, `policies/implement.json` and
 `policies/verify-and-fix.json`. Each policy declares a positive
 `max_tool_calls` cap. The hook denies the call past the cap with
-`cap.max_tool_calls`, counted in `hook_denied`, before evaluating any other
-rule. Each policy denies shell `git push` and `gh pr merge` before allowing the other declared shell, read and write classes. The
+`cap.max_tool_calls`, counted in `hook_denied`, and overrides any rule
+decision. Each policy denies shell `git push` and `gh pr
+merge` before allowing the other declared shell, read and write classes. The
 policy copy and `hook.jsonl` live in one fresh 0700 run directory under
 `~/.local/state/beddel/kiro-hook/runs/`; the policy digest is recorded in the
 Stage outcome.

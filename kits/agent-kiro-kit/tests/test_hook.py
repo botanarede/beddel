@@ -229,7 +229,16 @@ def test_fifo_paths_do_not_hang(tmp_path: Path, target: str) -> None:
 
 
 def test_cap_max_tool_calls_denies_past_the_cap(tmp_path: Path) -> None:
-    pointers, _policy, log = _setup(tmp_path, cap=2)
+    rules = [
+        {
+            "id": "shell.git-push",
+            "effect": "deny",
+            "tool_class": "shell",
+            "argv_prefix": ["git", "push"],
+        },
+        {"id": "shell.any", "effect": "allow", "tool_class": "shell"},
+    ]
+    pointers, _policy, log = _setup(tmp_path, rules, cap=2)
     assert _call(pointers, _event(tmp_path, command="true"))[0] == 0
     assert _call(pointers, _event(tmp_path, command="true"))[0] == 0
     code, _out, err = _call(pointers, _event(tmp_path, command="git push origin x"))
@@ -243,6 +252,32 @@ def test_cap_max_tool_calls_denies_past_the_cap(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("cap", [_OMIT_CAP, 0, -1, True, 1.5, "2", None])
 def test_cap_missing_or_invalid_policy_denies(tmp_path: Path, cap: Any) -> None:
-    pointers, _policy, _log = _setup(tmp_path, cap=cap)
+    pointers, _policy, log = _setup(tmp_path, cap=cap)
     code, _out, err = _call(pointers, _event(tmp_path, command="true"))
     assert code == 2 and "policy.invalid" in err
+    code, _out, err = _call(pointers, _event(tmp_path, command="true"))
+    assert code == 2 and "policy.invalid" in err
+    records = [json.loads(line) for line in log.read_text().splitlines()]
+    assert [record["rule_id"] for record in records] == [
+        "policy.invalid",
+        "policy.invalid",
+    ]
+
+
+def test_internal_error_past_the_cap_stays_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pointers, _policy, log = _setup(tmp_path, cap=1)
+    assert _call(pointers, _event(tmp_path, command="true"))[0] == 0
+
+    def fail(*_args: Any) -> tuple[str, str]:
+        raise RuntimeError("test failure")
+
+    monkeypatch.setattr(hook, "_evaluate", fail)
+    code, _out, err = _call(pointers, _event(tmp_path, command="true"))
+    assert code == 2 and "hook.internal" in err
+    records = [json.loads(line) for line in log.read_text().splitlines()]
+    assert records[-1]["decision"] == "error"
+    assert records[-1]["rule_id"] == "hook.internal"
+    summary = hook.summarize(pointers, tmp_path)
+    assert summary["errors"] == 1 and summary["denied"] == 0

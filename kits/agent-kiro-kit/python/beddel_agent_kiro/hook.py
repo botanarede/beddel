@@ -286,7 +286,7 @@ def _record(
 
 
 def _append_log(
-    path: Path, record: dict[str, Any], max_tool_calls: int
+    path: Path, record: dict[str, Any], max_tool_calls: int | None
 ) -> tuple[str, str]:
     import fcntl
 
@@ -324,7 +324,12 @@ def _append_log(
                             pre_calls += 1
                 except (json.JSONDecodeError, TypeError):
                     pass
-        if record.get("event") == "pre" and pre_calls >= max_tool_calls:
+        if (
+            record.get("event") == "pre"
+            and record.get("decision") != "error"
+            and max_tool_calls is not None
+            and pre_calls >= max_tool_calls
+        ):
             record["decision"] = "deny"
             record["rule_id"] = "cap.max_tool_calls"
         record["seq"] = maximum + 1
@@ -418,7 +423,7 @@ def _run(payload: dict[str, Any], pointers: Path) -> int:
                         None,
                         None,
                     ),
-                    policy["max_tool_calls"] if policy is not None else 1,
+                    None,
                 )
             except BaseException:  # noqa: BLE001
                 log_path = None

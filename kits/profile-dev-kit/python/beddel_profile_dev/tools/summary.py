@@ -26,6 +26,8 @@ __all__ = ["profile_read_delivery_summary"]
 _SUMMARY_STAGES = (*STAGES, "deliver")
 _AGENT_STAGES = {"plan", "implement", "verify-and-fix"}
 _GATE_SCHEMA = "profile-dev/attempt-gate-outcome/1"
+_FULL_SHA = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
+_DIGEST = re.compile(r"[0-9a-f]{64}")
 _REPORT_ORDINAL = re.compile(r"([1-9][0-9]*)\.json")
 _MISSING = "missing"
 _NOT_OBSERVABLE = "not observable"
@@ -70,14 +72,27 @@ def _gate_codes(
     root: Path, change_id: str, report: Mapping[str, Any]
 ) -> dict[str, Any] | None:
     revision, attempt = report.get("revision"), report.get("attempt")
-    if not isinstance(revision, str) or type(attempt) is not int or attempt < 1:
+    if not isinstance(revision, str) or _FULL_SHA.fullmatch(revision) is None:
+        raise _invalid()
+    if attempt is None:
         return None
+    if type(attempt) is not int or attempt < 1:
+        raise _invalid()
     relative = f"changes/{change_id}/revisions/{revision}/attempts/{attempt}/gate.json"
+    gate_path = confined(root, relative)
+    if not gate_path.exists():
+        if gate_path.is_symlink():
+            raise _invalid()
+        return None
+    if not gate_path.is_file():
+        raise _invalid()
     raw = read_confined(root, relative)
+    if raw is None:
+        raise _invalid()
     try:
-        data = json.loads(raw) if raw is not None else None
+        data = json.loads(raw)
     except (TypeError, ValueError, RecursionError):
-        data = None
+        raise _invalid() from None
     expected = {
         "schema",
         "attempt",
@@ -91,36 +106,48 @@ def _gate_codes(
         "gate_ref",
     }
     if not isinstance(data, dict) or set(data) != expected:
-        return None
+        raise _invalid()
+    output_attempt = data.get("output_attempt")
     if (
         data.get("schema") != _GATE_SCHEMA
-        or data.get("attempt") != attempt
+        or type(data.get("attempt")) is not int
+        or data["attempt"] != attempt
         or data.get("change_id") != change_id
+        or not isinstance(revision, str)
         or data.get("revision") != revision
+        or _FULL_SHA.fullmatch(revision) is None
+        or type(output_attempt) is not int
+        or output_attempt < 1
         or data.get("status") != "completed"
+        or not is_valid_id(data.get("inventory_version"))
+        or not isinstance(data.get("inventory_sha256"), str)
+        or _DIGEST.fullmatch(data["inventory_sha256"]) is None
+        or data.get("gate_ref")
+        != f"changes/{change_id}/revisions/{revision}/gate-output/{output_attempt}"
     ):
-        return None
+        raise _invalid()
     commands = data.get("commands")
     if not isinstance(commands, list) or not commands:
-        return None
+        raise _invalid()
     values: dict[str, Any] = {}
     for command in commands:
         if (
             not isinstance(command, dict)
             or set(command) != {"name", "argv", "exit_code", "timed_out"}
             or not isinstance(command.get("name"), str)
+            or command["name"] in values
             or not isinstance(command.get("argv"), list)
             or not all(isinstance(arg, str) for arg in command["argv"])
             or type(command.get("timed_out")) is not bool
         ):
-            return None
+            raise _invalid()
         exit_code = command["exit_code"]
         if command["timed_out"]:
             values[command["name"]] = "timeout"
         elif type(exit_code) is int:
             values[command["name"]] = exit_code
         else:
-            return None
+            raise _invalid()
     return values
 
 
@@ -197,8 +224,8 @@ def _review_data(
         codes = _gate_codes(root, change_id, report)
         if codes is None:
             return len(report_values), _MISSING
-        reports.append({"report": ordinal, "commands": codes})
-    reports.sort(key=lambda item: item["report"])
+        reports.append({"change_id": change_id, "report": ordinal, "commands": codes})
+    reports.sort(key=lambda item: (item["change_id"], item["report"]))
     return len(reports), reports
 
 
