@@ -46,6 +46,7 @@ _TOOLS = [
     "profile_integrate_settle",
     "profile_deliver_gate",
     "profile_deliver_approval",
+    "profile_read_delivery_summary",
 ]
 
 
@@ -124,6 +125,7 @@ def test_manifest_declares_all_workflows_and_python_targets() -> None:
         "plan-story",
         "integrate-story",
         "deliver-story",
+        "read-delivery-summary",
     ]
     for tool in manifest["tools"]:
         assert tool["category"] == "profile"

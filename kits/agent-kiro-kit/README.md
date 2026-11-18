@@ -63,7 +63,7 @@ strategy the step failure `BEDDEL-EXEC-002` wraps it as its cause.
 
 Operator install/verify: `PYTHONPATH=<kit>/python python3 -m beddel_agent_kiro.agent_config install|verify`; supports `--home`, `--pointers`, `--replace`.
 Pointer `<pointers>/<sha256(realpath(cwd))>.json`; policy `beddel.kiro-hook-policy/1`, first-match-wins, no rules deny all; Python 3.11+; errors `KIRO_AGENT_INVALID`/`KIRO_CLI_MISSING`.
-Pointer or log path security failures deny without writing through the pointer. Logs use
+Pointer or log path security failures deny without writing through the pointer. Each agent-stage policy must declare a positive `max_tool_calls`; the call past the cap is denied with `cap.max_tool_calls` and counted as `denied`. Logs use
 `beddel.kiro-hook/1` and 16 fields; results include `type=kiro-hook`, counts,
 and `log_sha256`. Exit 2 means deny/error; raw values are never logged.
 `policy_sha256` is the SHA-256 of raw policy bytes.

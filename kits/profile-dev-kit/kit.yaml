@@ -161,6 +161,10 @@ tools:
     target: "beddel_profile_dev.tools.deliver:profile_deliver_approval"
     description: "Check and settle the Delivery Approval stage"
     category: profile
+  - name: profile_read_delivery_summary
+    target: "beddel_profile_dev.tools.summary:profile_read_delivery_summary"
+    description: "Read a delivery cost summary from existing profile records"
+    category: profile
 
 workflows:
   - name: verify-change
@@ -202,6 +206,9 @@ workflows:
   - name: deliver-story
     path: workflows/deliver-story.yaml
     description: Chains the Delivery stages or runs one selected stage, waits for Approval and records the complete Delivery outcome.
+  - name: read-delivery-summary
+    path: workflows/read-delivery-summary.yaml
+    description: Reads a delivery cost summary from existing profile records.
 
 targets:
   python:
@@ -273,6 +280,8 @@ targets:
         target: "beddel_profile_dev.tools.deliver:profile_deliver_gate"
       - name: profile_deliver_approval
         target: "beddel_profile_dev.tools.deliver:profile_deliver_approval"
+      - name: profile_read_delivery_summary
+        target: "beddel_profile_dev.tools.summary:profile_read_delivery_summary"
   typescript:
     status: unavailable
     unavailable_reason: >

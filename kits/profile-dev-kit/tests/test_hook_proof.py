@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import stat
@@ -90,11 +91,12 @@ def test_run_pointer_lifecycle_and_foreign_pointer(
     )
     proof = profile_hook_proof("implement", first, [armed], _settled())
     assert (proof["outcome"], proof["refs"]["hook_denied"]) == ("succeeded", 2)
-    assert (
-        policy_path("plan").read_bytes()
-        == policy_path("implement").read_bytes()
-        == policy_path("verify-and-fix").read_bytes()
-    )
+    policies = [
+        json.loads(policy_path(stage).read_text())
+        for stage in ("plan", "implement", "verify-and-fix")
+    ]
+    assert policies[0]["rules"] == policies[1]["rules"] == policies[2]["rules"]
+    assert [policy["max_tool_calls"] for policy in policies] == [200, 400, 400]
     assert all(
         x in Path(first["log_path"]).read_text()
         for x in ("shell.git-push", "shell.gh-pr-merge", "shell.any")
@@ -184,3 +186,41 @@ def test_digest_sessions_cleanup_and_record_boundary(
     refused = profile_hook_arm(str(repo), "implement", opened)
     monkeypatch.setattr(os, "fsync", original)
     assert not refused["armed"] and not pointer_path(repo).exists()
+
+
+def test_tracked_policies_declare_cap_and_cap_denials_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hook_path = (
+        Path(__file__).resolve().parents[2]
+        / "agent-kiro-kit"
+        / "python"
+        / "beddel_agent_kiro"
+        / "hook.py"
+    )
+    spec = importlib.util.spec_from_file_location("hook_cap_test", hook_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    for stage in ("plan", "implement", "verify-and-fix"):
+        data = json.loads(policy_path(stage).read_text())
+        assert type(data["max_tool_calls"]) is int and data["max_tool_calls"] > 0
+        module._validate_policy(data)
+
+    cap_policy = tmp_path / "cap-2.json"
+    policy = json.loads(policy_path("implement").read_text())
+    policy["max_tool_calls"] = 2
+    cap_policy.write_text(json.dumps(policy))
+    cap_policy.chmod(0o600)
+    import beddel_profile_dev.hook_proof as proof_module
+
+    monkeypatch.setattr(proof_module, "policy_path", lambda _stage: cap_policy)
+    repo = _repo(tmp_path)
+    monkeypatch.chdir(repo)
+    opened, armed = _open_arm(repo)
+    emit_hook_events(repo, ["pre", "pre", "pre", "stop"])
+    profile_hook_disarm(str(repo), armed)
+    proof = profile_hook_proof("implement", opened, [armed], _settled())
+    assert proof["outcome"] == "succeeded"
+    assert proof["refs"]["hook_denied"] == 1
+    assert set(proof["refs"]) == set({**_settled()["refs"], **null_keys()})

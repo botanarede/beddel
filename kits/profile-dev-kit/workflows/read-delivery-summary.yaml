@@ -1,0 +1,19 @@
+id: read-delivery-summary
+name: Read Delivery Summary
+description: Reads a delivery cost summary from existing Stage outcomes, Reports and Gate outcomes without running a stage or writing records.
+version: "1.0"
+requires_kits:
+  - profile-dev-kit
+allowed_tools:
+  - profile_read_delivery_summary
+inputs:
+  - repo_path
+  - story_key
+steps:
+  - id: summary
+    primitive: tool
+    config:
+      tool: profile_read_delivery_summary
+      arguments:
+        repo_path: "$input.repo_path"
+        story_key: "$input.story_key"

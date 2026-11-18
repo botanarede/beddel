@@ -13,9 +13,13 @@ from typing import Any
 import pytest
 from beddel_agent_kiro import hook
 
+_OMIT_CAP = object()
+
 
 def _setup(
-    tmp_path: Path, rules: list[dict[str, Any]] | None = None
+    tmp_path: Path,
+    rules: list[dict[str, Any]] | None = None,
+    cap: Any = 100,
 ) -> tuple[Path, Path, Path]:
     pointers = tmp_path / "pointers"
     pointers.mkdir(parents=True, mode=0o700)
@@ -28,6 +32,8 @@ def _setup(
             {"id": "read.any", "effect": "allow", "tool_class": "read"},
         ],
     }
+    if cap is not _OMIT_CAP:
+        policy["max_tool_calls"] = cap
     policy_path.write_text(json.dumps(policy), encoding="utf-8")
     os.chmod(policy_path, 0o600)
     pointer = hook.pointer_path(pointers, str(tmp_path))
@@ -220,3 +226,58 @@ def test_fifo_paths_do_not_hang(tmp_path: Path, target: str) -> None:
         timeout=5,
     )
     assert completed.returncode == 2
+
+
+def test_cap_max_tool_calls_denies_past_the_cap(tmp_path: Path) -> None:
+    rules = [
+        {
+            "id": "shell.git-push",
+            "effect": "deny",
+            "tool_class": "shell",
+            "argv_prefix": ["git", "push"],
+        },
+        {"id": "shell.any", "effect": "allow", "tool_class": "shell"},
+    ]
+    pointers, _policy, log = _setup(tmp_path, rules, cap=2)
+    assert _call(pointers, _event(tmp_path, command="true"))[0] == 0
+    assert _call(pointers, _event(tmp_path, command="true"))[0] == 0
+    code, _out, err = _call(pointers, _event(tmp_path, command="git push origin x"))
+    assert code == 2 and "cap.max_tool_calls" in err
+    assert _call(pointers, _event(tmp_path, command="true", name="postToolUse"))[0] == 0
+    assert _call(pointers, _event(tmp_path, name="stop"))[0] == 0
+    records = [json.loads(line) for line in log.read_text().splitlines()]
+    assert records[2]["decision"] == "deny"
+    assert records[2]["rule_id"] == "cap.max_tool_calls"
+
+
+@pytest.mark.parametrize("cap", [_OMIT_CAP, 0, -1, True, 1.5, "2", None])
+def test_cap_missing_or_invalid_policy_denies(tmp_path: Path, cap: Any) -> None:
+    pointers, _policy, log = _setup(tmp_path, cap=cap)
+    code, _out, err = _call(pointers, _event(tmp_path, command="true"))
+    assert code == 2 and "policy.invalid" in err
+    code, _out, err = _call(pointers, _event(tmp_path, command="true"))
+    assert code == 2 and "policy.invalid" in err
+    records = [json.loads(line) for line in log.read_text().splitlines()]
+    assert [record["rule_id"] for record in records] == [
+        "policy.invalid",
+        "policy.invalid",
+    ]
+
+
+def test_internal_error_past_the_cap_stays_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pointers, _policy, log = _setup(tmp_path, cap=1)
+    assert _call(pointers, _event(tmp_path, command="true"))[0] == 0
+
+    def fail(*_args: Any) -> tuple[str, str]:
+        raise RuntimeError("test failure")
+
+    monkeypatch.setattr(hook, "_evaluate", fail)
+    code, _out, err = _call(pointers, _event(tmp_path, command="true"))
+    assert code == 2 and "hook.internal" in err
+    records = [json.loads(line) for line in log.read_text().splitlines()]
+    assert records[-1]["decision"] == "error"
+    assert records[-1]["rule_id"] == "hook.internal"
+    summary = hook.summarize(pointers, tmp_path)
+    assert summary["errors"] == 1 and summary["denied"] == 0

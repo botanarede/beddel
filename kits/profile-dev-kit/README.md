@@ -460,7 +460,10 @@ beddel run -i ... workflows/plan-story.yaml
 
 The plan, implement and verify-and-fix stages use tracked policies at
 `policies/plan.json`, `policies/implement.json` and
-`policies/verify-and-fix.json`. Each policy denies shell `git push` and `gh pr
+`policies/verify-and-fix.json`. Each policy declares a positive
+`max_tool_calls` cap. The hook denies the call past the cap with
+`cap.max_tool_calls`, counted in `hook_denied`, and overrides any rule
+decision. Each policy denies shell `git push` and `gh pr
 merge` before allowing the other declared shell, read and write classes. The
 policy copy and `hook.jsonl` live in one fresh 0700 run directory under
 `~/.local/state/beddel/kiro-hook/runs/`; the policy digest is recorded in the
@@ -572,5 +575,18 @@ once. Each run ends with a `deliver` record. One Change per run.
 
 ```text
 beddel run -i ... workflows/deliver-story.yaml
+```
+
+## Delivery: summary (Story 8.7)
+
+`read-delivery-summary` is a read-only entry workflow. Given `repo_path` and
+`story_key`, it reads the existing Stage outcomes, Reports and Gate outcomes
+and prints one row per stage plus totals. It reports wall seconds, agent calls,
+denied calls, Review rounds and Gate exit codes. Missing records or fields are
+reported as `missing`; Kiro credits and tokens are always `not observable`.
+The workflow creates no records and does not change the records tree.
+
+```text
+beddel run -i repo_path=<repo> -i story_key=<story> workflows/read-delivery-summary.yaml
 ```
 
