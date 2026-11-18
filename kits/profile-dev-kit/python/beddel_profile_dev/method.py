@@ -1,4 +1,4 @@
-"""Validation for profile delivery method files."""
+"""Validation and rendering for profile delivery method files."""
 
 from __future__ import annotations
 
@@ -111,3 +111,13 @@ def load_method(data: bytes) -> dict[str, Any] | None:
         if not all(valid_instruction(method[key]) for key in STAGE_KEYS):
             return None
     return value
+
+
+def render(template: str, story_key: str) -> str:
+    """Substitute the sole supported placeholder in a validated template."""
+    if not isinstance(template, str) or not isinstance(story_key, str):
+        raise TypeError("invalid method template")
+    rendered = template.replace("{story_key}", story_key)
+    if "{" in rendered or "}" in rendered:
+        raise TypeError("invalid method template")
+    return rendered

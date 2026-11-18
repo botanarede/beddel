@@ -6,13 +6,17 @@ from pathlib import Path
 import pytest
 import yaml
 from beddel_profile_dev._errors import ProfileError
-from beddel_profile_dev.method import load_method, valid_instruction
+from beddel_profile_dev.method import load_method, render, valid_instruction
 from beddel_profile_dev.tools.method import (
+    profile_deliver_derive,
     profile_deliver_method,
     profile_stage_instruction,
 )
+from beddel_profile_dev.tools.stage_outcome import profile_record_stage_outcome
 
-from ._helpers import commit_all, init_repo
+from ._helpers import commit_all, good, init_repo, write_version
+
+STORY = "8-3b-method-fixture"
 
 
 def _method() -> dict[str, object]:
@@ -40,6 +44,7 @@ def _method() -> dict[str, object]:
 def test_load_method_accepts_schema_and_refuses_each_violation() -> None:
     data = yaml.safe_dump(_method(), sort_keys=False).encode()
     assert load_method(data) is not None
+    assert render("specs/{story_key}.md", STORY) == f"specs/{STORY}.md"
     cases = [
         {**_method(), "schema": "wrong"},
         {**_method(), "inputs": {}},
@@ -127,6 +132,156 @@ def test_deliver_method_reads_head_and_refuses(
     with pytest.raises(ProfileError) as invalid:
         profile_deliver_method(str(repo), "alpha")
     assert invalid.value.details == {"reason": "method.invalid"}
+
+
+def test_derive_native_and_named_method_inputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = init_repo(tmp_path / "repo")
+    subprocess.run(
+        ["git", "-C", str(repo), "config", "user.name", "Fixture"], check=True
+    )
+    (repo / "AGENTS.md").write_text("guide\n")
+    (repo / "stories").mkdir()
+    (repo / "specs").mkdir()
+    write_version(repo, "v1", good())
+    (repo / ".beddel-profile" / "inventory" / "v1.ratification.yaml").write_text(
+        "ratified\n"
+    )
+    approval = repo / ".beddel-profile" / "approvals" / STORY
+    approval.mkdir(parents=True)
+    for number, owner in (("1", "owner-one"), ("2", "owner-two"), ("10", "owner-ten")):
+        (approval / f"{number}.yaml").write_text(f"approved_by: {owner}\n")
+    method_path = repo / ".beddel-profile" / "method.yaml"
+    method_path.parent.mkdir(parents=True, exist_ok=True)
+    method_path.write_text(yaml.safe_dump(_method(), sort_keys=False))
+    base = commit_all(repo, "base")
+    tip = commit_all(repo, "tip")
+    subprocess.run(
+        ["git", "-C", str(repo), "update-ref", "refs/remotes/origin/main", tip],
+        check=True,
+    )
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    profile_record_stage_outcome(
+        str(repo), STORY, "implement", "succeeded", "unit.committed", {"base": base}
+    )
+    native = profile_deliver_derive(str(repo), STORY, "native")
+    named = profile_deliver_derive(str(repo), STORY, "alpha")
+    assert native["ok"] and named["ok"]
+    assert native["method"] == "native" and named["method"] == "alpha"
+    assert native["inputs"]["method"] == "native" and native["inputs"]["stage"] == "all"
+    empty = profile_deliver_derive(str(repo), STORY, "")
+    assert empty["ok"] and empty["method"] == "native"
+    values = named["inputs"]
+    assert values["base_ref"] == base != tip
+    assert values["actor"] == "owner-ten"
+    assert values["inventory_version"] == "v1"
+    assert values["spec_path"] == f"specs/{STORY}.md"
+    assert values["parent_path"] == "" and values["parent_branch"] == ""
+    selected = profile_deliver_method(str(repo), "alpha")
+    assert selected["plan"] == "Plan this story."
+
+
+def test_derive_refusals_name_their_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = init_repo(tmp_path / "repo")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+
+    def reason(story: str, method: str) -> object:
+        return profile_deliver_derive(str(repo), story, method)["reason"]
+
+    path = repo / ".beddel-profile" / "method.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    assert reason("../x", "native") == "story_key.invalid"
+    assert reason(STORY, "native") == "method.absent"
+    path.write_text("schema: wrong\n")
+    commit_all(repo, "invalid")
+    assert reason(STORY, "native") == "method.invalid"
+    path.write_text(yaml.safe_dump(_method()))
+    commit_all(repo, "valid")
+    assert reason(STORY, "nope") == "method.unknown"
+    assert reason(STORY, "../bad") == "method.invalid"
+    assert reason(STORY, "alpha") == "base.unknown"
+    subprocess.run(
+        ["git", "-C", str(repo), "update-ref", "refs/remotes/origin/main", "HEAD"],
+        check=True,
+    )
+    assert reason(STORY, "alpha") == "inventory.absent"
+
+
+def _committed_method_repo(tmp_path: Path) -> tuple[Path, str]:
+    repo = init_repo(tmp_path / "repo")
+    method_path = repo / ".beddel-profile" / "method.yaml"
+    method_path.parent.mkdir(parents=True, exist_ok=True)
+    method_path.write_text(yaml.safe_dump(_method(), sort_keys=False))
+    base = commit_all(repo, "method")
+    subprocess.run(
+        ["git", "-C", str(repo), "update-ref", "refs/remotes/origin/main", base],
+        check=True,
+    )
+    return repo, base
+
+
+def test_derive_refusal_reasons_cover_the_matrix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, _base = _committed_method_repo(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    assert (
+        profile_deliver_derive(str(repo), "a" * 70, "alpha")["reason"]
+        == "change_id.invalid"
+    )
+
+    write_version(repo, "v1", good())
+    (repo / ".beddel-profile" / "inventory" / "v1.ratification.yaml").write_text("x\n")
+    write_version(repo, "v2", good("v2"))
+    (repo / ".beddel-profile" / "inventory" / "v2.ratification.yaml").write_text("x\n")
+    commit_all(repo, "ambiguous inventory")
+    assert (
+        profile_deliver_derive(str(repo), STORY, "alpha")["reason"]
+        == "inventory.ambiguous"
+    )
+
+    repo_actor, _ = _committed_method_repo(tmp_path / "actor")
+    write_version(repo_actor, "v1", good())
+    (repo_actor / ".beddel-profile" / "inventory" / "v1.ratification.yaml").write_text(
+        "x\n"
+    )
+    commit_all(repo_actor, "inventory")
+    assert (
+        profile_deliver_derive(str(repo_actor), STORY, "alpha")["reason"]
+        == "actor.unknown"
+    )
+
+    repo_records, _ = _committed_method_repo(tmp_path / "records")
+    write_version(repo_records, "v1", good())
+    (
+        repo_records / ".beddel-profile" / "inventory" / "v1.ratification.yaml"
+    ).write_text("x\n")
+    commit_all(repo_records, "inventory")
+    from beddel_profile_dev._io import records_root
+
+    stage_root = records_root(repo_records, "records/profile-dev")
+    (stage_root / "stage-outcomes").mkdir(parents=True)
+    (stage_root / "stage-outcomes" / "1.json").write_text("not json")
+    assert (
+        profile_deliver_derive(str(repo_records), STORY, "alpha")["reason"]
+        == "records.unreadable"
+    )
+
+    repo_branch, _ = _committed_method_repo(tmp_path / "branch")
+    bad_method = _method()
+    bad_method["inputs"] = {**bad_method["inputs"], "branch": "feat/{story_key}"}
+    (repo_branch / ".beddel-profile" / "method.yaml").write_text(
+        yaml.safe_dump(bad_method)
+    )
+    commit_all(repo_branch, "bad rendered branch")
+    assert (
+        profile_deliver_derive(str(repo_branch), "bad..key", "alpha")["reason"]
+        == "method.invalid"
+    )
 
 
 def test_kit_names_no_planning_method() -> None:

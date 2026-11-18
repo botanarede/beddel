@@ -1,0 +1,51 @@
+id: deliver
+name: Deliver
+description: Three-input Delivery entry that derives every stage input from the committed repository, planning artifacts and records, then runs deliver-story.
+version: "1.0"
+requires_kits: [profile-dev-kit, agent-kiro-kit, tools-git-kit, tools-github-kit]
+allowed_tools: [profile_deliver_derive, profile_record_stage_outcome]
+inputs: [repo_path, story_key, method]
+steps:
+  - id: derive
+    primitive: tool
+    execution_strategy: {type: fail}
+    config:
+      tool: profile_deliver_derive
+      arguments: {repo_path: "$input.repo_path", story_key: "$input.story_key", method: "$input.method"}
+  - id: deliver
+    primitive: call-agent
+    if: "$stepResult.derive.result.ok == true"
+    execution_strategy: {type: fail}
+    config:
+      workflow: deliver-story.yaml
+      inputs:
+        repo_path: "$stepResult.derive.result.inputs.repo_path"
+        story_key: "$stepResult.derive.result.inputs.story_key"
+        stage: "$stepResult.derive.result.inputs.stage"
+        story_path: "$stepResult.derive.result.inputs.story_path"
+        guide_path: "$stepResult.derive.result.inputs.guide_path"
+        spec_path: "$stepResult.derive.result.inputs.spec_path"
+        branch: "$stepResult.derive.result.inputs.branch"
+        base_ref: "$stepResult.derive.result.inputs.base_ref"
+        change_id: "$stepResult.derive.result.inputs.change_id"
+        inventory_version: "$stepResult.derive.result.inputs.inventory_version"
+        actor: "$stepResult.derive.result.inputs.actor"
+        base_branch: "$stepResult.derive.result.inputs.base_branch"
+        remote: "$stepResult.derive.result.inputs.remote"
+        parent_path: "$stepResult.derive.result.inputs.parent_path"
+        parent_branch: "$stepResult.derive.result.inputs.parent_branch"
+        status_path: "$stepResult.derive.result.inputs.status_path"
+        method: "$stepResult.derive.result.inputs.method"
+  - id: record
+    primitive: tool
+    if: "$stepResult.derive.result.ok == false"
+    execution_strategy: {type: fail}
+    config:
+      tool: profile_record_stage_outcome
+      arguments:
+        repo_path: "$input.repo_path"
+        story_key: "$stepResult.derive.result.story_key"
+        stage: deliver
+        outcome: refused
+        reason: "$stepResult.derive.result.reason"
+        refs: "$stepResult.derive.result.refs"

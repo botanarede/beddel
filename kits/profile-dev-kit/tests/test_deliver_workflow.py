@@ -12,6 +12,7 @@ from beddel_profile_dev.deliver import IMPLEMENT_SLOTS
 # fmt: off
 KIT_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = KIT_ROOT / "workflows" / "deliver-story.yaml"
+ENTRY_WORKFLOW = KIT_ROOT / "workflows" / "deliver.yaml"
 
 def test_deliver_workflow_shape() -> None:
     document = yaml.safe_load(WORKFLOW.read_text())
@@ -98,6 +99,7 @@ def _workflow_run(
     fix_report: dict[str, Any] | None = None,
     loader_error: bool = False,
     method: str = "",
+    entry: bool = False,
 ) -> dict[str, Any]:
     from beddel_profile_dev.tools import deliver as deliver_tools
     from beddel_profile_dev.tools import fix as fix_tools
@@ -135,16 +137,25 @@ def _workflow_run(
         registry=primitive,
         workflow_loader=load_workflow,
     )
-    inputs = {
-        "repo_path": str(env["sub"]), "story_key": STORY, "stage": stage,
-        "story_path": "story.md", "guide_path": "guide.md", "spec_path": "specs/story.md",
-        "branch": BRANCH, "base_ref": env["base"], "change_id": "c1", "inventory_version": "v1",
-        "actor": actor, "base_branch": "main", "remote": "origin", "parent_path": str(env["parent"]),
-        "parent_branch": "main", "status_path": "status.yaml",
-    }
-    if method:
-        inputs["method"] = method
-    return asyncio.run(WorkflowExecutor(primitive, deps=dependencies).execute(WorkflowParser.parse(WORKFLOW.read_text()), inputs))
+    if entry:
+        inputs = {
+            "repo_path": str(env["sub"]),
+            "story_key": STORY,
+            "method": method,
+        }
+        workflow = ENTRY_WORKFLOW
+    else:
+        inputs = {
+            "repo_path": str(env["sub"]), "story_key": STORY, "stage": stage,
+            "story_path": "story.md", "guide_path": "guide.md", "spec_path": "specs/story.md",
+            "branch": BRANCH, "base_ref": env["base"], "change_id": "c1", "inventory_version": "v1",
+            "actor": actor, "base_branch": "main", "remote": "origin", "parent_path": str(env["parent"]),
+            "parent_branch": "main", "status_path": "status.yaml",
+        }
+        if method:
+            inputs["method"] = method
+        workflow = WORKFLOW
+    return asyncio.run(WorkflowExecutor(primitive, deps=dependencies).execute(WorkflowParser.parse(workflow.read_text()), inputs))
 
 def _deliver_records(home: Path) -> list[dict[str, Any]]:
     return [

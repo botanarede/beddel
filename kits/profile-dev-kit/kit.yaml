@@ -161,6 +161,10 @@ tools:
     target: "beddel_profile_dev.tools.deliver:profile_deliver_approval"
     description: "Check and settle the Delivery Approval stage"
     category: profile
+  - name: profile_deliver_derive
+    target: "beddel_profile_dev.tools.method:profile_deliver_derive"
+    description: "Derive a three-input Delivery request from committed state"
+    category: profile
   - name: profile_deliver_method
     target: "beddel_profile_dev.tools.method:profile_deliver_method"
     description: "Read a committed Delivery method"
@@ -214,6 +218,9 @@ workflows:
   - name: deliver-story
     path: workflows/deliver-story.yaml
     description: Chains the Delivery stages or runs one selected stage, waits for Approval and records the complete Delivery outcome.
+  - name: deliver
+    path: workflows/deliver.yaml
+    description: Derives a Delivery from repo_path, story_key and method, then runs the chained workflow.
   - name: read-delivery-summary
     path: workflows/read-delivery-summary.yaml
     description: Reads a delivery cost summary from existing profile records.
@@ -288,6 +295,8 @@ targets:
         target: "beddel_profile_dev.tools.deliver:profile_deliver_gate"
       - name: profile_deliver_approval
         target: "beddel_profile_dev.tools.deliver:profile_deliver_approval"
+      - name: profile_deliver_derive
+        target: "beddel_profile_dev.tools.method:profile_deliver_derive"
       - name: profile_deliver_method
         target: "beddel_profile_dev.tools.method:profile_deliver_method"
       - name: profile_stage_instruction
