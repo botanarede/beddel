@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import subprocess
 from pathlib import Path
@@ -20,10 +21,11 @@ from beddel.error_codes import AGENT_EXECUTION_FAILED
 from beddel.primitives import register_builtins
 from beddel.tools.kits import load_kit
 from beddel_profile_dev._io import records_root
+from beddel_profile_dev.hook_proof import HOOK_KEYS, policy_path
 from beddel_profile_dev.tools.plan import profile_plan_settle
 from beddel_profile_dev.tools.stage_outcome import profile_record_stage_outcome
 
-from ._helpers import commit_all, init_repo
+from ._helpers import commit_all, emit_hook_events, init_repo
 
 KIT_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_PATH = KIT_ROOT / "workflows" / "plan-story.yaml"
@@ -54,6 +56,12 @@ class FakeAgent:
         output_schema: dict[str, Any] | None = None,
     ) -> AgentResult:
         self.calls += 1
+        events: list[Any] = ["pre", "post", "stop"]
+        if self.mode == "missing-stop":
+            events = ["pre", "post"]
+        elif self.mode == "hook-error":
+            events = [{"hook_event_name": "unknown"}, "stop"]
+        emit_hook_events(self.repo, events)
         spec = self.repo / "specs" / "story.md"
         spec.parent.mkdir(exist_ok=True)
         if self.mode == "error":
@@ -152,12 +160,20 @@ def test_workflow_shape() -> None:
         "profile_plan_reconcile",
         "profile_plan_settle",
         "profile_record_stage_outcome",
+        "profile_hook_open",
+        "profile_hook_arm",
+        "profile_hook_disarm",
+        "profile_hook_proof",
     ]
     assert "Coding agent" in document["description"]
     assert {step["id"] for step in document["steps"]} == {
+        "hook_open",
         "reconcile",
+        "arm",
         "author",
+        "disarm",
         "settle",
+        "proof",
         "record",
     }
     author = next(step for step in document["steps"] if step["id"] == "author")
@@ -169,8 +185,11 @@ def test_workflow_shape() -> None:
     workflow = WorkflowParser.parse(WORKFLOW_PATH.read_text())
     steps = {step.id: step for step in workflow.steps}
     assert steps["reconcile"].execution_strategy.type.value == "skip"
-    assert steps["author"].if_condition == "$stepResult.reconcile.result.author == true"
+    assert steps["arm"].if_condition == "$stepResult.reconcile.result.author == true"
+    assert steps["author"].if_condition == "$stepResult.arm.result.armed == true"
+    assert steps["disarm"].if_condition == "$stepResult.reconcile.result.author == true"
     assert steps["settle"].execution_strategy.type.value == "fail"
+    assert steps["proof"].execution_strategy.type.value == "fail"
     assert steps["record"].execution_strategy.type.value == "fail"
 
 
@@ -182,6 +201,8 @@ def test_workflow_shape() -> None:
         ("extra", "failed", "scope.exceeded", 1),
         ("commit", "failed", "head.moved", 1),
         ("error", "failed", "spec.incomplete", 1),
+        ("missing-stop", "succeeded", "hooks.missing", 1),
+        ("hook-error", "succeeded", "hooks.errors", 1),
     ],
 )
 def test_workflow_settles_agent_modes(
@@ -198,11 +219,23 @@ def test_workflow_settles_agent_modes(
     fake = FakeAgent(repo, mode)
     result = _run(repo, fake, monkeypatch)
     assert result["step_results"]["settle"]["result"]["outcome"] == expected
-    assert result["step_results"]["settle"]["result"]["reason"] == reason
+    assert result["step_results"]["settle"]["result"]["reason"] == (
+        "spec.created" if reason.startswith("hooks.") else reason
+    )
     assert fake.calls == calls
     records = records_root(repo, "records/profile-dev") / "stage-outcomes"
     stored = json.loads((records / "1.json").read_text())
     assert stored["reason"] == reason
+    assert stored["outcome"] == ("failed" if reason.startswith("hooks.") else expected)
+    if mode == "complete":
+        refs = stored["refs"]
+        assert set(HOOK_KEYS) <= set(refs)
+        assert refs["hook_stop"] == calls
+        assert refs["hook_errors"] == 0
+        assert (
+            refs["hook_policy_sha256"]
+            == hashlib.sha256(policy_path("plan").read_bytes()).hexdigest()
+        )
 
 
 def test_reuse_and_refusal_skip_agent_and_still_record(
@@ -224,6 +257,7 @@ def test_reuse_and_refusal_skip_agent_and_still_record(
     second_record = json.loads((records / "2.json").read_text())
     assert second_record["record"] == 2
     assert second_record["reason"] == "spec.reused"
+    assert all(second_record["refs"][key] is None for key in HOOK_KEYS)
 
     repo2 = _repo(tmp_path / "refusal")
     (repo2 / "specs").rmdir()

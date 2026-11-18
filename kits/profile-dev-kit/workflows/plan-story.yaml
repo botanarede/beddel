@@ -9,6 +9,10 @@ allowed_tools:
   - profile_plan_reconcile
   - profile_plan_settle
   - profile_record_stage_outcome
+  - profile_hook_open
+  - profile_hook_arm
+  - profile_hook_disarm
+  - profile_hook_proof
 inputs:
   - repo_path
   - story_key
@@ -16,6 +20,14 @@ inputs:
   - guide_path
   - spec_path
 steps:
+  - id: hook_open
+    primitive: tool
+    execution_strategy:
+      type: skip
+    config:
+      tool: profile_hook_open
+      arguments:
+        stage: plan
   - id: reconcile
     primitive: tool
     execution_strategy:
@@ -28,9 +40,20 @@ steps:
         story_path: "$input.story_path"
         guide_path: "$input.guide_path"
         spec_path: "$input.spec_path"
+  - id: arm
+    primitive: tool
+    if: "$stepResult.reconcile.result.author == true"
+    execution_strategy:
+      type: fail
+    config:
+      tool: profile_hook_arm
+      arguments:
+        repo_path: "$input.repo_path"
+        stage: plan
+        hook: "$stepResult.hook_open.result"
   - id: author
     primitive: agent-exec
-    if: "$stepResult.reconcile.result.author == true"
+    if: "$stepResult.arm.result.armed == true"
     execution_strategy:
       type: skip
     timeout: 600
@@ -47,6 +70,16 @@ steps:
         set story_key to $input.story_key and size_cap_bytes to 64000. Keep the spec
         within the 64000-byte cap. Change no other file. Do not implement, test, verify,
         commit or push.
+  - id: disarm
+    primitive: tool
+    if: "$stepResult.reconcile.result.author == true"
+    execution_strategy:
+      type: fail
+    config:
+      tool: profile_hook_disarm
+      arguments:
+        repo_path: "$input.repo_path"
+        armed: "$stepResult.arm.result"
   - id: settle
     primitive: tool
     execution_strategy:
@@ -60,6 +93,18 @@ steps:
         guide_path: "$input.guide_path"
         spec_path: "$input.spec_path"
         reconcile: "$stepResult.reconcile.result"
+  - id: proof
+    primitive: tool
+    execution_strategy:
+      type: fail
+    config:
+      tool: profile_hook_proof
+      arguments:
+        stage: plan
+        hook: "$stepResult.hook_open.result"
+        calls:
+          - "$stepResult.arm.result"
+        settled: "$stepResult.settle.result"
   - id: record
     primitive: tool
     execution_strategy:
@@ -68,8 +113,8 @@ steps:
       tool: profile_record_stage_outcome
       arguments:
         repo_path: "$input.repo_path"
-        story_key: "$stepResult.settle.result.story_key"
-        stage: plan
-        outcome: "$stepResult.settle.result.outcome"
-        reason: "$stepResult.settle.result.reason"
-        refs: "$stepResult.settle.result.refs"
+        story_key: "$stepResult.proof.result.story_key"
+        stage: "$stepResult.proof.result.stage"
+        outcome: "$stepResult.proof.result.outcome"
+        reason: "$stepResult.proof.result.reason"
+        refs: "$stepResult.proof.result.refs"

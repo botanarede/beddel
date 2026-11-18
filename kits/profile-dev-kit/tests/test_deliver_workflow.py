@@ -53,7 +53,7 @@ from beddel.domain.registry import PrimitiveRegistry
 from beddel.primitives import register_builtins
 from beddel.tools.kits import load_kit
 
-from ._helpers import commit_all, git, stub_gate_tools
+from ._helpers import commit_all, emit_hook_events, git, stub_gate_tools
 from .test_integrate_workflow import _fixture, _Host
 
 STORY = "7-7-deliver-story-workflow-chains-stages-and-resumes"
@@ -73,6 +73,7 @@ class _CodingAgent:
 
     async def execute(self, prompt: str, **kwargs: Any) -> AgentResult:
         self.calls += 1
+        emit_hook_events(self.repo, ["pre", "post", "stop"])
         if "one plan stage" in prompt:
             (self.repo / "specs" / "story.md").write_bytes(_spec())
         elif "one implementation unit" in prompt:
@@ -264,6 +265,7 @@ def test_stage_failure_unrecorded_stage_and_fix_bound_do_not_advance(tmp_path: P
     class FailingAgent(_CodingAgent):
         async def execute(self, prompt: str, **kwargs: Any) -> AgentResult:
             self.calls += 1
+            emit_hook_events(self.repo, ["pre", "post", "stop"])
             if "one plan stage" in prompt:
                 (self.repo / "specs" / "story.md").write_bytes(_spec())
                 return AgentResult(0, "", [], [], {}, "fake")

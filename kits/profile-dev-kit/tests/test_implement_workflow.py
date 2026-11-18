@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import subprocess
 from pathlib import Path
@@ -20,10 +21,11 @@ from beddel.error_codes import AGENT_EXECUTION_FAILED
 from beddel.primitives import register_builtins
 from beddel.tools.kits import load_kit
 from beddel_profile_dev._errors import ProfileError
+from beddel_profile_dev.hook_proof import HOOK_KEYS, policy_path
 from beddel_profile_dev.tools import implement as implement_tools
 from beddel_profile_dev.tools.stage_outcome import profile_record_stage_outcome
 
-from ._helpers import commit_all, git, init_repo, stub_gate_tools
+from ._helpers import commit_all, emit_hook_events, git, init_repo, stub_gate_tools
 from .test_implement import BRANCH, SPEC_PATH, STORY, spec_bytes
 
 KIT_ROOT = Path(__file__).resolve().parents[1]
@@ -52,6 +54,12 @@ class FakeAgent:
         output_schema: dict[str, Any] | None = None,
     ) -> AgentResult:
         self.calls += 1
+        events: list[Any] = ["pre", "post", "stop"]
+        if self.mode == "missing-stop":
+            events = ["pre", "post"]
+        elif self.mode == "hook-error":
+            events = [{"hook_event_name": "unknown"}, "stop"]
+        emit_hook_events(self.repo, events)
         if self.mode == "error":
             raise AgentError(code=AGENT_EXECUTION_FAILED, message="fake agent failed")
         if self.mode == "nothing":
@@ -156,13 +164,22 @@ def test_workflow_shape_and_safety() -> None:
         "profile_implement_prepare",
         "profile_implement_settle",
         "profile_record_stage_outcome",
+        "profile_hook_open",
+        "profile_hook_arm",
+        "profile_hook_disarm",
+        "profile_hook_proof",
     ]
     assert "Coding agent" in document["description"]
     assert {step["id"] for step in document["steps"]} == {
+        "hook_open",
         "prepare",
+        "arm",
         "implement",
+        "disarm",
         "settle",
         "settle_stop",
+        "proof",
+        "proof_stop",
         "record",
         "record_stop",
     }
@@ -174,9 +191,10 @@ def test_workflow_shape_and_safety() -> None:
     assert agent["timeout"] <= 600
     workflow = WorkflowParser.parse(WORKFLOW_PATH.read_text())
     steps = {step.id: step for step in workflow.steps}
+    assert steps["arm"].if_condition == "$stepResult.prepare.result.implement == true"
+    assert steps["implement"].if_condition == "$stepResult.arm.result.armed == true"
     assert (
-        steps["implement"].if_condition
-        == "$stepResult.prepare.result.implement == true"
+        steps["disarm"].if_condition == "$stepResult.prepare.result.implement == true"
     )
     assert (
         steps["settle"].if_condition == "$stepResult.prepare.result.implement == true"
@@ -227,13 +245,19 @@ def test_two_unit_sequence_records_and_resumes(
     assert stop["outcome"] == "succeeded"
     assert fake.calls == 2
     assert git(repo, "rev-parse", "HEAD") == third_head
-    stored = list((tmp_path / "home").rglob("*.json"))
+    stored = list((tmp_path / "home").rglob("stage-outcomes/*.json"))
     assert len(stored) == 3
-    assert sorted(json.loads(path.read_text())["record"] for path in stored) == [
-        1,
-        2,
-        3,
-    ]
+    records = [json.loads(path.read_text()) for path in sorted(stored)]
+    for record in records[:2]:
+        refs = record["refs"]
+        assert set(HOOK_KEYS) <= set(refs)
+        assert refs["hook_stop"] == 1
+        assert refs["hook_errors"] == 0
+        assert (
+            refs["hook_policy_sha256"]
+            == hashlib.sha256(policy_path("implement").read_bytes()).hexdigest()
+        )
+    assert all(records[2]["refs"][key] is None for key in HOOK_KEYS)
 
 
 @pytest.mark.parametrize(
@@ -245,6 +269,8 @@ def test_two_unit_sequence_records_and_resumes(
         ("error", "agent.failed"),
         ("switch", "branch.moved"),
         ("regression", "gate.regressed"),
+        ("missing-stop", "hooks.missing"),
+        ("hook-error", "hooks.errors"),
     ],
 )
 def test_agent_modes_are_recorded_without_losing_base(
@@ -260,13 +286,21 @@ def test_agent_modes_are_recorded_without_losing_base(
     settle = result["step_results"].get(
         "settle", result["step_results"].get("settle_stop")
     )
-    assert settle["result"]["reason"] == reason
-    assert settle["result"]["outcome"] == "failed"
-    records = list((tmp_path / mode / "home").rglob("*.json"))
+    assert settle["result"]["reason"] == (
+        "unit.committed" if reason.startswith("hooks.") else reason
+    )
+    assert settle["result"]["outcome"] == (
+        "succeeded" if reason.startswith("hooks.") else "failed"
+    )
+    records = list((tmp_path / mode / "home").rglob("stage-outcomes/*.json"))
     assert len(records) == 1
     stored = json.loads(records[0].read_text())
     assert (stored["outcome"], stored["reason"]) == ("failed", reason)
-    assert git(repo, "rev-parse", "HEAD") == before or reason == "head.moved"
+    assert git(repo, "rev-parse", "HEAD") == before or reason in {
+        "head.moved",
+        "hooks.missing",
+        "hooks.errors",
+    }
 
 
 def test_bad_repository_fails_at_record_boundary(
@@ -303,7 +337,7 @@ def test_absorbed_prepare_error_records_prepare_failed(
     result = _run(repo, base, FakeAgent(repo))
     stop = result["step_results"]["settle_stop"]["result"]
     assert (stop["outcome"], stop["reason"]) == ("failed", "prepare.failed")
-    records = list((tmp_path / "home").rglob("*.json"))
+    records = list((tmp_path / "home").rglob("stage-outcomes/*.json"))
     assert len(records) == 1
     stored = json.loads(records[0].read_text())
     assert (stored["outcome"], stored["reason"]) == ("failed", "prepare.failed")
