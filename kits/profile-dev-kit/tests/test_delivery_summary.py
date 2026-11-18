@@ -382,3 +382,18 @@ def test_malformed_gate_outcome_fails_closed_without_writing(
         profile_read_delivery_summary(str(repo), STORY)
     assert error.value.code == PROFILE_REPOSITORY_INVALID
     assert _tree_digest(root) == before
+
+
+def test_malformed_stage_outcome_fails_closed_without_writing(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path)
+    root = _complete(repo)
+    stage_files = sorted((root / "stage-outcomes").rglob("*.json"))
+    assert stage_files
+    stage_files[0].write_text("{")
+    before = _tree_digest(root)
+    with pytest.raises(ProfileError) as error:
+        profile_read_delivery_summary(str(repo), STORY)
+    assert error.value.code == PROFILE_REPOSITORY_INVALID
+    assert _tree_digest(root) == before
