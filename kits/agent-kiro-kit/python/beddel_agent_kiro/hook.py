@@ -18,7 +18,7 @@ DEFAULT_POINTERS_DIR = Path.home() / ".local/state/beddel/kiro-hook/pointers"
 SCHEMA = "beddel.kiro-hook/1"
 _POLICY_SCHEMA = "beddel.kiro-hook-policy/1"
 _POINTER_KEYS = frozenset({"policy", "log_path", "stage"})
-_POLICY_KEYS = frozenset({"schema", "rules"})
+_POLICY_KEYS = frozenset({"schema", "rules", "max_tool_calls"})
 _RULE_KEYS = frozenset({"id", "effect", "tool_class", "argv_prefix"})
 _ID_RE = re.compile(r"[a-z0-9._-]{1,64}")
 _CMD_RE = re.compile(r"[a-z0-9._-]{1,32}")
@@ -139,6 +139,9 @@ def _validate_policy(policy: Any) -> None:
         policy.get("rules"), list
     ):
         raise ValueError("invalid policy schema")
+    max_tool_calls = policy.get("max_tool_calls")
+    if type(max_tool_calls) is not int or max_tool_calls < 1:
+        raise ValueError("invalid max tool calls")
     seen: set[str] = set()
     for rule in policy["rules"]:
         if not isinstance(rule, dict) or not set(rule) <= _RULE_KEYS:
@@ -282,7 +285,9 @@ def _record(
     return {key: values[key] for key in _LOG_KEYS}
 
 
-def _append_log(path: Path, record: dict[str, Any]) -> None:
+def _append_log(
+    path: Path, record: dict[str, Any], max_tool_calls: int
+) -> tuple[str, str]:
     import fcntl
 
     if path.is_symlink() or not path.parent.is_dir():
@@ -306,15 +311,22 @@ def _append_log(path: Path, record: dict[str, Any]) -> None:
         locked = True
         read_fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
         maximum = 0
+        pre_calls = 0
         with os.fdopen(read_fd, "r", encoding="utf-8", errors="replace") as stream:
             read_fd = None
             for line in stream:
                 try:
                     value = json.loads(line)
-                    if isinstance(value, dict) and isinstance(value.get("seq"), int):
-                        maximum = max(maximum, value["seq"])
+                    if isinstance(value, dict):
+                        if isinstance(value.get("seq"), int):
+                            maximum = max(maximum, value["seq"])
+                        if value.get("event") == "pre":
+                            pre_calls += 1
                 except (json.JSONDecodeError, TypeError):
                     pass
+        if record.get("event") == "pre" and pre_calls >= max_tool_calls:
+            record["decision"] = "deny"
+            record["rule_id"] = "cap.max_tool_calls"
         record["seq"] = maximum + 1
         raw = (
             json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n"
@@ -322,6 +334,7 @@ def _append_log(path: Path, record: dict[str, Any]) -> None:
         while raw:
             raw = raw[os.write(fd, raw) :]
         os.fsync(fd)
+        return str(record["decision"]), str(record["rule_id"])
     finally:
         if locked:
             fcntl.flock(fd, fcntl.LOCK_UN)
@@ -350,6 +363,7 @@ def _run(payload: dict[str, Any], pointers: Path) -> int:
     event = _event_name(payload.get("hook_event_name"))
     log_path: Path | None = None
     policy_sha: str | None = None
+    policy: dict[str, Any] | None = None
     loaded = False
     try:
         if not _secure_file(pointer):
@@ -371,7 +385,7 @@ def _run(payload: dict[str, Any], pointers: Path) -> int:
             if event == "pre"
             else ("allow", f"hook.{event}")
         )
-        _append_log(
+        decision, rule = _append_log(
             log_path,
             _record(
                 event,
@@ -383,6 +397,7 @@ def _run(payload: dict[str, Any], pointers: Path) -> int:
                 command,
                 tool_class,
             ),
+            policy["max_tool_calls"],
         )
         _emit(decision, rule)
         return 0 if decision == "allow" else 2
@@ -403,6 +418,7 @@ def _run(payload: dict[str, Any], pointers: Path) -> int:
                         None,
                         None,
                     ),
+                    policy["max_tool_calls"] if policy is not None else 1,
                 )
             except BaseException:  # noqa: BLE001
                 log_path = None

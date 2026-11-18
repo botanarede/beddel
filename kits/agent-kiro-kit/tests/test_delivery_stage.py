@@ -201,6 +201,7 @@ async def test_trust_all_hook_policy_counts(
         json.dumps(
             {
                 "schema": "beddel.kiro-hook-policy/1",
+                "max_tool_calls": 100,
                 "rules": [
                     {
                         "id": "shell.git-push",
