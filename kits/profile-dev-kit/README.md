@@ -456,6 +456,39 @@ Run the workflow from the repository root, for example:
 beddel run -i ... workflows/plan-story.yaml
 ```
 
+## Delivery: hook policy and proof (Story 8.2)
+
+The plan, implement and verify-and-fix stages use tracked policies at
+`policies/plan.json`, `policies/implement.json` and
+`policies/verify-and-fix.json`. Each policy denies shell `git push` and `gh pr
+merge` before allowing the other declared shell, read and write classes. The
+policy copy and `hook.jsonl` live in one fresh 0700 run directory under
+`~/.local/state/beddel/kiro-hook/runs/`; the policy digest is recorded in the
+Stage outcome.
+
+Immediately before each Coding-agent call, the stage writes
+`~/.local/state/beddel/kiro-hook/pointers/<sha256(realpath(cwd))>.json` with
+absolute `policy`, `log_path` and `stage` values. The pointer is created with
+`O_CREAT|O_EXCL|O_NOFOLLOW` and mode 0600, and nothing is passed through the
+agent environment. An existing pointer refuses the call. The pointer is
+removed only when its bytes still match what the stage wrote. A pointer left by
+a killed run is stale and the operator must remove it before retrying.
+
+Stage refs contain these flat hook keys: `hook_log_sha256`, `hook_events`,
+`hook_pre`, `hook_post`, `hook_denied`, `hook_stop`, `hook_errors`,
+`hook_policy_sha256` and `kiro_session`. The Stage outcome accepts up to 32 refs,
+so the existing stage refs and these nine flat keys remain in the unchanged
+`profile-dev/stage-outcome/1` record schema. With N agent calls, the stage succeeds
+only when `hook_stop == N` and `hook_errors == 0`; missing or unreadable proof
+uses `hooks.missing`, and malformed or error events use `hooks.errors`. With no
+agent calls all nine keys are `null`. Hook policies, pointers and logs stay
+outside the records root and are not Evidence, Findings, Verdicts or Approval
+inputs.
+
+The hook wrapper does not normalize shell wrappers or grammar variants beyond
+the agent-kit hook's existing rules. The installed agent must use the default
+pointer directory. Review gets no pointer or hook proof (D-37).
+
 ## Delivery: implement stage
 
 `implement-story` takes `repo_path`, `story_key`, `spec_path`, `branch` and

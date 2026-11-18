@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -21,10 +22,12 @@ from beddel_profile_dev.findings import (
     ASSESSMENT_END,
     REVIEW_ASSESSMENT_SCHEMA,
 )
+from beddel_profile_dev.hook_proof import HOOK_KEYS, policy_path
 
 from ._helpers import (
     FakeReviewAdapter,
     commit_all,
+    emit_hook_events,
     git,
     good,
     init_repo,
@@ -54,6 +57,10 @@ def test_workflow_shape_and_bound() -> None:
         "profile_fix_reconcile",
         "profile_fix_settle",
         "profile_record_stage_outcome",
+        "profile_hook_open",
+        "profile_hook_arm",
+        "profile_hook_disarm",
+        "profile_hook_proof",
     ]
     assert "mcp_servers" not in document
     assert not any(
@@ -62,19 +69,25 @@ def test_workflow_shape_and_bound() -> None:
     )
     steps = WorkflowParser.parse(WORKFLOW_PATH.read_text()).steps
     assert [step.id for step in steps] == [
+        "hook_open",
         "reconcile",
         "verify",
         "round_1",
+        "arm_1",
         "fix_1",
+        "disarm_1",
         "settle_1",
         "settle_1_stop",
         "verify_1",
         "round_2",
+        "arm_2",
         "fix_2",
+        "disarm_2",
         "settle_2",
         "settle_2_stop",
         "verify_2",
         "close",
+        "proof",
         "record",
     ]
     assert all(
@@ -105,17 +118,21 @@ def test_workflow_shape_and_bound() -> None:
         for step in nested
     )
     assert all(step.execution_strategy.type is StrategyType.SKIP for step in nested)
-    assert steps[4].output_key == steps[5].output_key == "fixed_1"
-    assert steps[9].output_key == steps[10].output_key == "fixed_2"
+    assert steps[7].output_key == steps[8].output_key == "fixed_1"
+    assert steps[14].output_key == steps[15].output_key == "fixed_2"
     assert {
         step.id: step.if_condition for step in steps if step.if_condition is not None
     } == {
         "verify": "$stepResult.reconcile.result.verify == true",
-        "fix_1": "$stepResult.round_1.result.fix == true",
+        "arm_1": "$stepResult.round_1.result.fix == true",
+        "fix_1": "$stepResult.arm_1.result.armed == true",
+        "disarm_1": "$stepResult.round_1.result.fix == true",
         "settle_1": "$stepResult.round_1.result.fix == true",
         "settle_1_stop": "$stepResult.round_1.result.fix != true",
         "verify_1": "$stepResult.fixed_1.result.verify == true",
-        "fix_2": "$stepResult.round_2.result.fix == true",
+        "arm_2": "$stepResult.round_2.result.fix == true",
+        "fix_2": "$stepResult.arm_2.result.armed == true",
+        "disarm_2": "$stepResult.round_2.result.fix == true",
         "settle_2": "$stepResult.round_2.result.fix == true",
         "settle_2_stop": "$stepResult.round_2.result.fix != true",
         "verify_2": "$stepResult.fixed_2.result.verify == true",
@@ -123,7 +140,7 @@ def test_workflow_shape_and_bound() -> None:
     assert all(
         step.execution_strategy.type is StrategyType.FAIL
         for step in steps
-        if step.primitive == "tool" and step.id != "reconcile"
+        if step.primitive == "tool" and step.id not in {"reconcile", "hook_open"}
     )
 
 
@@ -172,9 +189,15 @@ def _repo(tmp_path: Path) -> tuple[Path, str]:
 
 
 class FixAgent:
-    def __init__(self, repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def __init__(
+        self,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        hook_mode: str = "complete",
+    ) -> None:
         self.repo = repo
         self.monkeypatch = monkeypatch
+        self.hook_mode = hook_mode
         self.calls = 0
 
     async def execute(
@@ -187,6 +210,12 @@ class FixAgent:
         output_schema: dict[str, Any] | None = None,
     ) -> AgentResult:
         self.calls += 1
+        events: list[Any] = ["pre", "post", "stop"]
+        if self.hook_mode == "missing-stop":
+            events = ["pre", "post"]
+        elif self.hook_mode == "hook-error":
+            events = [{"hook_event_name": "unknown"}, "stop"]
+        emit_hook_events(self.repo, events)
         (self.repo / "src/api.py").write_text("x = 3\n")
         self.monkeypatch.setenv("STUB_EXIT_PYTEST", "0")
         return AgentResult(0, "", [], [], {}, "fake")
@@ -264,6 +293,10 @@ def test_in_process_consistent_run_has_one_report_and_no_fix_agent(
         0,
     )
     assert len(list((tmp_path / "home").rglob("changes/c1/report/*.json"))) == 1
+    stored = json.loads(
+        next((tmp_path / "home").rglob("stage-outcomes/*.json")).read_text()
+    )
+    assert all(stored["refs"][key] is None for key in HOOK_KEYS)
 
 
 # fmt: off
@@ -299,18 +332,30 @@ def test_in_process_fix_round_commits_and_reverifies(
     links = [link for link in second["reverification"]["links"] if link["class"] == "gate-unit"]
     assert links and all(link["result"] == "resolved" for link in links)
     assert all(not item["ref"].startswith(f"revisions/{first['revision']}/") for item in second["reads"] if "ref" in item)
+    record = json.loads(
+        next((tmp_path / "home").rglob("stage-outcomes/*.json")).read_text()
+    )
+    refs = record["refs"]
+    assert set(HOOK_KEYS) <= set(refs)
+    assert refs["hook_stop"] == 1
+    assert refs["hook_errors"] == 0
+    assert refs["hook_policy_sha256"] == hashlib.sha256(
+        policy_path("verify-and-fix").read_bytes()
+    ).hexdigest()
 class ErrorAgent(FixAgent):
     async def execute(self, prompt: str, **kwargs: Any) -> AgentResult:
         from beddel.domain.errors import AgentError
         from beddel.error_codes import AGENT_EXECUTION_FAILED
 
         self.calls += 1
+        emit_hook_events(self.repo, ["pre", "post", "stop"])
         raise AgentError(code=AGENT_EXECUTION_FAILED, message="x")
 
 
 class PersistentAgent(FixAgent):
     async def execute(self, prompt: str, **kwargs: Any) -> AgentResult:
         self.calls += 1
+        emit_hook_events(self.repo, ["pre", "post", "stop"])
         (self.repo / "src/api.py").write_text(f"x = {self.calls + 2}\n")
         return AgentResult(0, "", [], [], {}, "fake")
 
@@ -318,6 +363,7 @@ class PersistentAgent(FixAgent):
 class OutOfScopeAgent(FixAgent):
     async def execute(self, prompt: str, **kwargs: Any) -> AgentResult:
         self.calls += 1
+        emit_hook_events(self.repo, ["pre", "post", "stop"])
         (self.repo / "README.md").write_text("outside\n")
         return AgentResult(0, "", [], [], {}, "fake")
 
@@ -350,7 +396,11 @@ def test_workflow_persistent_finding_hits_bound_and_rerun_reuses_report(
     assert not list(home.rglob("changes/c1/approval.json"))
     rerun = _run_stage(repo, fake, base)
     assert len(list(home.rglob("changes/c1/report/*.json"))) == 3
-    assert [path.name for path in sorted((tmp_path / "home").rglob("stage-outcomes/*.json"))] == ["1.json", "2.json"]
+    records = sorted(home.rglob("stage-outcomes/*.json"))
+    assert [path.name for path in records] == ["1.json", "2.json"]
+    first_stage = json.loads(records[0].read_text())
+    assert first_stage["refs"]["hook_stop"] == 2
+    assert first_stage["refs"]["hook_errors"] == 0
     assert rerun["step_results"]["record"]["result"]["record"] == 2
 
 
@@ -393,3 +443,27 @@ def test_workflow_maps_agent_error_refusal_timeout_inventory_and_scope(
 
 
 # fmt: on
+
+
+@pytest.mark.parametrize(
+    ("hook_mode", "reason"),
+    [("missing-stop", "hooks.missing"), ("hook-error", "hooks.errors")],
+)
+def test_workflow_records_hook_proof_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    hook_mode: str,
+    reason: str,
+) -> None:
+    repo, base = _repo(tmp_path / hook_mode)
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("PATH", stub_gate_tools(tmp_path / hook_mode))
+    monkeypatch.setenv("HOME", str(tmp_path / hook_mode / "home"))
+    monkeypatch.setenv("STUB_EXIT_PYTEST", "1")
+    _install_review(monkeypatch)
+    result = _run_stage(repo, FixAgent(repo, monkeypatch, hook_mode), base)
+    record = json.loads(
+        next((tmp_path / hook_mode / "home").rglob("stage-outcomes/*.json")).read_text()
+    )
+    assert record["reason"] == reason
+    assert result["step_results"]["record"]["result"]["record"] == 1

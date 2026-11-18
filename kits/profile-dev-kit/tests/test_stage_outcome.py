@@ -98,7 +98,7 @@ def test_preexisting_and_racing_files_stay_byte_identical(
         ({"story_key": None, "outcome": "failed"}, "story_key.required"),
         ({"refs": {"Bad": 1}}, "refs.invalid"),
         ({"refs": {"count": -1}}, "refs.invalid"),
-        ({"refs": {f"key-{index}": index for index in range(17)}}, "refs.invalid"),
+        ({"refs": {f"key_{index}": index for index in range(33)}}, "refs.invalid"),
         ({"refs": {"value": "x" * 513}}, "refs.invalid"),
     ],
 )
@@ -192,3 +192,15 @@ def test_stage_outcomes_term_is_isolated_to_its_tool() -> None:
         if "stage-outcomes" in path.read_text()
     }
     assert matches == {"stage_outcome.py", "deliver.py"}
+
+
+def test_thirty_two_valid_refs_are_accepted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = repo_fixture(tmp_path)
+    record_root(tmp_path, repo, monkeypatch)
+    refs = {f"key_{index}": index for index in range(32)}
+    result = profile_record_stage_outcome(
+        str(repo), "story-1", "plan", "succeeded", "spec.created", refs
+    )
+    assert result["ok"] is True

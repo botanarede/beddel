@@ -109,6 +109,22 @@ tools:
     target: "beddel_profile_dev.tools.stage_outcome:profile_record_stage_outcome"
     description: "Append one create-only Stage outcome record outside the repository"
     category: profile
+  - name: profile_hook_open
+    target: "beddel_profile_dev.tools.hook:profile_hook_open"
+    description: "Open a private per-stage hook run and copy its tracked policy"
+    category: profile
+  - name: profile_hook_arm
+    target: "beddel_profile_dev.tools.hook:profile_hook_arm"
+    description: "Arm the exclusive Kiro hook pointer for the repository cwd"
+    category: profile
+  - name: profile_hook_disarm
+    target: "beddel_profile_dev.tools.hook:profile_hook_disarm"
+    description: "Remove an unchanged Kiro hook pointer after an agent call"
+    category: profile
+  - name: profile_hook_proof
+    target: "beddel_profile_dev.tools.hook:profile_hook_proof"
+    description: "Merge hook counts and proof gates into a Stage outcome"
+    category: profile
   - name: profile_implement_prepare
     target: "beddel_profile_dev.tools.implement:profile_implement_prepare"
     description: "Prepare one implementation unit on a feature branch"
@@ -231,6 +247,14 @@ targets:
         target: "beddel_profile_dev.tools.plan:profile_plan_settle"
       - name: profile_record_stage_outcome
         target: "beddel_profile_dev.tools.stage_outcome:profile_record_stage_outcome"
+      - name: profile_hook_open
+        target: "beddel_profile_dev.tools.hook:profile_hook_open"
+      - name: profile_hook_arm
+        target: "beddel_profile_dev.tools.hook:profile_hook_arm"
+      - name: profile_hook_disarm
+        target: "beddel_profile_dev.tools.hook:profile_hook_disarm"
+      - name: profile_hook_proof
+        target: "beddel_profile_dev.tools.hook:profile_hook_proof"
       - name: profile_implement_prepare
         target: "beddel_profile_dev.tools.implement:profile_implement_prepare"
       - name: profile_implement_settle

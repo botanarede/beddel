@@ -48,7 +48,7 @@ def _has_control(value: str) -> bool:
 
 
 def _valid_refs(refs: object) -> bool:
-    if not isinstance(refs, dict) or len(refs) > 16:
+    if not isinstance(refs, dict) or len(refs) > 32:
         return False
     for key, value in refs.items():
         if not isinstance(key, str) or _REF_KEY.fullmatch(key) is None:

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import copy
+import importlib.util
+import io
+import json
 import os
 import subprocess
 import sys
@@ -295,3 +298,45 @@ def fake_review_env(
         "FAKE_REVIEW_MODE": mode,
         "FAKE_REVIEW_LOG": str(tmp_path / "review-calls.jsonl"),
     }
+
+
+def emit_hook_events(cwd: Path, events: list[Any]) -> None:
+    """Run the agent-kit hook module for fake CLI events without changing sys.path."""
+    from beddel_profile_dev.hook_proof import pointers_dir
+
+    hook_path = (
+        Path(__file__).resolve().parents[2]
+        / "agent-kiro-kit"
+        / "python"
+        / "beddel_agent_kiro"
+        / "hook.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "beddel_agent_kiro_hook_test", hook_path
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("hook module could not be loaded")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    names = {"pre": "preToolUse", "post": "postToolUse", "stop": "stop"}
+    for event in events:
+        event_name = names.get(str(event), str(event))
+        payload: dict[str, Any] = {
+            "cwd": str(cwd),
+            "hook_event_name": event_name,
+            "session_id": "fake-session",
+        }
+        if isinstance(event, dict):
+            payload.update(event)
+            payload["hook_event_name"] = names.get(
+                str(payload.get("hook_event_name")), str(payload.get("hook_event_name"))
+            )
+        if payload["hook_event_name"] != "stop":
+            payload.setdefault("tool_name", "read")
+            payload.setdefault("tool_input", {})
+        if payload["hook_event_name"] == "postToolUse":
+            payload.setdefault("tool_response", {})
+        module.main(
+            ["--pointers", str(pointers_dir())],
+            io.StringIO(json.dumps(payload)),
+        )

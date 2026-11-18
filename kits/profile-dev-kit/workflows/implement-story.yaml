@@ -9,6 +9,10 @@ allowed_tools:
   - profile_implement_prepare
   - profile_implement_settle
   - profile_record_stage_outcome
+  - profile_hook_open
+  - profile_hook_arm
+  - profile_hook_disarm
+  - profile_hook_proof
 inputs:
   - repo_path
   - story_key
@@ -16,6 +20,14 @@ inputs:
   - branch
   - base_ref
 steps:
+  - id: hook_open
+    primitive: tool
+    execution_strategy:
+      type: skip
+    config:
+      tool: profile_hook_open
+      arguments:
+        stage: implement
   - id: prepare
     primitive: tool
     execution_strategy:
@@ -28,9 +40,20 @@ steps:
         spec_path: "$input.spec_path"
         branch: "$input.branch"
         base_ref: "$input.base_ref"
+  - id: arm
+    primitive: tool
+    if: "$stepResult.prepare.result.implement == true"
+    execution_strategy:
+      type: fail
+    config:
+      tool: profile_hook_arm
+      arguments:
+        repo_path: "$input.repo_path"
+        stage: implement
+        hook: "$stepResult.hook_open.result"
   - id: implement
     primitive: agent-exec
-    if: "$stepResult.prepare.result.implement == true"
+    if: "$stepResult.arm.result.armed == true"
     execution_strategy:
       type: skip
     timeout: 600
@@ -44,6 +67,16 @@ steps:
         $stepResult.prepare.result.unit_id Change only those paths and files under
         them. Leave the spec unchanged. Do not stage, commit, push, create or switch
         branches, approve, verify or integrate.
+  - id: disarm
+    primitive: tool
+    if: "$stepResult.prepare.result.implement == true"
+    execution_strategy:
+      type: fail
+    config:
+      tool: profile_hook_disarm
+      arguments:
+        repo_path: "$input.repo_path"
+        armed: "$stepResult.arm.result"
   - id: settle
     primitive: tool
     execution_strategy:
@@ -73,6 +106,31 @@ steps:
         branch: "$input.branch"
         base_ref: "$input.base_ref"
         prepare: "$stepResult.prepare.result"
+  - id: proof
+    primitive: tool
+    if: "$stepResult.prepare.result.implement == true"
+    execution_strategy:
+      type: fail
+    config:
+      tool: profile_hook_proof
+      arguments:
+        stage: implement
+        hook: "$stepResult.hook_open.result"
+        calls:
+          - "$stepResult.arm.result"
+        settled: "$stepResult.settle.result"
+  - id: proof_stop
+    primitive: tool
+    if: "$stepResult.prepare.result.implement != true"
+    execution_strategy:
+      type: fail
+    config:
+      tool: profile_hook_proof
+      arguments:
+        stage: implement
+        hook: "$stepResult.hook_open.result"
+        calls: []
+        settled: "$stepResult.settle_stop.result"
   - id: record
     primitive: tool
     execution_strategy:
@@ -82,11 +140,11 @@ steps:
       tool: profile_record_stage_outcome
       arguments:
         repo_path: "$input.repo_path"
-        story_key: "$stepResult.settle.result.story_key"
-        stage: implement
-        outcome: "$stepResult.settle.result.outcome"
-        reason: "$stepResult.settle.result.reason"
-        refs: "$stepResult.settle.result.refs"
+        story_key: "$stepResult.proof.result.story_key"
+        stage: "$stepResult.proof.result.stage"
+        outcome: "$stepResult.proof.result.outcome"
+        reason: "$stepResult.proof.result.reason"
+        refs: "$stepResult.proof.result.refs"
   - id: record_stop
     primitive: tool
     execution_strategy:
@@ -96,8 +154,8 @@ steps:
       tool: profile_record_stage_outcome
       arguments:
         repo_path: "$input.repo_path"
-        story_key: "$stepResult.settle_stop.result.story_key"
-        stage: implement
-        outcome: "$stepResult.settle_stop.result.outcome"
-        reason: "$stepResult.settle_stop.result.reason"
-        refs: "$stepResult.settle_stop.result.refs"
+        story_key: "$stepResult.proof_stop.result.story_key"
+        stage: "$stepResult.proof_stop.result.stage"
+        outcome: "$stepResult.proof_stop.result.outcome"
+        reason: "$stepResult.proof_stop.result.reason"
+        refs: "$stepResult.proof_stop.result.refs"
