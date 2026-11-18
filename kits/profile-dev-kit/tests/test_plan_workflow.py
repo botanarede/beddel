@@ -194,6 +194,10 @@ def test_workflow_shape() -> None:
     assert (
         steps["author_method"].if_condition == "$stepResult.arm.result.method == true"
     )
+    assert steps["author_method"].config["prompt"] == (
+        steps["author"].config["prompt"]
+        + " Method instruction: $stepResult.method.result.instruction"
+    )
     assert steps["disarm"].if_condition == "$stepResult.reconcile.result.author == true"
     assert steps["settle"].execution_strategy.type.value == "fail"
     assert steps["proof"].execution_strategy.type.value == "fail"

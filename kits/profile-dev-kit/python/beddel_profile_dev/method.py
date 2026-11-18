@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Any
 
 import yaml
@@ -31,7 +32,7 @@ _INPUT_KEYS = (
 
 def _valid_text(value: object) -> bool:
     return isinstance(value, str) and not any(
-        ord(char) < 32 or ord(char) == 127 for char in value
+        unicodedata.category(char) in {"Cc", "Zl", "Zp"} for char in value
     )
 
 

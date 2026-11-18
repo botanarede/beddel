@@ -248,8 +248,18 @@ def test_arm_selects_native_or_method(
         },
     )
     assert method["armed"] and method["method"] and not method["native"]
-    assert method["instruction_sha256"] == "a" * 64
+    assert (
+        method["instruction_sha256"] == hashlib.sha256(b"Use the method.").hexdigest()
+    )
     profile_hook_disarm(str(repo), method, {"output": "ok"})
+    opened = profile_hook_open("implement")
+    mismatch = profile_hook_arm(
+        str(repo),
+        "implement",
+        opened,
+        {"stage": "plan", "instruction": "Use the method."},
+    )
+    assert not mismatch["armed"] and not pointer_path(repo).exists()
 
 
 def test_disarm_measures_and_classifies_timeout(
@@ -266,6 +276,17 @@ def test_disarm_measures_and_classifies_timeout(
     armed = profile_hook_arm(str(repo), "plan", opened)
     timing = profile_hook_disarm(str(repo), armed, None)
     assert timing["agent_ms"] == 600000 and timing["agent_state"] == "timeout"
+
+    for agent, state in (({"output": "ok"}, "ok"), (None, "failed")):
+        monkeypatch.setattr(
+            hook_tools,
+            "_clock",
+            iter((10**12, 10**12 + 599_000_000_000)).__next__,
+        )
+        opened = profile_hook_open("plan")
+        armed = profile_hook_arm(str(repo), "plan", opened)
+        timing = profile_hook_disarm(str(repo), armed, agent)
+        assert timing["agent_ms"] == 599000 and timing["agent_state"] == state
 
 
 def test_proof_timings_record_durations_and_override_with_timeout(
@@ -297,8 +318,9 @@ def test_proof_timings_record_durations_and_override_with_timeout(
     assert timeout["refs"]["agent_timeouts"] == 1
     unmeasured = profile_hook_proof("implement", opened, [armed], _settled(), [None])
     assert unmeasured["reason"] == "agent.unmeasured"
+    timing_keys = (*null_keys(), "agent_ms", "agent_timeouts", "instruction_sha256")
     empty = profile_hook_proof("implement", opened, [], _settled(), [])
-    assert all(empty["refs"][key] is None for key in null_keys())
+    assert all(empty["refs"][key] is None for key in timing_keys)
     refused = profile_hook_proof(
         "implement",
         opened,
@@ -307,7 +329,7 @@ def test_proof_timings_record_durations_and_override_with_timeout(
         [None],
     )
     assert refused["reason"] == "hooks.pointer_exists"
-    assert all(refused["refs"][key] is None for key in null_keys())
+    assert all(refused["refs"][key] is None for key in timing_keys)
 
 
 def test_proof_without_timings_is_unchanged(

@@ -124,6 +124,11 @@ def test_workflow_shape_and_bound() -> None:
     )
     assert all(step.execution_strategy.type is StrategyType.SKIP for step in nested)
     step_map = {step.id: step for step in steps}
+    for name in ("fix_1", "fix_2"):
+        assert step_map[f"{name}_method"].config["prompt"] == (
+            step_map[name].config["prompt"]
+            + " Method instruction: $stepResult.method.result.instruction"
+        )
     assert (
         step_map["settle_1"].output_key
         == step_map["settle_1_stop"].output_key

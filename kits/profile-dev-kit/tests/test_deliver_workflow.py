@@ -140,7 +140,7 @@ def _workflow_run(
         "story_path": "story.md", "guide_path": "guide.md", "spec_path": "specs/story.md",
         "branch": BRANCH, "base_ref": env["base"], "change_id": "c1", "inventory_version": "v1",
         "actor": actor, "base_branch": "main", "remote": "origin", "parent_path": str(env["parent"]),
-        "parent_branch": "main", "status_path": "status.yaml"
+        "parent_branch": "main", "status_path": "status.yaml",
     }
     if method:
         inputs["method"] = method

@@ -108,14 +108,50 @@ def test_native_method_runs_todays_prompts_to_the_approval_stop(
 def test_named_method_appends_instructions_and_stops_at_approval(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    agent, records = _go(tmp_path, monkeypatch, "alpha", _Prompts)
+    native_root = tmp_path / "native"
+    alpha_root = tmp_path / "alpha"
+    native_root.mkdir()
+    alpha_root.mkdir()
+    native_agent, _ = _go(native_root, monkeypatch, "", _Prompts)
+    agent, records = _go(alpha_root, monkeypatch, "alpha", _Prompts)
     assert _tuples(records) == TO_APPROVAL
-    assert agent.prompts[0].endswith("Method instruction: Plan this story.")
-    assert agent.prompts[1].endswith("Method instruction: Implement this unit.")
+    instructions = ["Plan this story.", "Implement this unit."]
+    assert agent.prompts == [
+        prompt + " Method instruction: " + instruction
+        for prompt, instruction in zip(native_agent.prompts, instructions)
+    ]
     refs = records[0]["refs"]
     assert refs["instruction_sha256"] == hashlib.sha256(b"Plan this story.").hexdigest()
     assert (refs["hook_stop"], refs["hook_errors"], refs["agent_timeouts"]) == (1, 0, 0)
     assert str(refs["agent_ms"]).isdigit()
+
+    pending = {
+        "verdict": "has pendency",
+        "items": {
+            "divergences": {"status": "present", "value": [{"finding_index": 0}]},
+            "pendencies": {
+                "status": "present",
+                "value": [{"finding_index": 0, "reason": "finding_blocking"}],
+            },
+        },
+    }
+    native_fix_root = tmp_path / "native-fix"
+    alpha_fix_root = tmp_path / "alpha-fix"
+    native_fix_root.mkdir()
+    alpha_fix_root.mkdir()
+    native_fix, _ = _go(native_fix_root, monkeypatch, "", _Prompts, fix_report=pending)
+    alpha_fix, _ = _go(
+        alpha_fix_root, monkeypatch, "alpha", _Prompts, fix_report=pending
+    )
+    assert len(native_fix.prompts) == len(alpha_fix.prompts)
+    fix_instructions = ["Plan this story.", "Implement this unit."] + [
+        "Fix these findings."
+    ] * max(0, len(native_fix.prompts) - 2)
+    assert alpha_fix.prompts == [
+        prompt + " Method instruction: " + instruction
+        for prompt, instruction in zip(native_fix.prompts, fix_instructions)
+    ]
+    assert any("verification fix round" in prompt for prompt in alpha_fix.prompts)
 
 
 def test_reused_spec_makes_no_plan_agent_call(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import time
 from collections.abc import Mapping
 from typing import Any
@@ -70,17 +71,21 @@ def profile_hook_arm(
                 and method.get("stage") == stage
                 and isinstance(method.get("instruction"), str)
             ):
+                instruction = method["instruction"]
                 result.update(
                     native=False,
                     method=True,
-                    instruction_sha256=method.get("instruction_sha256"),
+                    instruction_sha256=hashlib.sha256(
+                        instruction.encode("utf-8")
+                    ).hexdigest(),
                 )
             elif not isinstance(method, Mapping):
                 result["native"] = True
             else:
+                remove_pointer(repo_path, {**result, "armed": True})
+                result.pop("started_ns", None)
                 result["armed"] = False
                 result["reason"] = "hooks.unavailable"
-                remove_pointer(repo_path, result)
         return result
     except Exception:  # noqa: BLE001
         return {

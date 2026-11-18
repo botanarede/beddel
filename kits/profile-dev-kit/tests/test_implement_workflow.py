@@ -201,6 +201,10 @@ def test_workflow_shape_and_safety() -> None:
         steps["implement_method"].if_condition
         == "$stepResult.arm.result.method == true"
     )
+    assert steps["implement_method"].config["prompt"] == (
+        steps["implement"].config["prompt"]
+        + " Method instruction: $stepResult.method.result.instruction"
+    )
     assert (
         steps["disarm"].if_condition == "$stepResult.prepare.result.implement == true"
     )

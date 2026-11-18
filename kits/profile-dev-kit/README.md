@@ -593,8 +593,7 @@ agent prompt for the corresponding stage. The verify stage still runs
 timeout records `agent.timeout` and fails the stage. The file is read only from
 committed `HEAD`, never from an untracked work-tree file.
 
-The kit has no planning tool and no three-input entry workflow. The method file
-is the only place that selects a named delivery method.
+The method file is the only place that selects a named delivery method.
 
 ```text
 beddel run -i ... workflows/deliver-story.yaml
