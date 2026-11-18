@@ -577,6 +577,29 @@ once. Each run ends with a `deliver` record. One Change per run.
 beddel run -i ... workflows/deliver-story.yaml
 ```
 
+## Delivery: method file (Story 8.3a)
+
+`deliver-story` accepts an optional `method` input. When it names a method,
+`profile_deliver_method` reads `.beddel-profile/method.yaml` from `HEAD` and
+validates schema `profile-dev/method/1`. A missing or invalid file fails before
+any Delivery stage runs. `native` and an empty value select the unchanged kit
+prompts.
+
+A named method supplies neutral `instruction` values to the plan, implement and
+verify-and-fix stage workflows. The instruction is appended only to the Coding
+agent prompt for the corresponding stage. The verify stage still runs
+`verify-change` unchanged. Stage refs record `instruction_sha256`, measured
+`agent_ms` for every call and `agent_timeouts`; a call at the 600-second adapter
+timeout records `agent.timeout` and fails the stage. The file is read only from
+committed `HEAD`, never from an untracked work-tree file.
+
+The kit has no planning tool and no three-input entry workflow. The method file
+is the only place that selects a named delivery method.
+
+```text
+beddel run -i ... workflows/deliver-story.yaml
+```
+
 ## Delivery: summary (Story 8.7)
 
 `read-delivery-summary` is a read-only entry workflow. Given `repo_path` and

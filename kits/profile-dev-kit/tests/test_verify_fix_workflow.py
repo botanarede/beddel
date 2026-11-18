@@ -52,6 +52,7 @@ def test_workflow_shape_and_bound() -> None:
         "base_ref",
         "change_id",
         "inventory_version",
+        "instruction",
     ]
     assert document["allowed_tools"] == [
         "profile_fix_reconcile",
@@ -61,6 +62,7 @@ def test_workflow_shape_and_bound() -> None:
         "profile_hook_arm",
         "profile_hook_disarm",
         "profile_hook_proof",
+        "profile_stage_instruction",
     ]
     assert "mcp_servers" not in document
     assert not any(
@@ -73,8 +75,10 @@ def test_workflow_shape_and_bound() -> None:
         "reconcile",
         "verify",
         "round_1",
+        "method",
         "arm_1",
         "fix_1",
+        "fix_1_method",
         "disarm_1",
         "settle_1",
         "settle_1_stop",
@@ -82,6 +86,7 @@ def test_workflow_shape_and_bound() -> None:
         "round_2",
         "arm_2",
         "fix_2",
+        "fix_2_method",
         "disarm_2",
         "settle_2",
         "settle_2_stop",
@@ -96,7 +101,7 @@ def test_workflow_shape_and_bound() -> None:
         if step.id in {"reconcile", "round_1", "round_2", "close"}
     )
     agents = [step for step in steps if step.primitive == "agent-exec"]
-    assert len(agents) == 2
+    assert len(agents) == 4
     assert all(
         step.config["adapter"] == "kiro-cli"
         and step.config["sandbox"] == "workspace-write"
@@ -118,20 +123,32 @@ def test_workflow_shape_and_bound() -> None:
         for step in nested
     )
     assert all(step.execution_strategy.type is StrategyType.SKIP for step in nested)
-    assert steps[7].output_key == steps[8].output_key == "fixed_1"
-    assert steps[14].output_key == steps[15].output_key == "fixed_2"
+    step_map = {step.id: step for step in steps}
+    assert (
+        step_map["settle_1"].output_key
+        == step_map["settle_1_stop"].output_key
+        == "fixed_1"
+    )
+    assert (
+        step_map["settle_2"].output_key
+        == step_map["settle_2_stop"].output_key
+        == "fixed_2"
+    )
     assert {
         step.id: step.if_condition for step in steps if step.if_condition is not None
     } == {
         "verify": "$stepResult.reconcile.result.verify == true",
         "arm_1": "$stepResult.round_1.result.fix == true",
-        "fix_1": "$stepResult.arm_1.result.armed == true",
+        "method": "$input.instruction",
+        "fix_1": "$stepResult.arm_1.result.native == true",
+        "fix_1_method": "$stepResult.arm_1.result.method == true",
         "disarm_1": "$stepResult.round_1.result.fix == true",
         "settle_1": "$stepResult.round_1.result.fix == true",
         "settle_1_stop": "$stepResult.round_1.result.fix != true",
         "verify_1": "$stepResult.fixed_1.result.verify == true",
         "arm_2": "$stepResult.round_2.result.fix == true",
-        "fix_2": "$stepResult.arm_2.result.armed == true",
+        "fix_2": "$stepResult.arm_2.result.native == true",
+        "fix_2_method": "$stepResult.arm_2.result.method == true",
         "disarm_2": "$stepResult.round_2.result.fix == true",
         "settle_2": "$stepResult.round_2.result.fix == true",
         "settle_2_stop": "$stepResult.round_2.result.fix != true",

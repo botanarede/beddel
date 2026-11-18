@@ -159,6 +159,7 @@ def test_workflow_shape_and_safety() -> None:
         "spec_path",
         "branch",
         "base_ref",
+        "instruction",
     ]
     assert document["allowed_tools"] == [
         "profile_implement_prepare",
@@ -168,13 +169,16 @@ def test_workflow_shape_and_safety() -> None:
         "profile_hook_arm",
         "profile_hook_disarm",
         "profile_hook_proof",
+        "profile_stage_instruction",
     ]
     assert "Coding agent" in document["description"]
     assert {step["id"] for step in document["steps"]} == {
         "hook_open",
         "prepare",
+        "method",
         "arm",
         "implement",
+        "implement_method",
         "disarm",
         "settle",
         "settle_stop",
@@ -192,7 +196,11 @@ def test_workflow_shape_and_safety() -> None:
     workflow = WorkflowParser.parse(WORKFLOW_PATH.read_text())
     steps = {step.id: step for step in workflow.steps}
     assert steps["arm"].if_condition == "$stepResult.prepare.result.implement == true"
-    assert steps["implement"].if_condition == "$stepResult.arm.result.armed == true"
+    assert steps["implement"].if_condition == "$stepResult.arm.result.native == true"
+    assert (
+        steps["implement_method"].if_condition
+        == "$stepResult.arm.result.method == true"
+    )
     assert (
         steps["disarm"].if_condition == "$stepResult.prepare.result.implement == true"
     )

@@ -102,7 +102,7 @@ def test_run_pointer_lifecycle_and_foreign_pointer(
         for x in ("shell.git-push", "shell.gh-pr-merge", "shell.any")
     )
     pointer.write_bytes(b"foreign\n")
-    assert profile_hook_disarm(str(repo), armed) == {"removed": False}
+    assert profile_hook_disarm(str(repo), armed)["removed"] is False
     assert pointer.read_bytes() == b"foreign\n"
 
 
@@ -223,4 +223,101 @@ def test_tracked_policies_declare_cap_and_cap_denials_count(
     proof = profile_hook_proof("implement", opened, [armed], _settled())
     assert proof["outcome"] == "succeeded"
     assert proof["refs"]["hook_denied"] == 1
+    assert set(proof["refs"]) == set({**_settled()["refs"], **null_keys()})
+
+
+def test_arm_selects_native_or_method(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _repo(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.chdir(repo)
+    opened = profile_hook_open("implement")
+    native = profile_hook_arm(str(repo), "implement", opened)
+    assert native["armed"] and native["native"] and not native["method"]
+    profile_hook_disarm(str(repo), native, {"output": "ok"})
+    opened = profile_hook_open("implement")
+    method = profile_hook_arm(
+        str(repo),
+        "implement",
+        opened,
+        {
+            "stage": "implement",
+            "instruction": "Use the method.",
+            "instruction_sha256": "a" * 64,
+        },
+    )
+    assert method["armed"] and method["method"] and not method["native"]
+    assert method["instruction_sha256"] == "a" * 64
+    profile_hook_disarm(str(repo), method, {"output": "ok"})
+
+
+def test_disarm_measures_and_classifies_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import beddel_profile_dev.tools.hook as hook_tools
+
+    repo = _repo(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.chdir(repo)
+    clock = iter((10**12, 10**12 + 600_000_000_000))
+    monkeypatch.setattr(hook_tools, "_clock", lambda: next(clock))
+    opened = profile_hook_open("plan")
+    armed = profile_hook_arm(str(repo), "plan", opened)
+    timing = profile_hook_disarm(str(repo), armed, None)
+    assert timing["agent_ms"] == 600000 and timing["agent_state"] == "timeout"
+
+
+def test_proof_timings_record_durations_and_override_with_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _repo(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.chdir(repo)
+    opened, armed = _open_arm(repo)
+    emit_hook_events(repo, ["stop"])
+    ok = profile_hook_proof(
+        "implement",
+        opened,
+        [armed],
+        _settled(),
+        [{"agent_ms": 12, "agent_state": "ok", "instruction_sha256": None}],
+    )
+    assert ok["reason"] == "unit.committed"
+    assert ok["refs"]["agent_ms"] == "12"
+    assert ok["refs"]["agent_timeouts"] == 0
+    timeout = profile_hook_proof(
+        "implement",
+        opened,
+        [armed],
+        _settled(),
+        [{"agent_ms": 600000, "agent_state": "timeout", "instruction_sha256": None}],
+    )
+    assert timeout["outcome"] == "failed" and timeout["reason"] == "agent.timeout"
+    assert timeout["refs"]["agent_timeouts"] == 1
+    unmeasured = profile_hook_proof("implement", opened, [armed], _settled(), [None])
+    assert unmeasured["reason"] == "agent.unmeasured"
+    empty = profile_hook_proof("implement", opened, [], _settled(), [])
+    assert all(empty["refs"][key] is None for key in null_keys())
+    refused = profile_hook_proof(
+        "implement",
+        opened,
+        [{"armed": False, "reason": "hooks.pointer_exists"}],
+        _settled(),
+        [None],
+    )
+    assert refused["reason"] == "hooks.pointer_exists"
+    assert all(refused["refs"][key] is None for key in null_keys())
+
+
+def test_proof_without_timings_is_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _repo(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.chdir(repo)
+    opened, armed = _open_arm(repo)
+    emit_hook_events(repo, ["stop"])
+    proof = profile_hook_proof("implement", opened, [armed], _settled())
+    assert proof["reason"] == "unit.committed"
     assert set(proof["refs"]) == set({**_settled()["refs"], **null_keys()})
