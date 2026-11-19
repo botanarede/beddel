@@ -68,11 +68,24 @@ def pointer_path(pointers: Path, cwd: str | os.PathLike[str]) -> Path:
 
 def classify(tool_name: Any) -> str:
     name = str(tool_name or "").lower()
-    if name in {"read", "fs_read", "glob", "grep", "code"}:
+    if name in {
+        "read",
+        "fs_read",
+        "glob",
+        "grep",
+        "code",
+        "read_file",
+        "read_files",
+        "list_directory",
+        "file_search",
+        "grep_search",
+        # shortcut: disclose_context shares read; split into its own class when a policy must allow reads but deny skills
+        "disclose_context",
+    }:
         return "read"
-    if name in {"write", "fs_write"}:
+    if name in {"write", "fs_write", "fs_append", "str_replace", "delete_file"}:
         return "write"
-    if name in {"shell", "execute_bash", "execute_cmd"}:
+    if name in {"shell", "execute_bash", "execute_cmd", "execute_pwsh"}:
         return "shell"
     return "other"
 

@@ -281,3 +281,80 @@ def test_internal_error_past_the_cap_stays_an_error(
     assert records[-1]["rule_id"] == "hook.internal"
     summary = hook.summarize(pointers, tmp_path)
     assert summary["errors"] == 1 and summary["denied"] == 0
+
+
+_PLAN_POLICY = (
+    Path(__file__).resolve().parents[2] / "profile-dev-kit" / "policies" / "plan.json"
+)
+
+
+@pytest.mark.parametrize(
+    ("name", "tool_class"),
+    [
+        *[
+            (name, "read")
+            for name in (
+                "read",
+                "fs_read",
+                "glob",
+                "grep",
+                "code",
+                "read_file",
+                "read_files",
+                "list_directory",
+                "file_search",
+                "grep_search",
+                "disclose_context",
+                "READ_FILE",
+            )
+        ],
+        *[
+            (name, "write")
+            for name in ("write", "fs_write", "fs_append", "str_replace", "delete_file")
+        ],
+        *[
+            (name, "shell")
+            for name in ("shell", "execute_bash", "execute_cmd", "execute_pwsh")
+        ],
+    ],
+)
+def test_classify_maps_kiro_tool_ids(name: str, tool_class: str) -> None:
+    assert hook.classify(name) == tool_class
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "web_fetch",
+        "remote_web_search",
+        "invoke_sub_agent",
+        "introspect",
+        "read_file_x",
+        "",
+        None,
+    ],
+)
+def test_classify_unknown_names_stay_other(name: str | None) -> None:
+    assert hook.classify(name) == "other"
+
+
+@pytest.mark.parametrize(
+    ("tool", "tool_class", "decision", "rule"),
+    [
+        ("read_file", "read", "allow", "read.any"),
+        ("disclose_context", "read", "allow", "read.any"),
+        ("str_replace", "write", "allow", "write.any"),
+        ("web_fetch", "other", "deny", "policy.default_deny"),
+    ],
+)
+def test_plan_policy_pre_allows_v3_ids_and_denies_other(
+    tmp_path: Path, tool: str, tool_class: str, decision: str, rule: str
+) -> None:
+    plan = json.loads(_PLAN_POLICY.read_text(encoding="utf-8"))
+    pointers, _policy, log = _setup(tmp_path, plan["rules"], plan["max_tool_calls"])
+    code, out, err = _call(pointers, _event(tmp_path, tool=tool))
+    assert code == (0 if decision == "allow" else 2)
+    assert rule in (out if decision == "allow" else err)
+    record = json.loads(log.read_text(encoding="utf-8").splitlines()[-1])
+    assert (record["tool_name"], record["tool_class"]) == (tool, tool_class)
+    assert (record["decision"], record["rule_id"]) == (decision, rule)
