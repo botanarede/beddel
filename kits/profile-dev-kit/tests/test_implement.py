@@ -120,4 +120,17 @@ def test_rename_head_base_foreign_trailer_and_unborn_head(tmp_path, monkeypatch)
     repo, base = _repo(tmp_path / "head"); prepared = _prepare(repo,"HEAD",monkeypatch); (repo / "src/one.py").write_text("one\n"); assert _settle(repo,"HEAD",prepared)["reason"] == "unit.committed"; assert _prepare(repo,"HEAD",monkeypatch)["reason"] == "branch.protected"
     repo, base = _repo(tmp_path / "foreign"); git(repo,"switch","-q","-c",BRANCH); git(repo,"commit","-q","--allow-empty","-m","feat: x","-m",f"Story-Key: {STORY}\nImplementation-Unit: zz"); git(repo,"switch","-q","-"); assert _prepare(repo,base,monkeypatch)["refs"]["completed"] == 0
     repo, base = _repo(tmp_path / "orphan"); prepared = _prepare(repo,base,monkeypatch); git(repo,"switch","-q","--orphan","x"); assert _settle(repo,base,prepared)["reason"] == "branch.moved"
+
+def test_one_repair_round_and_resume_blocked(tmp_path, monkeypatch):
+    def again(prior, prepared): return profile_implement_settle(str(repo),STORY,SPEC_PATH,BRANCH,base,prepared,agent={},prior=prior)
+    repo, base = _repo(tmp_path); prepared = _prepare(repo,base,monkeypatch); (repo / "src/one.py").write_text("one\n"); monkeypatch.setenv("STUB_EXIT_PYTEST","1")
+    first = _settle(repo,base,prepared); assert (first["outcome"],first["reason"],first["repair"],first["refs"]["regressed"],first["refs"]["resume_blocked"]) == ("failed","gate.regressed",True,"04-pytest","worktree.dirty")
+    second = again(first,prepared); assert (second["reason"],second["repair"],second["refs"]["repair"],second["refs"]["resume_blocked"]) == ("gate.regressed",False,"04-pytest","worktree.dirty"); assert again(second,prepared) == second
+    for forged in ({**first,"refs":{**first["refs"],"unit":"u2"}}, {**first,"refs":{**first["refs"],"regressed":None}}, {**first,"story_key":None}, {**first,"stage":"plan"}, "bad"):
+        assert again(forged,prepared)["reason"] == "prepare.mismatch"
+    assert again(first,None)["reason"] == "prepare.mismatch"
+    monkeypatch.delenv("STUB_EXIT_PYTEST"); fixed = again(first,prepared); assert (fixed["reason"],fixed["refs"]["repair"],fixed["refs"]["regressed"],fixed["refs"]["resume_blocked"]) == ("unit.committed","04-pytest",None,None) and git(repo,"rev-parse","HEAD") != base
+    repo, base = _repo(tmp_path / "other"); prepared = _prepare(repo,base,monkeypatch); empty = _settle(repo,base,prepared); assert (empty["reason"],empty["repair"],empty["refs"]["resume_blocked"]) == ("unit.empty",False,None)
+    (repo / "outside.py").write_text("outside\n"); wide = _settle(repo,base,prepared); assert (wide["reason"],wide["repair"],wide["refs"]["resume_blocked"]) == ("scope.exceeded",False,"worktree.dirty")
+    dirty = profile_implement_prepare(str(repo),STORY,SPEC_PATH,BRANCH,base); assert dirty["reason"] == "worktree.dirty" and _settle(repo,base,dirty)["refs"]["resume_blocked"] == "worktree.dirty"
 # fmt: on

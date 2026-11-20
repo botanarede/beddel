@@ -70,6 +70,8 @@ def _refs(
     diff_bytes: int | None = None,
     out_of_scope: int = 0,
     regressed: str | None = None,
+    repair: str | None = None,
+    resume_blocked: str | None = None,
 ) -> dict[str, Any]:
     return {
         "spec_path": spec_path,
@@ -84,6 +86,8 @@ def _refs(
         "diff_bytes": diff_bytes,
         "out_of_scope": out_of_scope,
         "regressed": regressed,
+        "repair": repair,
+        "resume_blocked": resume_blocked,
     }
 
 
@@ -122,6 +126,7 @@ def _result(
         "unit_id": unit_id,
         "unit_paths": unit_paths,
         "baseline": baseline,
+        "repair": False,
     }
 
 
@@ -430,12 +435,7 @@ def profile_implement_prepare(
 
 
 # fmt: off
-@beddel_tool(
-    name="profile_implement_settle",
-    description="Review and commit one implementation unit",
-    category="profile",
-)
-def profile_implement_settle(
+def _settle_unit(
     repo_path: str,
     story_key: str,
     spec_path: str,
@@ -616,3 +616,78 @@ def profile_implement_settle(
     except ProfileError:
         return _fail(story, "settle.failed", spec, spec_digest, branch_name)
 # fmt: on
+
+
+def _with_resume(repo: Path, spec: str, result: dict[str, Any]) -> dict[str, Any]:
+    """Record whether a failed unit left a tree that ``prepare`` refuses."""
+    refs = result.get("refs")
+    if result.get("outcome") != "failed" or not isinstance(refs, Mapping):
+        return result
+    try:
+        dirty = bool(changed_paths(repo) - {spec})
+    except ProfileError:
+        return result
+    blocked = "worktree.dirty" if dirty else None
+    return {**result, "refs": {**refs, "resume_blocked": blocked}}
+
+
+@beddel_tool(
+    name="profile_implement_settle",
+    description="Review and commit one implementation unit",
+    category="profile",
+)
+def profile_implement_settle(
+    repo_path: str,
+    story_key: str,
+    spec_path: str,
+    branch: str,
+    base_ref: str,
+    prepare: Mapping[str, Any] | None,
+    agent: Mapping[str, Any] | None = None,
+    prior: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Settle the prepared unit; with ``prior``, settle once after its repair.
+
+    Without ``prior``, a ``gate.regressed`` failure carries ``repair: true`` so
+    the workflow makes one repair call. With a ``prior`` that asked for repair,
+    the unit is settled again and a second regression is final; any other
+    ``prior`` is returned unchanged.
+    """
+    checked = _validate_inputs(repo_path, story_key, spec_path, branch, base_ref)
+    if isinstance(checked, dict):
+        return checked
+    repo, story, spec, branch_name, _base_ref = checked
+    args = (repo_path, story_key, spec_path, branch, base_ref, prepare, agent)
+    if prior is None:
+        result = _settle_unit(*args)
+        if result.get("reason") == "gate.regressed":
+            result = {**result, "repair": True}
+        return _with_resume(repo, spec, result)
+    if (
+        not isinstance(prior, Mapping)
+        or prior.get("stage") != "implement"
+        or prior.get("story_key") != story
+    ):
+        return _with_resume(
+            repo, spec, _fail(story, "prepare.mismatch", spec, branch=branch_name)
+        )
+    if prior.get("repair") is not True:
+        return dict(prior)
+    prior_refs = prior.get("refs")
+    if not isinstance(prior_refs, Mapping):
+        prior_refs = {}
+    names = prior_refs.get("regressed")
+    if (
+        not isinstance(prepare, Mapping)
+        or not isinstance(names, str)
+        or not names
+        or prior_refs.get("unit") != prepare.get("unit_id")
+    ):
+        return _with_resume(
+            repo, spec, _fail(story, "prepare.mismatch", spec, branch=branch_name)
+        )
+    result = _settle_unit(*args)
+    refs = result.get("refs")
+    if isinstance(refs, Mapping):
+        result = {**result, "refs": {**refs, "repair": names}}
+    return _with_resume(repo, spec, result)
