@@ -1,6 +1,6 @@
 id: implement-story
 name: Implement Story
-description: Entry implement stage where a Coding agent implements one unit of one spec through agent-exec; the kit checks, gates and commits only that unit's paths on a feature branch. It never pushes, verifies, approves or integrates.
+description: Entry implement stage where a Coding agent implements one unit of one spec through agent-exec; the kit checks, gates and commits only that unit's paths on a feature branch. A Gate that regresses gets one bounded repair call and one more settle. It never pushes, verifies, approves or integrates.
 version: "1.0"
 requires_kits:
   - profile-dev-kit
@@ -123,6 +123,61 @@ steps:
         base_ref: "$input.base_ref"
         prepare: "$stepResult.prepare.result"
         agent: "$stepResult.implement"
+  - id: repair_arm
+    primitive: tool
+    if: "$stepResult.settle.result.repair == true"
+    execution_strategy:
+      type: fail
+    config:
+      tool: profile_hook_arm
+      arguments:
+        repo_path: "$input.repo_path"
+        stage: implement
+        hook: "$stepResult.hook_open.result"
+  - id: repair
+    primitive: agent-exec
+    if: "$stepResult.repair_arm.result.native == true"
+    execution_strategy:
+      type: skip
+    timeout: 600
+    config:
+      adapter: kiro-cli
+      sandbox: workspace-write
+      prompt: >-
+        You are the Coding agent for one bounded repair round of implementation
+        unit $stepResult.prepare.result.unit_id These kit Gates passed before
+        your change and fail after it: $stepResult.settle.result.refs.regressed
+        Fix only those failures, changing only the paths
+        $stepResult.prepare.result.unit_paths and files under them. Leave the
+        spec unchanged. Do not stage, commit, push, create or switch branches,
+        approve, verify or integrate.
+  - id: repair_disarm
+    primitive: tool
+    if: "$stepResult.settle.result.repair == true"
+    execution_strategy:
+      type: fail
+    config:
+      tool: profile_hook_disarm
+      arguments:
+        repo_path: "$input.repo_path"
+        armed: "$stepResult.repair_arm.result"
+        agent: "$stepResult.repair"
+  - id: resettle
+    primitive: tool
+    execution_strategy:
+      type: fail
+    if: "$stepResult.prepare.result.implement == true"
+    config:
+      tool: profile_implement_settle
+      arguments:
+        repo_path: "$input.repo_path"
+        story_key: "$input.story_key"
+        spec_path: "$input.spec_path"
+        branch: "$input.branch"
+        base_ref: "$input.base_ref"
+        prepare: "$stepResult.prepare.result"
+        agent: "$stepResult.repair"
+        prior: "$stepResult.settle.result"
   - id: settle_stop
     primitive: tool
     execution_strategy:
@@ -149,9 +204,11 @@ steps:
         hook: "$stepResult.hook_open.result"
         calls:
           - "$stepResult.arm.result"
+          - "$stepResult.repair_arm.result"
         timings:
           - "$stepResult.disarm.result"
-        settled: "$stepResult.settle.result"
+          - "$stepResult.repair_disarm.result"
+        settled: "$stepResult.resettle.result"
   - id: proof_stop
     primitive: tool
     if: "$stepResult.prepare.result.implement != true"

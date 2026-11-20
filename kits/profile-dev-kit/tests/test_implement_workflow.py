@@ -43,6 +43,7 @@ class FakeAgent:
         self.mode = mode
         self.patch = patch
         self.calls = 0
+        self.prompts: list[str] = []
 
     async def execute(
         self,
@@ -54,6 +55,7 @@ class FakeAgent:
         output_schema: dict[str, Any] | None = None,
     ) -> AgentResult:
         self.calls += 1
+        self.prompts.append(prompt)
         events: list[Any] = ["pre", "post", "stop"]
         if self.mode == "missing-stop":
             events = ["pre", "post"]
@@ -96,12 +98,15 @@ class FakeAgent:
                 check=True,
             )
         else:
-            target = "one.py" if self.calls == 1 else "two.py"
+            first = self.calls == 1 or self.mode in {"regression", "repaired"}
+            target = "one.py" if first else "two.py"
             (self.repo / "src" / target).write_text(f"{target}\n")
-        if self.mode == "regression":
+        if self.mode == "regression" or (self.mode == "repaired" and self.calls == 1):
             (self.repo / "src" / "one.py").write_text("one\n")
             if self.patch is not None:
                 self.patch.setenv("STUB_EXIT_PYTEST", "1")
+        elif self.mode == "repaired" and self.patch is not None:
+            self.patch.delenv("STUB_EXIT_PYTEST", raising=False)
         return AgentResult(
             exit_code=0,
             output="",
@@ -124,7 +129,9 @@ def _repo(tmp_path: Path) -> tuple[Path, str]:
     return repo, base
 
 
-def _run(repo: Path, base: str, fake: FakeAgent) -> dict[str, Any]:
+def _run(
+    repo: Path, base: str, fake: FakeAgent, instruction: str | None = None
+) -> dict[str, Any]:
     workflow = WorkflowParser.parse(WORKFLOW_PATH.read_text())
     registry = PrimitiveRegistry()
     register_builtins(registry)
@@ -144,6 +151,7 @@ def _run(repo: Path, base: str, fake: FakeAgent) -> dict[str, Any]:
                 "spec_path": SPEC_PATH,
                 "branch": BRANCH,
                 "base_ref": base,
+                **({"instruction": instruction} if instruction else {}),
             },
         )
     )
@@ -181,6 +189,10 @@ def test_workflow_shape_and_safety() -> None:
         "implement_method",
         "disarm",
         "settle",
+        "repair_arm",
+        "repair",
+        "repair_disarm",
+        "resettle",
         "settle_stop",
         "proof",
         "proof_stop",
@@ -222,6 +234,34 @@ def test_workflow_shape_and_safety() -> None:
         steps["record_stop"].if_condition
         == "$stepResult.prepare.result.implement != true"
     )
+    repair = next(step for step in document["steps"] if step["id"] == "repair")
+    assert repair["config"] == {**agent["config"], "prompt": repair["config"]["prompt"]}
+    assert repair["timeout"] == agent["timeout"]
+    prompt = repair["config"]["prompt"]
+    assert "$stepResult.settle.result.refs.regressed" in prompt
+    assert "$stepResult.prepare.result.unit_paths" in prompt
+    assert "spec_path" not in prompt and "instruction" not in prompt
+    assert "commit" in prompt and "push" in prompt
+    repair_if = "$stepResult.settle.result.repair == true"
+    assert steps["repair_arm"].if_condition == repair_if
+    assert "method" not in steps["repair_arm"].config["arguments"]
+    assert (
+        steps["repair"].if_condition == "$stepResult.repair_arm.result.native == true"
+    )
+    assert steps["repair_disarm"].if_condition == repair_if
+    assert (
+        steps["resettle"].if_condition == "$stepResult.prepare.result.implement == true"
+    )
+    assert steps["resettle"].config["arguments"]["prior"] == (
+        "$stepResult.settle.result"
+    )
+    proof = steps["proof"].config["arguments"]
+    assert proof["calls"] == ["$stepResult.arm.result", "$stepResult.repair_arm.result"]
+    assert proof["timings"] == [
+        "$stepResult.disarm.result",
+        "$stepResult.repair_disarm.result",
+    ]
+    assert proof["settled"] == "$stepResult.resettle.result"
 
 
 def test_two_unit_sequence_records_and_resumes(
@@ -265,6 +305,8 @@ def test_two_unit_sequence_records_and_resumes(
         assert set(HOOK_KEYS) <= set(refs)
         assert refs["hook_stop"] == 1
         assert refs["hook_errors"] == 0
+        assert refs["repair"] is None and refs["resume_blocked"] is None
+        assert len(refs) <= 32
         assert (
             refs["hook_policy_sha256"]
             == hashlib.sha256(policy_path("implement").read_bytes()).hexdigest()
@@ -296,7 +338,7 @@ def test_agent_modes_are_recorded_without_losing_base(
     before = git(repo, "rev-parse", "HEAD")
     result = _run(repo, base, fake)
     settle = result["step_results"].get(
-        "settle", result["step_results"].get("settle_stop")
+        "resettle", result["step_results"].get("settle_stop")
     )
     assert settle["result"]["reason"] == (
         "unit.committed" if reason.startswith("hooks.") else reason
@@ -308,6 +350,8 @@ def test_agent_modes_are_recorded_without_losing_base(
     assert len(records) == 1
     stored = json.loads(records[0].read_text())
     assert (stored["outcome"], stored["reason"]) == ("failed", reason)
+    assert fake.calls == (2 if mode == "regression" else 1)
+    assert stored["refs"]["repair"] == ("04-pytest" if mode == "regression" else None)
     assert git(repo, "rev-parse", "HEAD") == before or reason in {
         "head.moved",
         "hooks.missing",
@@ -353,3 +397,140 @@ def test_absorbed_prepare_error_records_prepare_failed(
     assert len(records) == 1
     stored = json.loads(records[0].read_text())
     assert (stored["outcome"], stored["reason"]) == ("failed", "prepare.failed")
+
+
+def _records(home: Path) -> list[dict[str, Any]]:
+    stored = sorted(home.rglob("stage-outcomes/*.json"))
+    return [json.loads(path.read_text()) for path in stored]
+
+
+def test_repair_round_commits_unit_and_counts_both_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base = _repo(tmp_path)
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("PATH", stub_gate_tools(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    fake = FakeAgent(repo, "repaired", monkeypatch)
+    result = _run(repo, base, fake)
+    steps = result["step_results"]
+    assert steps["settle"]["result"]["repair"] is True
+    assert steps["settle"]["result"]["refs"]["regressed"] == "04-pytest"
+    assert steps["resettle"]["result"]["reason"] == "unit.committed"
+    assert fake.calls == 2
+    repair_prompt = fake.prompts[1]
+    assert "04-pytest" in repair_prompt and "src/one.py" in repair_prompt
+    assert SPEC_PATH not in repair_prompt
+    arm, repair_arm = steps["arm"]["result"], steps["repair_arm"]["result"]
+    assert repair_arm["armed"] is True and repair_arm["native"] is True
+    # One stage log for both calls, so the policy's max_tool_calls covers both.
+    assert repair_arm["log_path"] == arm["log_path"]
+    (record,) = _records(tmp_path / "home")
+    refs = record["refs"]
+    assert (record["outcome"], record["reason"]) == ("succeeded", "unit.committed")
+    assert refs["repair"] == "04-pytest" and refs["regressed"] is None
+    assert refs["resume_blocked"] is None
+    assert (refs["hook_stop"], refs["hook_errors"]) == (2, 0)
+    assert len(str(refs["agent_ms"]).split(",")) == 2
+    assert refs["agent_timeouts"] == 0
+    assert len(refs) <= 32
+    assert "Implementation-Unit: u1" in git(repo, "show", "-s", "--format=%B", "HEAD")
+
+
+def test_failed_repair_records_gate_regressed_and_blocked_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base = _repo(tmp_path)
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("PATH", stub_gate_tools(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    fake = FakeAgent(repo, "regression", monkeypatch)
+    result = _run(repo, base, fake)
+    assert result["step_results"]["resettle"]["result"]["repair"] is False
+    assert fake.calls == 2
+    (record,) = _records(tmp_path / "home")
+    refs = record["refs"]
+    assert (record["outcome"], record["reason"]) == ("failed", "gate.regressed")
+    assert (refs["repair"], refs["regressed"]) == ("04-pytest", "04-pytest")
+    assert refs["resume_blocked"] == "worktree.dirty"
+    assert (refs["hook_stop"], refs["hook_errors"]) == (2, 0)
+    assert git(repo, "rev-parse", "HEAD") == base
+    assert "src/one.py" in git(repo, "status", "--porcelain")
+
+
+def test_repair_call_shares_the_stage_tool_call_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from beddel_profile_dev import hook_proof
+
+    policy = json.loads(policy_path("implement").read_text())
+    policy["max_tool_calls"] = 1
+    capped = tmp_path / "implement.json"
+    capped.write_text(json.dumps(policy))
+    monkeypatch.setattr(hook_proof, "policy_path", lambda _stage: capped)
+    repo, base = _repo(tmp_path)
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("PATH", stub_gate_tools(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    result = _run(repo, base, FakeAgent(repo, "repaired", monkeypatch))
+    log = Path(result["step_results"]["arm"]["result"]["log_path"])
+    pre = [
+        json.loads(line)
+        for line in log.read_text().splitlines()
+        if json.loads(line)["event"] == "pre"
+    ]
+    assert [(item["decision"], item["rule_id"]) for item in pre] == [
+        ("allow", "read.any"),
+        ("deny", "cap.max_tool_calls"),
+    ]
+    (record,) = _records(tmp_path / "home")
+    assert (record["refs"]["hook_denied"], record["refs"]["hook_stop"]) == (1, 2)
+
+
+def test_repair_under_a_method_keeps_the_method_digest_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base = _repo(tmp_path)
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("PATH", stub_gate_tools(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    instruction = "Use the named method for this unit only."
+    fake = FakeAgent(repo, "repaired", monkeypatch)
+    _run(repo, base, fake, instruction)
+    assert fake.calls == 2
+    assert instruction in fake.prompts[0] and instruction not in fake.prompts[1]
+    (record,) = _records(tmp_path / "home")
+    assert record["reason"] == "unit.committed"
+    assert (
+        record["refs"]["instruction_sha256"]
+        == hashlib.sha256(instruction.encode()).hexdigest()
+    )
+
+
+def test_unarmed_repair_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from beddel_profile_dev.tools import hook as hook_tools
+
+    original = hook_tools.write_pointer
+    seen: list[int] = []
+
+    def second_refused(*args: Any) -> dict[str, Any]:
+        seen.append(1)
+        if len(seen) == 2:
+            return {"armed": False, "reason": "hooks.pointer_exists"}
+        return original(*args)
+
+    monkeypatch.setattr(hook_tools, "write_pointer", second_refused)
+    repo, base = _repo(tmp_path)
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("PATH", stub_gate_tools(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    fake = FakeAgent(repo, "repaired", monkeypatch)
+    _run(repo, base, fake)
+    assert fake.calls == 1
+    (record,) = _records(tmp_path / "home")
+    assert (record["outcome"], record["reason"]) == ("failed", "hooks.pointer_exists")
+    assert record["refs"]["repair"] == "04-pytest"
+    assert record["refs"]["resume_blocked"] == "worktree.dirty"
+    assert git(repo, "rev-parse", "HEAD") == base

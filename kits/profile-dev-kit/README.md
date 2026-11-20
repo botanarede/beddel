@@ -501,6 +501,16 @@ commits the spec. `units` entries have an `id`, relative `paths` and a commit
 `subject`; commits carry the identity trailers. One unit runs per invocation.
 A baseline-red Gate is advisory; only a green command that becomes red blocks.
 
+When the first settle finds such a regressed Gate, the stage makes one repair
+call: the same adapter and timeout, its own pointer arm and disarm on the
+stage's one hook run, and a prompt that names only the regressed Gate names and
+the unit paths. Settle then runs once more; a Gate that regresses again fails
+`gate.regressed`, and no other settle failure gets a repair. The hook proof
+counts both calls, and both share the policy's `max_tool_calls`. Stage refs
+add `repair` (the Gate names the repair received, or null) and
+`resume_blocked`: a failed record sets it to `worktree.dirty` when changes
+outside the spec remain, because `prepare` refuses that tree until it is clean.
+
 ```text
 beddel run -i ... workflows/implement-story.yaml
 ```
