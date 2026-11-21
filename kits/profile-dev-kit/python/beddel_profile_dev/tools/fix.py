@@ -19,11 +19,11 @@ from beddel_profile_dev.tools.implement import _TOKEN, _candidate_tree, _complet
 from beddel_profile_dev.tools.report import profile_read_report
 
 def _refs(**values: Any) -> dict[str, Any]:
-    names = ("spec_path", "spec_sha256", "branch", "base", "head", "commit", "change_id", "report", "report_sha256", "round", "rounds", "findings", "diff_bytes", "out_of_scope", "regressed")
+    names = ("spec_path", "spec_sha256", "branch", "base", "head", "commit", "change_id", "report", "report_sha256", "round", "rounds", "findings", "diff_bytes", "out_of_scope", "regressed", "repair")
     return {name: values.get(name) for name in names}
 
 def _result(story: str | None, outcome: str | None, reason: str | None, refs: dict[str, Any], **values: Any) -> dict[str, Any]:
-    return {"stage": "verify-and-fix", "story_key": story, "verify": values.get("verify", False), "fix": values.get("fix", False), "outcome": outcome, "reason": reason, "refs": refs, "spec_sha256": values.get("spec_sha256"), "base": values.get("base"), "head": values.get("head"), "round": values.get("round"), "rounds": values.get("rounds", 0), "findings": values.get("findings", ""), "scope_paths": values.get("scope", ""), "baseline": values.get("baseline")}
+    return {"stage": "verify-and-fix", "story_key": story, "verify": values.get("verify", False), "fix": values.get("fix", False), "outcome": outcome, "reason": reason, "refs": refs, "spec_sha256": values.get("spec_sha256"), "base": values.get("base"), "head": values.get("head"), "round": values.get("round"), "rounds": values.get("rounds", 0), "findings": values.get("findings", ""), "scope_paths": values.get("scope", ""), "baseline": values.get("baseline"), "repair": False}
 
 def _bad(story: str | None, reason: str, **values: Any) -> dict[str, Any]:
     return _result(story, "failed", reason, _refs(**values), **values)
@@ -128,8 +128,7 @@ def profile_fix_reconcile(repo_path: str, story_key: str, spec_path: str, branch
     except Exception:  # noqa: BLE001
         return fail("reconcile.failed")
 
-@beddel_tool(name="profile_fix_settle", description="fix", category="profile")
-def profile_fix_settle(repo_path: str, story_key: str, spec_path: str, branch: str, base_ref: str, change_id: str, prepare: Mapping[str, Any] | None, agent: Mapping[str, Any] | None = None) -> dict[str, Any]:
+def _settle_round(repo_path: str, story_key: str, spec_path: str, branch: str, base_ref: str, change_id: str, prepare: Mapping[str, Any] | None, agent: Mapping[str, Any] | None) -> dict[str, Any]:
     checked = _inputs(repo_path, story_key, spec_path, branch, base_ref, change_id, MAX_FIX_ROUNDS)
     if isinstance(checked, dict): return checked
     repo, story, spec, branch, base_ref, change, _ = checked
@@ -191,4 +190,31 @@ def profile_fix_settle(repo_path: str, story_key: str, spec_path: str, branch: s
     except ProfileError: return fail("settle.failed")
     except Exception:  # noqa: BLE001
         return fail("settle.failed")
+
+@beddel_tool(name="profile_fix_settle", description="fix", category="profile")
+def profile_fix_settle(repo_path: str, story_key: str, spec_path: str, branch: str, base_ref: str, change_id: str, prepare: Mapping[str, Any] | None, agent: Mapping[str, Any] | None = None, prior: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Settle the prepared fix round; with ``prior``, settle once after its repair.
+
+    Without ``prior``, a ``gate.regressed`` failure carries ``repair: true`` so the
+    workflow makes one repair call. With a ``prior`` that asked for repair in the
+    same round, the round is settled again and a second regression is final; any
+    other ``prior`` is returned unchanged.
+    """
+    args = (repo_path, story_key, spec_path, branch, base_ref, change_id, prepare, agent)
+    if prior is None:
+        result = _settle_round(*args)
+        due = result.get("reason") == "gate.regressed" and isinstance(prepare, Mapping) and prepare.get("fix") is True
+        return {**result, "repair": True} if due else result
+    checked = _inputs(repo_path, story_key, spec_path, branch, base_ref, change_id, MAX_FIX_ROUNDS)
+    if isinstance(checked, dict): return checked
+    story = checked[1]
+    if not isinstance(prior, Mapping) or prior.get("stage") != "verify-and-fix" or prior.get("story_key") != story: return _bad(story, "state.mismatch")
+    if prior.get("repair") is not True: return dict(prior)
+    prior_refs = prior.get("refs")
+    if not isinstance(prior_refs, Mapping): prior_refs = {}
+    names, rounds = prior_refs.get("regressed"), prior_refs.get("rounds")
+    if not isinstance(prepare, Mapping) or not isinstance(names, str) or not names or type(rounds) is not int or rounds != prepare.get("round"): return _bad(story, "state.mismatch")
+    result = _settle_round(*args)
+    refs = result.get("refs")
+    return {**result, "refs": {**refs, "repair": names}} if isinstance(refs, Mapping) else result
 # fmt: on
