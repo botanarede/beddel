@@ -253,6 +253,68 @@ async def test_invalid_reference_runs_nothing(fake_gh: tuple[Path, Path, Path]) 
 
 
 @pytest.mark.asyncio
+async def test_dot_directory_spec_path_creates_pr(
+    fake_gh: tuple[Path, Path, Path],
+) -> None:
+    root, log, script = fake_gh
+    _write_script(
+        script,
+        {"stdout": "[]"},
+        {"stdout": "https://github.example/pull/7\n"},
+        {"stdout": json.dumps([_pr()])},
+    )
+    result = await github_pr_create_or_reuse(
+        cwd=str(root),
+        branch="feature/one",
+        story_key="8-6",
+        spec_path=".beddel-pilot/spec.md",
+        change_id="chg-1",
+        revision=_SHA,
+    )
+    assert result["created"] is True
+    create = _read_log(log)[1]["argv"]
+    assert create[:2] == ["pr", "create"]
+    assert "Spec: .beddel-pilot/spec.md\n" in create[create.index("--body") + 1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "spec_path",
+    [
+        "",
+        ".",
+        "..",
+        "../x",
+        "./x",
+        "a/../b",
+        "a/./b",
+        "/abs",
+        "a//b",
+        "a/",
+        "-x",
+        "a\\b",
+    ],
+)
+async def test_unsafe_spec_path_is_refused_before_gh(
+    fake_gh: tuple[Path, Path, Path], spec_path: str
+) -> None:
+    root, log, script = fake_gh
+    _write_script(script, {"stdout": "[]"})
+    with pytest.raises(GitHubToolError) as exc:
+        await github_pr_create_or_reuse(
+            cwd=str(root),
+            branch="feature/one",
+            story_key="8-6",
+            spec_path=spec_path,
+            change_id="chg-1",
+            revision=_SHA,
+        )
+    _assert_code(exc, GITHUB_ARGUMENT_REFUSED)
+    assert exc.value.details == {"argument": "spec_path"}
+    assert not log.exists()
+
+
+@pytest.mark.asyncio
 async def test_checks_passed(fake_gh: tuple[Path, Path, Path]) -> None:
     root, _log, script = fake_gh
     _write_script(
