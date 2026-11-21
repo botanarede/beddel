@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 from beddel_profile_dev.fix import (
@@ -366,7 +367,40 @@ def test_settle_boundary_table(
     )
     expected = None if case == "base-red" else ("agent.failed" if case == "agent.failed" else case)
     assert result["reason"] == expected
+    assert (result["repair"], result["refs"]["repair"]) == (case == "gate.regressed", None)
     if case == "base-red": assert result["verify"] is True
+
+
+def test_one_repair_per_round_and_forged_priors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base = _complete_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("PATH", stub_gate_tools(tmp_path))
+    prepare = _due_prepare(repo, base, monkeypatch)
+    def again(prior: object, prepared: object = prepare, agent: object = {}) -> dict[str, Any]:
+        return profile_fix_settle(str(repo), STORY, SPEC_PATH, BRANCH, base, "c1", prepared, agent, prior)  # type: ignore[arg-type]
+    (repo / "src" / "one.py").write_text("one = 2\n")
+    monkeypatch.setenv("STUB_EXIT_MYPY", "1")
+    first = profile_fix_settle(str(repo), STORY, SPEC_PATH, BRANCH, base, "c1", prepare, {})
+    assert (first["outcome"], first["reason"], first["repair"], first["refs"]["regressed"], first["refs"]["repair"]) == ("failed", "gate.regressed", True, "03-mypy", None)
+    second = again(first)
+    assert (second["reason"], second["repair"], second["refs"]["repair"], second["refs"]["regressed"]) == ("gate.regressed", False, "03-mypy", "03-mypy")
+    assert again(second) == second
+    assert profile_fix_settle(str(repo), STORY, SPEC_PATH, BRANCH, base, "c1", second)["repair"] is False
+    for forged in ({**first, "refs": {**first["refs"], "rounds": 2}}, {**first, "refs": {**first["refs"], "regressed": ""}}, {**first, "refs": None}, {**first, "story_key": None}, {**first, "stage": "implement"}, "bad"):
+        assert again(forged)["reason"] == "state.mismatch"
+    assert again(first, None)["reason"] == "state.mismatch"
+    assert (again(first, agent=None)["reason"], again(first, agent=None)["refs"]["repair"]) == ("agent.failed", "03-mypy")
+    (repo / SPEC_PATH).write_bytes(spec_bytes() + b"changed\n")
+    assert again(first)["reason"] == "spec.changed"
+    (repo / SPEC_PATH).write_bytes(spec_bytes())
+    monkeypatch.delenv("STUB_EXIT_MYPY")
+    fixed = again(first)
+    assert (fixed["verify"], fixed["reason"], fixed["repair"], fixed["refs"]["repair"], fixed["refs"]["regressed"]) == (True, None, False, "03-mypy", None)
+    assert "Fix-Round: 1" in git(repo, "show", "-s", "--format=%B", "HEAD")
+    assert again(fixed) == fixed
+    assert again(first)["reason"] == "head.moved"
 
 
 def test_reconcile_dirty_state_and_state_chain_checks(

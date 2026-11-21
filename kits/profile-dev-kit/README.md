@@ -532,6 +532,18 @@ VerificationAttempt. Earlier Evidence is never copied. Other Pendencies stop wit
 `fix.bound_reached`. Stage refs contain identifiers, digests, counts and paths
 only.
 
+When a fix round's settle finds a Gate that passed before the round and fails
+after it, the round makes one repair call: the same adapter and timeout, its own
+pointer arm and disarm on the stage's one hook run, and a prompt that names only
+the round, the regressed Gate names and the round's scope paths (no Findings,
+spec path or method instruction). Settle then runs once more; a Gate that
+regresses again fails `gate.regressed`, and no other settle failure gets a
+repair. The hook proof counts every armed call (at most four), and all share the
+policy's `max_tool_calls`. Stage refs add `repair`: the Gate names the repair
+received, or null. A record that ends at the repaired settle carries them; when
+the repaired round commits and verifies, the record comes from the later
+reconcile, `repair` is null, and `hook_stop` and `agent_ms` still count the call.
+
 Owner-ratified Review classes:
 Blind Hunter, Edge Case Hunter, Verification Gap and Acceptance Auditor. Agents
 never ratify or write inventory versions.

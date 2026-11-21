@@ -1,6 +1,6 @@
 id: verify-and-fix-story
 name: Verify And Fix Story
-description: Entry verify-and-fix stage that runs verify-change unchanged and, when Findings need fixes, runs at most 2 fix rounds through a Coding agent with a fresh verify-change attempt each. It never approves, ratifies, pushes or integrates.
+description: Entry verify-and-fix stage that runs verify-change unchanged and, when Findings need fixes, runs at most 2 fix rounds through a Coding agent with a fresh verify-change attempt each. A fix round whose Gate regresses gets one bounded repair call and one more settle. It never approves, ratifies, pushes or integrates.
 version: "1.0"
 requires_kits:
   - profile-dev-kit
@@ -146,7 +146,6 @@ steps:
     if: "$stepResult.round_1.result.fix == true"
     execution_strategy:
       type: fail
-    output_key: fixed_1
     config:
       tool: profile_fix_settle
       arguments:
@@ -158,6 +157,63 @@ steps:
         change_id: "$input.change_id"
         prepare: "$stepResult.round_1.result"
         agent: "$stepResult.fix_1"
+  - id: repair_arm_1
+    primitive: tool
+    if: "$stepResult.settle_1.result.repair == true"
+    execution_strategy:
+      type: fail
+    config:
+      tool: profile_hook_arm
+      arguments:
+        repo_path: "$input.repo_path"
+        stage: verify-and-fix
+        hook: "$stepResult.hook_open.result"
+  - id: repair_1
+    primitive: agent-exec
+    if: "$stepResult.repair_arm_1.result.native == true"
+    execution_strategy:
+      type: skip
+    timeout: 600
+    config:
+      adapter: kiro-cli
+      sandbox: workspace-write
+      prompt: >-
+        You are the Coding agent for one bounded repair of verification fix
+        round $stepResult.round_1.result.round These kit Gates passed before
+        your change and fail after it: $stepResult.settle_1.result.refs.regressed
+        Fix only those failures, changing only the paths
+        $stepResult.round_1.result.scope_paths and files under them. Leave the
+        spec unchanged. Do not stage, commit, push, create or switch branches,
+        approve, verify, ratify or integrate.
+  - id: repair_disarm_1
+    primitive: tool
+    if: "$stepResult.settle_1.result.repair == true"
+    execution_strategy:
+      type: fail
+    config:
+      tool: profile_hook_disarm
+      arguments:
+        repo_path: "$input.repo_path"
+        armed: "$stepResult.repair_arm_1.result"
+        agent: "$stepResult.repair_1"
+  - id: resettle_1
+    primitive: tool
+    if: "$stepResult.round_1.result.fix == true"
+    execution_strategy:
+      type: fail
+    output_key: fixed_1
+    config:
+      tool: profile_fix_settle
+      arguments:
+        repo_path: "$input.repo_path"
+        story_key: "$input.story_key"
+        spec_path: "$input.spec_path"
+        branch: "$input.branch"
+        base_ref: "$input.base_ref"
+        change_id: "$input.change_id"
+        prepare: "$stepResult.round_1.result"
+        agent: "$stepResult.repair_1"
+        prior: "$stepResult.settle_1.result"
   - id: settle_1_stop
     primitive: tool
     if: "$stepResult.round_1.result.fix != true"
@@ -263,7 +319,6 @@ steps:
     if: "$stepResult.round_2.result.fix == true"
     execution_strategy:
       type: fail
-    output_key: fixed_2
     config:
       tool: profile_fix_settle
       arguments:
@@ -275,6 +330,63 @@ steps:
         change_id: "$input.change_id"
         prepare: "$stepResult.round_2.result"
         agent: "$stepResult.fix_2"
+  - id: repair_arm_2
+    primitive: tool
+    if: "$stepResult.settle_2.result.repair == true"
+    execution_strategy:
+      type: fail
+    config:
+      tool: profile_hook_arm
+      arguments:
+        repo_path: "$input.repo_path"
+        stage: verify-and-fix
+        hook: "$stepResult.hook_open.result"
+  - id: repair_2
+    primitive: agent-exec
+    if: "$stepResult.repair_arm_2.result.native == true"
+    execution_strategy:
+      type: skip
+    timeout: 600
+    config:
+      adapter: kiro-cli
+      sandbox: workspace-write
+      prompt: >-
+        You are the Coding agent for one bounded repair of verification fix
+        round $stepResult.round_2.result.round These kit Gates passed before
+        your change and fail after it: $stepResult.settle_2.result.refs.regressed
+        Fix only those failures, changing only the paths
+        $stepResult.round_2.result.scope_paths and files under them. Leave the
+        spec unchanged. Do not stage, commit, push, create or switch branches,
+        approve, verify, ratify or integrate.
+  - id: repair_disarm_2
+    primitive: tool
+    if: "$stepResult.settle_2.result.repair == true"
+    execution_strategy:
+      type: fail
+    config:
+      tool: profile_hook_disarm
+      arguments:
+        repo_path: "$input.repo_path"
+        armed: "$stepResult.repair_arm_2.result"
+        agent: "$stepResult.repair_2"
+  - id: resettle_2
+    primitive: tool
+    if: "$stepResult.round_2.result.fix == true"
+    execution_strategy:
+      type: fail
+    output_key: fixed_2
+    config:
+      tool: profile_fix_settle
+      arguments:
+        repo_path: "$input.repo_path"
+        story_key: "$input.story_key"
+        spec_path: "$input.spec_path"
+        branch: "$input.branch"
+        base_ref: "$input.base_ref"
+        change_id: "$input.change_id"
+        prepare: "$stepResult.round_2.result"
+        agent: "$stepResult.repair_2"
+        prior: "$stepResult.settle_2.result"
   - id: settle_2_stop
     primitive: tool
     if: "$stepResult.round_2.result.fix != true"
@@ -330,10 +442,14 @@ steps:
         hook: "$stepResult.hook_open.result"
         calls:
           - "$stepResult.arm_1.result"
+          - "$stepResult.repair_arm_1.result"
           - "$stepResult.arm_2.result"
+          - "$stepResult.repair_arm_2.result"
         timings:
           - "$stepResult.disarm_1.result"
+          - "$stepResult.repair_disarm_1.result"
           - "$stepResult.disarm_2.result"
+          - "$stepResult.repair_disarm_2.result"
         settled: "$stepResult.close.result"
   - id: record
     primitive: tool
